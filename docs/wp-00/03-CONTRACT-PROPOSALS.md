@@ -93,7 +93,11 @@
 
 ## Consumption
 
-`approvalId`, `runId`, `decisionId`, `inputsHash`, `environmentGeneration`, `consumedAt`. Файл появляется только после временной записи, fsync и rename на том же томе. Неполный временный файл расходом не является. Нечитаемое итоговое имя блокирует ACK и не стирается ради повторной мутации. В подписи owner запись не нуждается: это локальный факт исполнителя, а подлинность разрешения проверяется по approval. Удаление consumption после успешного прогона ловится анкером: анкер содержит `approvalId` и `runId`, OBSERVE требует совпадения с consumption.
+Поля тела: `approvalId`, `runId`, `decisionId`, `inputsHash`, `environmentGeneration`, `consumedAt`. Рядом лежит `bodySha256` — `digest` канонического тела без самого `bodySha256`. Запись полная только когда файл читается целиком и хеш сходится.
+
+Публикация — `CREATE_NEW` итогового имени `consumption/<approvalId>.json`, затем `fsync` этого дескриптора и повторное чтение. `rename` поверх существующего файла запрещён. `fsync` каталога на Windows не входит в критерий: `EPERM` на нём не считается ни успехом, ни провалом записи. Неполное занятое имя даёт `CONSUMPTION_INCOMPLETE`, не удаляется и не заменяется. Второй процесс с другим `runId` не получает ACK. В подписи owner запись не нуждается. Удаление полного consumption после прогона расходится с анкером на `observeTrusted`.
+
+Испытание WP-02 на Windows, два процесса и один `approvalId`: ровно один полный файл, не больше одного ACK, не больше одной мутации. Обрыв после `CREATE_NEW` и до полного хеша: ноль ACK и отказ перезаписи. Пока этого прогона нет, контракт считается заданным, а не проверенным.
 
 ## TrustDecision
 
@@ -136,7 +140,9 @@
 | `TRUST_STORE_UNAVAILABLE` | Корень доверия не читается |
 | `CONSUMPTION_INCOMPLETE` | Итог расхода не читается или не синхронизирован. ACK запрещён |
 | `PUBLICATION_PENDING` | Candidate есть, терминального verdict ещё нет. Это не PASS |
-| `ANCHOR_MISSING` | Нет заявления там, где публикация уже обязана была его иметь |
+| `ANCHOR_MISSING` | Нет заявления там, где выбор исхода уже обязан был его иметь |
+| `ANCHOR_BINDING_REJECTED` | Подписант не нашёл связку approval, полного consumption, снимков и candidate |
+| `ANCHOR_UNLINKED` | Подпись относится к отброшенному candidate и не выбрана в `terminal-choice.json`. Это не PASS и не конфликт |
 | `ANCHOR_CONFLICT` | Второе отличное заявление или несовпадение с коммитом |
 | `ANCHOR_SIGNATURE_INVALID` | Подпись анкера |
 | `RUN_CANCELED` | Отмена до dispatch |
@@ -161,13 +167,21 @@
 
 `AUTH_UNAVAILABLE` уже есть в enum 0.1 и до сих пор не является результатом проверки личности. Для доверенного входа он получает этот смысл. Старый вход `start()` его по-прежнему не производит из-за отсутствия ключа.
 
+## VerdictCandidate и terminal-choice
+
+`VerdictCandidate` равен будущему артефакту `VerdictPolicy`. Поля только эти: `schemaVersion`, `runId`, `manifestSha256`, `verdict`, `reasonCode`, `message`, `checks`, `ownershipVerified`, `integrityVerified`, `completedAt`. `candidateSha256 = digest(candidate)`. Ссылки на анкер в этом объекте нет.
+
+`terminal-choice.json` публикуется через `CREATE_NEW`. Поля: `outcome` (`anchor`, `budget-inconclusive`, `fail-without-anchor`), `candidateSha256` тела, которое станет единственным verdict, `discardedCandidateSha256` или `null`, `anchorId` или `null`. Второй выбор поверх первого не пишется.
+
+Если исход `budget-inconclusive`, в evidence попадает новый candidate с `verdict=INCONCLUSIVE` и `reasonCode=EVIDENCE_MISSING`, а не прежний PASS. Анкер прежнего PASS, появившийся в ту же гонку, остаётся `ANCHOR_UNLINKED`: хеш у него другой, конфликт из этого не делается, переход INCONCLUSIVE → PASS запрещён.
+
 ## AnchorStatement
 
 `domain` буквально `anchor-statement`. Поля: `anchorId`, `runId`, `manifestSha256`, `chainHead: {sequence, envelopeSha256}` последнего коммита до verdict, `candidateSha256`, `verdict`, `reasonCode`, `approvalId`, `inputsHash`, `environmentId`, `environmentGeneration`, `publishedAt`. Подпись — ключ anchor-signer. Подпись owner для этого `domain` недействительна.
 
-`chainHead` — не хеш самого verdict: verdict дописывается только после проверки этой подписи. После записи verdict проверяющий сверяет три вещи: подпись анкера, совпадение `chainHead` с коммитом перед verdict и совпадение канонического verdict с `candidateSha256`.
+`candidateSha256` внутри заявления — хеш `VerdictCandidate`, а не хеш заявления и не хеш `terminal-choice`. После записи verdict байты артефакта равны этому candidate. Проверяющий сверяет подпись, `chainHead` с коммитом перед verdict и `digest` артефакта с `candidateSha256`. `anchorId` он берёт из выбора исхода, не из тела verdict.
 
-`verdict` — значение 0.1: `PASS`, `FAIL`, `BLOCKED`, `INCONCLUSIVE`. Пока состояние публикации не `terminal`, этой записи в evidence нет. Для candidate PASS заявление обязательно до единственной записи PASS. Для candidate FAIL отсутствие анкера не создаёт вторую запись и не скрывает FAIL: пишется один FAIL, а наблюдение показывает `ANCHOR_MISSING`.
+Подписант выпускает заявление только после своей проверки связки. Канал с ACL пользователя сам по себе право на подпись не даёт. Для локального 0.2 любой процесс этого SID может обратиться к каналу; отказ или подпись определяются связкой, не именем программы. Процесс, который меняет только каталог прогона, годный анкер для подложного PASS не получает. Процесс, который под тем же пользователем читает `owner.key`, в эту модель не входит.
 
 ## Совместимость
 
