@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "0.1.0"
+    },
+    "fixtureId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "environmentId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "namespace": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "accounts": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "credentialRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "required": [
+          "role",
+          "credentialRef"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "allowedMutations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      }
+    },
+    "selectedEntities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "ownership": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "required": [
+        "field",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "cleanup": {
+      "type": "string",
+      "const": "manual-after-independent-ownership-check"
+    },
+    "unknownMutation": {
+      "type": "string",
+      "const": "read-only-reconciliation"
+    },
+    "authorization": {
+      "type": "object",
+      "properties": {
+        "actor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "confirmedAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        }
+      },
+      "required": [
+        "actor",
+        "scope",
+        "confirmedAt"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "fixtureId",
+    "runId",
+    "environmentId",
+    "namespace",
+    "accounts",
+    "allowedMutations",
+    "selectedEntities",
+    "ownership",
+    "cleanup",
+    "unknownMutation",
+    "authorization"
+  ],
+  "additionalProperties": false
+}

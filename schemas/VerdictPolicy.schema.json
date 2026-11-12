@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "0.1.0"
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "manifestSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL",
+        "BLOCKED",
+        "INCONCLUSIVE"
+      ]
+    },
+    "reasonCode": {
+      "type": "string",
+      "enum": [
+        "NONE",
+        "REQUIREMENT_MISMATCH",
+        "AUTH_UNAVAILABLE",
+        "FIXTURE_UNAVAILABLE",
+        "ELEMENT_AMBIGUOUS",
+        "ENVIRONMENT_CHANGED",
+        "BUSINESS_INVARIANT_VIOLATED",
+        "EVIDENCE_MISSING",
+        "RESULT_UNCONFIRMED",
+        "WORKER_LOST",
+        "CANCELED",
+        "CONTRACT_INVALID",
+        "UNSUPPORTED",
+        "INTEGRITY_ERROR"
+      ]
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "SATISFIED",
+              "VIOLATED",
+              "UNKNOWN",
+              "NOT_APPLICABLE"
+            ]
+          },
+          "evidenceIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            }
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "evidenceIds"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "ownershipVerified": {
+      "type": "boolean"
+    },
+    "integrityVerified": {
+      "type": "boolean"
+    },
+    "completedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "runId",
+    "manifestSha256",
+    "verdict",
+    "reasonCode",
+    "message",
+    "checks",
+    "ownershipVerified",
+    "integrityVerified",
+    "completedAt"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,44 @@
+{
+  "version": "0.1.0",
+  "date": "2026-11-12",
+  "gate": "ACCEPT_FOR_LOCAL_IMPLEMENTATION",
+  "review": "docs/CONTRACT-REVIEW.md",
+  "files": [
+    {
+      "sha256": "b5e7a3a75166d85aa1b28118c7e8e36c6ffd2b3e0f331d1c2508ceb81c07115d",
+      "path": "packages/contracts/index.mjs"
+    },
+    {
+      "sha256": "ee81c2de62ca84becbd5bb8452b87db00fa407291fed68c81ccc4c1623a359c8",
+      "path": "ARCHITECTURE.md"
+    },
+    {
+      "sha256": "6d15526e7b32178b3ddff9940045203e39c28fe2c3332bcfa0bc90fea089b80b",
+      "path": "MODULE-BOUNDARIES.md"
+    },
+    {
+      "sha256": "d192b214546e4646b1256441762a6cfaac970657a4ab69d813d42ab789213dc3",
+      "path": "OPERATION-CONTRACT.md"
+    },
+    {
+      "sha256": "fb4ab21fdf651fd9675fe0f2c259262a718b2b703214f1243d0dc167fe966489",
+      "path": "SCENARIO-SCHEMA.md"
+    },
+    {
+      "sha256": "62a2362efdc2d102273f1827a5c6b9f061e1bfd787288320e3b6de91f2eec97a",
+      "path": "RUN-PROTOCOL.md"
+    },
+    {
+      "sha256": "60404f9dfb0779b3c2457db1f790808e4295f1cbf17f3cc9867e3cc4bb794bfe",
+      "path": "EVIDENCE-SCHEMA.md"
+    },
+    {
+      "sha256": "d75ed1f08f42ab33fe82145031ff5eaa68935781ad86457ce282813f17d8db4d",
+      "path": "VERDICT-POLICY.md"
+    },
+    {
+      "sha256": "0ce182ff0f230a742bfac2cd4e83aa3a3d82b90803680a263aff8fb9b3ba4020",
+      "path": "FIXTURE-CONTRACT.md"
+    }
+  ]
+}

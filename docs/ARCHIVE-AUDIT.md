@@ -1,0 +1,25 @@
+# Независимый аудит архивной реализации
+
+Область: read-only просмотр `QA-Adaptive/server/{runtime,contracts,atlas,knowledge,ciz,environment}.mjs`, относящихся тестов и релевантных модулей `QA_v_2`. `.env`, `data/`, архивы evidence и Dev не открывались; Dev не запускался. Это выводы по исходникам, не подтверждение исторических симптомов.
+
+## Решения по повторному использованию
+
+| Компонент | Решение | Основание и риск | Цена интеграции |
+|---|---|---|---|
+| QA-Adaptive `server/contracts.mjs` | Извлечь принципы, переписать контракт | Линейный граф, явные проверки и INCONCLUSIVE при отсутствии assertion/evidence реализованы в строках 6–42. Event schema не связывает PASS с проверкой и доказательством (3); бизнес-проверка зашита только под task-persistence (31–34). | Низкая-средняя: перенести правила, согласовать новые типы событий и run identity. |
+| QA-Adaptive `server/runtime.mjs` | Переписать; сохранить принципы | Снимок сценария версии (41–42), отсутствие повторов действия (146–180), evidence gate (153–165,195) и span для сетевых запросов (104–112) полезны. Риск false PASS: `businessCheck` учитывает фазу `after-reload`, но не требует `assertionComplete`/`result` (154–161); click/fill могут завершиться PASS без ожидаемого постусловия (232–246). Скриншот сам по себе не доказывает бизнес-результат. Зависимость от Playwright, CIZ, Store и текущих event types высокая. | Высокая: разделить executor, orchestration, evidence gate и persistence; потребуется адаптация протокола и независимые проверки. |
+| QA-Adaptive `server/ciz.mjs` | Отклонить как зависимость QA-v2; извлечь только адаптерные идеи | Авторизация сверяет `/auth/me`, localStorage и пользователя (145–220); persistence сверяет один ID в API и видимых строках до/после reload (223–283). Это CIZ-контракт, не универсальный бизнес-слой; `authByPage` — page-local состояние (152–154,228–233). Negative control намеренно заканчивается FAIL, обнаружив отсутствующий ID (235–245). | Средняя для отдельного CIZ adapter, высокая для попытки обобщения. Не импортировать в автономное ядро. |
+| QA-Adaptive `server/environment.mjs` | Извлечь same-origin fence, переписать fingerprint | Защита URL ограничивает origin/protocol (12). Frontend fingerprint — hash списка URL assets либо HTML, не содержимого загруженных assets; backend revision зависит от заголовка, API revision всегда null (8–10). Совпадение URL может скрыть замену содержимого. `sameRevision` сравнивает null как равные (`contracts.mjs:39`). Это риск, выведенный из кода, не доказательство инцидента. | Средняя: определить надёжную fingerprint модель и честные неизвестные значения. |
+| QA-Adaptive `server/atlas.mjs` | Извлечь provenance/stale guards; не считать доказательством PASS | Сам модуль фиксирует ограничения: regex вместо AST, нет маршрутов/контекстов/причинности, Atlas не даёт PASS (50–58). Есть fingerprint/stale guards и согласование locator (34–48,110–169). Observation хранит run/step/revision, но его качество зависит от вызывающего runtime (157–169); это source hint. | Низкая-средняя, если оставить подсказкой; высокая для semantic index. |
+| QA-Adaptive `server/knowledge.mjs` | Отклонить из execution path; возможна идея source index | Жёсткий список файлов и regex маршрутов; кэш пропускает пересчёт при равных mtime/size (4–8). Сам модуль заявляет, что source index не deployment identity и не business contract (8). Не создавать скрытую зависимость на чужой исходный код. | Низкая по коду, средняя по безопасной конфигурации и явному переносу источника. |
+
+## Идеи QA-v2, пригодные для независимой реализации
+
+- `QA_v_2/core/evidence/engine.ts:59–86,101–125` и `core/evidence/business.ts:71–98,119–198`: упорядоченный run-bound ledger, проверка entity/provenance и независимые relation assertions. Извлечь требования, но адаптировать к автономной модели данных.
+- `core/evidence/runtime-gate.ts:27–52`: frozen trusted proof plan и обязательства поверх обычного результата — образец отдельного fail-closed gate.
+- `core/recorder/verified-replay.ts:123–178,228–285` и `core/recorder/verification.ts:20–67`: fingerprint-bound replay, stale scenario guard, независимые assertions, replay сам по себе не выдаёт PASS. Переносить принципы, не recorder implementation.
+- `core/agents/provider.ts:78–114,156–216`: ограничения tools и read-only MCP режим. Сопоставлять с уже существующей изоляцией provider в QA-Adaptive, не переносить orchestration.
+
+## Проверенное покрытие QA-Adaptive
+
+`tests/contracts.test.mjs:11–68` покрывает линейность, phases, запрет PASS без assertions/evidence и revision comparison. `tests/runtime.test.mjs:47–144` проверяет локальный Playwright assertion, exactly-once mutation, env change и cancel. `tests/atlas.test.mjs:18–76` проверяет stale/fingerprint/locator safety. Для будущей интеграции требуются независимые проверки полноты эффекта и привязки evidence к run/scenario/entity; отрицательный контроль `after-reload` без explicit completion; same asset URL при изменённом содержимом; unknown mutation и потерянный response без повтора; Atlas observation без causal proof не закрывает requirement. Local fixture tests не являются Dev/CIZ acceptance.

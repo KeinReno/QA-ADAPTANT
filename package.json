@@ -1,0 +1,13 @@
+{
+  "name": "kaiden-qa-adaptant",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=24"},
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "schemas": "node packages/contracts/export.mjs",
+    "demo": "node scripts/demo-local.mjs"
+  },
+  "dependencies": {"zod": "4.6.7", "playwright": "1.63.0"}
+}

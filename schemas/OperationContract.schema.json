@@ -1,0 +1,231 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "0.1.0"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "roles": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      }
+    },
+    "preconditions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "equals": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "field",
+          "equals"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "additionalProperties": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "null"
+        ]
+      }
+    },
+    "entityKind": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "effects": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "field": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "equals": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "appliesWhen": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "equals": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "field",
+              "equals"
+            ],
+            "additionalProperties": false
+          },
+          "source": {
+            "type": "string",
+            "const": "independent-read"
+          },
+          "deadlineMs": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120000
+          },
+          "intervalMs": {
+            "type": "integer",
+            "minimum": 10,
+            "maximum": 10000
+          }
+        },
+        "required": [
+          "id",
+          "field",
+          "equals",
+          "required",
+          "source",
+          "deadlineMs",
+          "intervalMs"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "mutation": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "repeat": {
+          "type": "string",
+          "const": "never-after-dispatch"
+        },
+        "ownershipField": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "required": [
+        "name",
+        "repeat",
+        "ownershipField"
+      ],
+      "additionalProperties": false
+    },
+    "verification": {
+      "type": "object",
+      "properties": {
+        "adapter": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "readMethod": {
+          "type": "string",
+          "const": "GET"
+        },
+        "lookupBy": {
+          "type": "string",
+          "const": "fixtureId"
+        },
+        "identityFields": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        }
+      },
+      "required": [
+        "adapter",
+        "readMethod",
+        "lookupBy",
+        "identityFields"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "id",
+    "version",
+    "description",
+    "roles",
+    "preconditions",
+    "inputs",
+    "entityKind",
+    "effects",
+    "mutation",
+    "verification"
+  ],
+  "additionalProperties": false
+}

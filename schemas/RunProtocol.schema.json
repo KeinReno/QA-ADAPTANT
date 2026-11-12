@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "0.1.0"
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "commandId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "command": {
+      "type": "string",
+      "enum": [
+        "START",
+        "OBSERVE",
+        "CANCEL",
+        "RECONCILE"
+      ]
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "CREATED",
+        "PREFLIGHT",
+        "RUNNING",
+        "VERIFYING",
+        "RECONCILING",
+        "FINISHED"
+      ]
+    },
+    "scenario": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "operation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "fixtureSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "baseUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "fingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "sourceRevision": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        }
+      },
+      "required": [
+        "id",
+        "baseUrl",
+        "fingerprint",
+        "sourceRevision",
+        "observedAt"
+      ],
+      "additionalProperties": false
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "deadlineMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600000
+        },
+        "maxReadAttempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "maxModelCalls": {
+          "type": "number",
+          "const": 0
+        }
+      },
+      "required": [
+        "deadlineMs",
+        "maxReadAttempts",
+        "maxModelCalls"
+      ],
+      "additionalProperties": false
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "runId",
+    "commandId",
+    "command",
+    "state",
+    "scenario",
+    "operation",
+    "fixtureSha256",
+    "environment",
+    "budget",
+    "createdAt"
+  ],
+  "additionalProperties": false
+}

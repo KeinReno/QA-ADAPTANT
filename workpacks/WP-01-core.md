@@ -1,0 +1,11 @@
+# WP-01/02 — исполняемое ядро и независимая проверка
+
+Входы: ARCHITECTURE, MODULE-BOUNDARIES, шесть контрактов, tests/contracts. Выход: автономный CLI demo и API start/observe/cancel/reconcile; отдельные worker процессы; временный localhost стенд; никакой ЦИЗ/секретов/моделей.
+
+API ядра: canonical(value), digest(value); run(bundle,{root,headed,signal}) → VerdictPolicy + bundle location. Bundle содержит scenario/operation/fixture/manifest. start snapshot hashes/approval/allowed roles+mutation/fixture+environment refs проверяются до browser launch. Node ID и поля HTTP только allowlist. runId/path запрещает traversal. Дубликат START не выполняет browser. Журнал intents подтверждается ACK после fsync. После restart неизменяемый bundle читается заново; intent → reconcile, не replay.
+
+Browser исполняет реальные scoped role locators (container+target exact), проверяет count=1; реальная сеть request→response связана Playwright Request, а не общим «последним ответом». Сначала серверная classification submit по адаптеру, потом durable intent. Простой стенд: form Создать запись, поля Название/Исполнитель/Маркер, кнопка Создать; POST /records, GET /records?fixtureId=..., GET /environment. Response {id,fixtureId}; независимое чтение полных бизнес-полей. Account-role mock только localhost. Отдельные варианты lost response, partial save, delayed read, wrong executor, ambiguous button, crash after mutation, missing evidence, changed scenario, changed environment, untrusted ID, partial operation, foreign cleanup. Fault controls доступны только harness, не browser.
+
+Verifier читает файлы и цепь самостоятельно; независимый GET, ограниченный общий deadline/maxReadAttempts. Проверяет exact effect coverage/identity/marker/provenance, не доверяет worker success. Пропущенное/подменённое свидетельство запрещает PASS. Cleanup функция по умолчанию отсутствует/отклоняет запрос.
+
+Приёмочные команды: npm test; отдельная browser integration с child-process PID != parent и proof count; fault table expected vs actual и mutationCount==1 после lost response/crash/restart. Persistent result переживает restart. Test data в mkdtemp, finally закрывает все серверы/workers/browser. Проверить что без data/ и старых QA приложение запускается. Любые неподдерживаемые вещи явно блокировать. Тесты core не называют Dev-приёмкой.
