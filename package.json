@@ -5,7 +5,9 @@
   "type": "module",
   "engines": {"node": ">=24"},
   "scripts": {
-    "test": "node --test tests/*.test.mjs",
+    "test": "node scripts/run-tests.mjs gate",
+    "test:parallel": "node scripts/run-tests.mjs parallel",
+    "test:races": "node scripts/run-tests.mjs races",
     "schemas": "node packages/contracts/export.mjs",
     "demo": "node scripts/demo-local.mjs"
   },
