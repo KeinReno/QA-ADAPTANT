@@ -1,11 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile, fork } from 'node:child_process';
+import { execFile, execFileSync, fork } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { RunStore } from '../../packages/core/store.mjs';
 import { verifyFrozenBundle } from '../../packages/core/bundle.mjs';
 import { digest } from '../../packages/core/canonical.mjs';
 import { assertTerminalEvidence } from '../../packages/core/evidence-policy.mjs';
+import { assertApprovedOperation } from '../../packages/core/approved-registry.mjs';
 import { IntentCommand, IntentAck, reasonCodes, validate, validateVerdictCoverage } from '../../packages/contracts/index.mjs';
 
 const activeBrowsers = new Map();
@@ -43,6 +44,18 @@ function pidAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; }
   catch (error) { return error.code === 'EPERM'; }
+}
+
+function recordedBrowserPid(runDir) {
+  const pid = readJsonFile(path.join(runDir, 'browser.pid'))?.pid;
+  if (!pidAlive(pid)) return null;
+  if (process.platform === 'win32') {
+    try {
+      const output = execFileSync('powershell.exe', ['-NoProfile', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}").CommandLine`], { encoding: 'utf8', windowsHide: true, timeout: 3000 });
+      if (!output.includes(path.basename(runDir))) return null;
+    } catch { return null; }
+  }
+  return pid;
 }
 
 function killTree(pid) {
@@ -106,6 +119,22 @@ function assertLease(lease, runId) {
   }
 }
 
+function claimFixture(root, environmentId, fixtureId, runId) {
+  const dir = path.join(root, 'fixtures', digest({ environmentId, fixtureId }));
+  fs.mkdirSync(path.dirname(dir), { recursive: true });
+  const body = `${JSON.stringify({ runId, environmentId, fixtureId, pid: process.pid, at: now() })}\n`;
+  try { fs.mkdirSync(dir); }
+  catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    const current = readJsonFile(path.join(dir, 'bind.json'));
+    if (current?.runId === runId) return dir;
+    throw fail('CONTRACT_INVALID', 'Fixture уже связан с другим прогоном');
+  }
+  const fd = fs.openSync(path.join(dir, 'bind.json'), 'wx', 0o600);
+  fs.writeFileSync(fd, body); fs.fsyncSync(fd); fs.closeSync(fd);
+  return dir;
+}
+
 function createLockMarker(lockFile, runId) {
   fs.mkdirSync(path.dirname(lockFile), { recursive: true });
   const body = `${JSON.stringify({ runId, pid: process.pid, at: now() })}\n`;
@@ -146,16 +175,21 @@ export async function run(bundle, { root, headed = false, fault = null, fixtureT
     runId = safeRunId(bundle?.manifest?.runId);
     validate('ScenarioSchema', bundle.scenario); validate('OperationContract', bundle.operation);
     validate('FixtureContract', bundle.fixture); validate('RunProtocol', bundle.manifest);
-    runDir = store.snapshot(bundle);
+    try { runDir = store.snapshot(bundle, { runId, pid: process.pid, at: now() }); }
+    catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      return await adoptExisting(store, runId, bundle);
+    }
     const frozen = verifyFrozenBundle(store, runDir);
     const { manifest, operation, scenario, fixture } = frozen;
+    assertApprovedOperation(operation, scenario);
+    claimFixture(store.root, manifest.environment.id, fixture.fixtureId, runId);
 
     store.appendEvent(runDir, { type: 'STATE', state: 'PREFLIGHT' });
     const before = await readJson(new URL('/environment', manifest.environment.baseUrl));
     if (before.environmentId !== manifest.environment.id || before.fingerprint !== manifest.environment.fingerprint) {
       throw fail('FIXTURE_UNAVAILABLE', 'Идентификатор или fingerprint стенда не совпадает с утверждённым окружением');
     }
-    fs.writeFileSync(path.join(runDir, 'owner.json'), `${JSON.stringify({ runId, pid: process.pid, at: now() })}\n`);
     const lockFile = path.join(store.root, 'locks', `${digest({ environmentId: manifest.environment.id, fixtureId: fixture.fixtureId })}.lock`);
     lease = acquireLease(store.root, manifest.environment.id, fixture.fixtureId, runId);
     createLockMarker(lockFile, runId);
@@ -286,10 +320,31 @@ export async function run(bundle, { root, headed = false, fault = null, fixtureT
   }
 }
 
+async function adoptExisting(store, runId, bundle) {
+  const runDir = store.runPath(runId);
+  for (let attempt = 0; attempt < 40; attempt++) {
+    if (!fs.existsSync(path.join(runDir, 'manifest.json')) || !fs.existsSync(path.join(runDir, 'owner.json'))) {
+      await new Promise(resolve => setTimeout(resolve, 25));
+      continue;
+    }
+    const frozen = verifyFrozenBundle(store, runDir);
+    if (!equal(frozen.scenario, bundle.scenario) || !equal(frozen.operation, bundle.operation) ||
+        !equal(frozen.fixture, bundle.fixture) || !equal(frozen.manifest, bundle.manifest)) {
+      throw fail('CONTRACT_INVALID', 'Повторный START содержит другой snapshot для того же runId');
+    }
+    const finished = terminalResult(store, runDir, frozen);
+    if (finished) return finished;
+    return runningView(runId, runDir, store);
+  }
+  throw fail('CONTRACT_INVALID', 'Параллельный START не дождался владельца прогона');
+}
+
 function terminalResult(store, runDir, frozen) {
   const evidence = store.readEvidence(runDir);
   const verdict = assertTerminalEvidence(evidence, frozen);
   if (!verdict) return null;
+  const recorded = [...store.readEvents(runDir)].reverse().find(event => event.type === 'VERDICT_DURABLE' || (event.type === 'STATE' && event.state === 'FINISHED' && event.verdict));
+  if (recorded && recorded.verdict !== verdict.verdict) throw fail('INTEGRITY_ERROR', 'INTEGRITY_ERROR: вердикт evidence не совпадает с журналом событий');
   return {
     runId: frozen.manifest.runId,
     runDir,
@@ -310,6 +365,9 @@ async function verifyAndPersist(store, runDir, { fault = null, browserUncertain 
   const result = await waitForResult(verification, frozen.manifest.runId, frozen.manifest.budget.deadlineMs);
   const verifierExit = await waitForChild(verification, 5000);
   if (verifierExit.code !== 0) throw fail('WORKER_LOST', 'Verification Worker завершился с ошибкой');
+  if (canceled || cancelRequested(runDir, frozen.manifest.runId)) {
+    return persistVerdict(store, runDir, frozen, resultVerdict(frozen, 'INCONCLUSIVE', 'CANCELED', 'Прогон отменён после начала мутации; повторная мутация не выполняется'));
+  }
   const evidence = store.readEvidence(runDir);
   const actualReads = evidence.filter(item => item.envelope.producer === 'verification' && item.envelope.kind === 'independent-read');
   if (!Array.isArray(result.reads) || !result.reads.every(read => actualReads.some(actual => equal(actual, read)))) {
@@ -329,6 +387,7 @@ async function verifyAndPersist(store, runDir, { fault = null, browserUncertain 
     checkIds: verdict.checks.filter(check => ['SATISFIED', 'VIOLATED'].includes(check.status)).map(check => check.id)
   });
   store.appendEvent(runDir, { type: 'VERDICT_DURABLE', evidenceId: finalEvidence.evidenceId, verdict: verdict.verdict });
+  store.appendEvent(runDir, { type: 'STATE', state: 'FINISHED', verdict: verdict.verdict, reasonCode: verdict.reasonCode });
   return terminalResult(store, runDir, frozen);
 }
 
@@ -361,7 +420,7 @@ export async function observe({ root, runId }) {
     runId: safeId,
     runDir,
     manifestSha256: frozen.manifestSha256,
-    state: events.at(-1)?.state || frozen.manifest.state,
+    state: [...events].reverse().find(event => event.state)?.state || frozen.manifest.state,
     verdict: terminal?.verdict || null,
     evidenceIds: evidence.map(item => item.envelope.evidenceId),
     events
@@ -399,7 +458,10 @@ export async function cancel({ root, runId }) {
   cancellations.set(safeId, true);
   const browser = activeBrowsers.get(safeId);
   if (browser) killTree(browser.pid);
-  else killTree(readJsonFile(path.join(runDir, 'browser.pid'))?.pid);
+  else {
+    const pid = recordedBrowserPid(runDir);
+    if (pid) killTree(pid);
+  }
   return { runId: safeId, runDir, state: 'CANCEL_REQUESTED', verdict: null, evidenceIds: store.readEvidence(runDir).map(item => item.envelope.evidenceId) };
 }
 

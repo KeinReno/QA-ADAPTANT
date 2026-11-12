@@ -75,13 +75,14 @@ test('Grok P0: сохранённый PASS с вымышленными evidence 
     completedAt: new Date().toISOString(),
     checks: first.verdict.checks.map(check => ({ ...check, evidenceIds: ['evidence-that-does-not-exist'] }))
   };
-  store.appendEvidence(first.runDir, {
+  assert.throws(() => store.appendEvidence(first.runDir, {
     runId, manifestSha256: first.verdict.manifestSha256, fixtureId: bundle.fixture.fixtureId,
     stepId: bundle.scenario.nodes.at(-1).id, producer: 'verification', kind: 'verdict', artifact: forged,
     parentEvidenceIds: records.map(item => item.envelope.evidenceId), checkIds: forged.checks.map(check => check.id)
-  });
-  await assert.rejects(start(bundle, { root, fixtureToken: fixture.authToken }), /INTEGRITY_ERROR|Эффект|evidence/i);
-  await assert.rejects(reconcile({ root, runId }), /INTEGRITY_ERROR|Эффект|evidence/i);
+  }), /INTEGRITY_ERROR/);
+  const again = await start(bundle, { root, fixtureToken: fixture.authToken });
+  assert.equal(again.verdict.verdict, 'PASS');
+  assert.equal(store.readEvidence(first.runDir).at(-1).envelope.kind, 'verdict');
 });
 
 test('Grok P0: cross-process CANCEL не публикует вердикт до остановки владельца и не допускает поздний POST', { timeout: 30000 }, async t => {

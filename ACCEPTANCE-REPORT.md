@@ -1,6 +1,6 @@
 # Приёмка — рабочее состояние 12 ноября 2026
 
-Общая готовность: **локальное ядро реализовано и ожидает независимый review; НЕ ПРИНЯТО как 0.1/1.0**. Проверенные схемы, браузерный localhost-стенд и настоящий Dev — разные уровни подтверждения.
+Общая готовность: **Release Candidate 2, НЕ ПРИНЯТО**. Независимый аудит дал REJECT. После него закрыты пакеты владения, доверия к evidence и жизненного цикла, и ревизия готова к повторной проверке. Исполнитель Grok этот результат не принимает. Повторная приёмка тем, кто писал репродукторы, ещё не выполнена. Локальный реестр тестовой операции не авторизует операции ЦИЗ. Проверенные схемы, браузерный localhost-стенд и настоящий Dev — разные уровни подтверждения.
 
 | Задача | Исполнитель | Статус | Фактическое доказательство | Граница |
 |---|---|---|---|---|
@@ -8,7 +8,7 @@
 | Аудит архивов и локальных исходников ЦИЗ | Astra, Luna | ACCEPTED как source audit | `docs/ARCHIVE-AUDIT.md`, `docs/CIZ-SOURCE-AUDIT.md` | deployed Dev не подтверждён |
 | Шесть контрактов и schemas | Astra; review Luna | ACCEPTED для реализации | `packages/contracts`, `schemas`, `docs/CONTRACT-REVIEW.md` | изменения только через процедуру review |
 | Машинные guards контрактов | Astra | REVIEW | 12/12 unit-тестов | не браузерная приёмка |
-| Control / Browser / Verification / Evidence Store | Kimi, затем Grok как исполнитель | REVIEW | реальные дочерние процессы; локальный набор 40/40 на Node v24.16.0 | независимый review этого исправления не выполнен; исполнитель свой результат не принимает |
+| Control / Browser / Verification / Evidence Store | Kimi, затем Grok как исполнитель | REJECT, исправления на повторной проверке | независимый отчёт REJECT; затем пять прогонов 47/47 и исходные репродукторы владельца, замка, fixture, отмены и аварии | исполнитель свой результат не принимает; ЦИЗ не открыт |
 | START / OBSERVE / CANCEL / RECONCILE | Kimi, затем Grok | REVIEW | повторный START, observe, cancel в процессе и из другого процесса, lease fixture, reconcile после гибели Control | один локальный Control Plane, не распределённый консенсус |
 | Локальный стенд из 12 обязательных отказов и 7 регрессий аудита | Kimi, затем Grok | REVIEW | матрица ниже; 40/40, exit code 0 | не Dev и не CIZ Adapter |
 | Автономная demo | Grok, повторный прогон | REVIEW | `node scripts/demo-local.mjs`: exit 0, PASS/NONE, mutationCount=1, independentReadCount=1 | каталог `data/demo-1794491933469`; не приёмка |
@@ -20,9 +20,11 @@
 ```text
 node --version                         → v24.16.0
 node --test --test-timeout=45000 tests/*.test.mjs
-                                       → 40 passed, 0 failed, exit code 0
-node scripts/demo-local.mjs            → exit code 0; PASS / NONE; POST=1; независимый GET=1
+                                       → пять раз подряд: 47 passed, 0 failed, exit code 0
+npm run schemas                        → exit 0, схемы без diff
 ```
+
+Исходные репродукторы из `C:\Users\gvi\AppData\Local\Temp\kaiden-audit` после исправления: гонка START больше не публикует чужой INCONCLUSIVE и не ломает журнал; удаление locks и leases не создаёт второй объект; повторный fixtureId блокируется; CANCEL во время VERIFYING даёт INCONCLUSIVE / CANCELED; 8/8 инъекций аварии остаются INCONCLUSIVE; подмена хвоста evidence даёт INTEGRITY_ERROR; десять одновременных пар START не отдают сырой EEXIST и делают один POST. Скрипт самоутверждения падает у себя на отсутствии independent-read; те же данные дают BLOCKED и ноль мутаций. Каталог `pristine-a` для полного набора атак evidence отсутствует, этот скрипт не переигрывался. Подробности — `HANDOFF.md` и `docs/changes/002-ownership-evidence-trust.md`.
 
 Прогон 12 ноября 2026 на этой машине. Состав: 12 контрактных unit-тестов, 12 fault-тестов, 8 lifecycle/integrity-тестов, 1 runtime и 7 регрессий аудита. Для fault-кейсов проверяется фактическое число POST на стенде. Recovery-кейс завершает Control после mutation evidence, запускает новый процесс CLI и подтверждает отсутствие повторного POST.
 

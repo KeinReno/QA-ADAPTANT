@@ -64,6 +64,12 @@ export function assertEvidenceRefs(items, bundle, { requireMutation = true } = {
   const responses = items.filter(item => item.envelope.kind === 'response');
   if (intents.length > 1 || requests.length > 1 || responses.length > 1) bad('EVIDENCE_CHAIN');
   if (requireMutation && (intents.length !== 1 || requests.length !== 1)) bad('EVIDENCE_CHAIN');
+  if (responses.length === 1) {
+    const responseId = responses[0].envelope.evidenceId;
+    for (const read of items.filter(item => item.envelope.kind === 'independent-read')) {
+      if (read.envelope.parentEvidenceIds[0] !== responseId) bad('READ_PARENT');
+    }
+  }
   return { intent: intents[0] || null, request: requests[0] || null, response: responses[0] || null };
 }
 

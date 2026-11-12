@@ -32,7 +32,7 @@ export class RunStore {
     return dir;
   }
 
-  snapshot(bundle) {
+  snapshot(bundle, owner = null) {
     const dir = this.runPath(bundle.manifest.runId);
     fs.mkdirSync(path.join(this.root, 'runs'), { recursive: true });
     fs.mkdirSync(dir, { recursive: false });
@@ -40,6 +40,7 @@ export class RunStore {
     for (const [name, value] of Object.entries({ scenario: bundle.scenario, operation: bundle.operation, fixture: bundle.fixture, manifest: bundle.manifest })) {
       atomicWrite(path.join(dir, `${name}.json`), jsonBytes(value));
     }
+    if (owner) atomicWrite(path.join(dir, 'owner.json'), jsonBytes(owner));
     atomicWrite(path.join(dir, 'events.jsonl'), Buffer.alloc(0));
     atomicWrite(path.join(dir, 'evidence.jsonl'), Buffer.alloc(0));
     return dir;
@@ -105,6 +106,7 @@ export class RunStore {
     const file = path.join(runDir, 'evidence.jsonl');
     if (fs.existsSync(file)) this.#assertRegularFile(file, runDir);
     const previous = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map(JSON.parse) : [];
+    if (previous.some(item => item.kind === 'verdict')) throw new Error('INTEGRITY_ERROR: после терминального verdict новые evidence запрещены');
     const artifactPath = `${String(previous.length + 1).padStart(6, '0')}-${kind}.json`;
     const artifactBytes = jsonBytes(artifact);
     const artifactFile = path.join(runDir, 'evidence', artifactPath);
@@ -122,6 +124,7 @@ export class RunStore {
     const bytes = Buffer.from(`${canonical(envelope)}\n`);
     const fd = fs.openSync(file, 'a', 0o600);
     try { fs.writeFileSync(fd, bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    atomicWrite(path.join(runDir, 'evidence-anchor.json'), jsonBytes({ sequence: envelope.sequence, envelopeSha256: digest(envelope) }));
     return envelope;
   }
 
@@ -149,6 +152,13 @@ export class RunStore {
       const artifact = JSON.parse(bytes.toString('utf8'));
       result.push({ envelope, artifact });
       previous = digest(envelope);
+    }
+    if (result.length) {
+      const anchorFile = path.join(runDir, 'evidence-anchor.json');
+      this.#assertRegularFile(anchorFile, runDir);
+      const anchor = JSON.parse(fs.readFileSync(anchorFile, 'utf8'));
+      const last = result.at(-1).envelope;
+      if (anchor.sequence !== last.sequence || anchor.envelopeSha256 !== digest(last)) throw new Error('INTEGRITY_ERROR: хвост evidence не совпадает с анкером');
     }
     for (const item of result) {
       if (item.envelope.parentEvidenceIds.some(id => !ids.has(id) || result.find(x => x.envelope.evidenceId === id).envelope.sequence >= item.envelope.sequence)) {

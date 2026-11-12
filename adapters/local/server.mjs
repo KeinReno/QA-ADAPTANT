@@ -42,6 +42,7 @@ export async function serveLocalFixture({ fault = null, environmentId = randomUU
       return;
     }
     if (req.method === 'GET' && url.pathname === '/environment') {
+      if (fault === 'slowEnvironment') await new Promise(resolve => setTimeout(resolve, 1500));
       send(200, { environmentId, fingerprint: mutated && fault === 'changedEnvironment' ? `${initialFingerprint}-changed` : initialFingerprint, sourceRevision: 'local-fixture-v1' });
       return;
     }
@@ -74,12 +75,18 @@ export async function serveLocalFixture({ fault = null, environmentId = randomUU
       catch { send(400, { error: 'invalid_json' }); return; }
       const idempotencyKey = req.headers['idempotency-key'];
       const bodyHash = hash(raw);
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof payload.fixtureId !== 'string' || !payload.fixtureId) {
+        send(400, { error: 'fixture_required' });
+        return;
+      }
       if (typeof idempotencyKey === 'string' && idempotencyKey && byIdempotency.has(idempotencyKey)) {
         const existing = byIdempotency.get(idempotencyKey);
         if (existing.bodyHash !== bodyHash) { send(409, { error: 'idempotency_conflict' }); return; }
         send(200, { id: existing.record.id, fixtureId: existing.record.fixtureId });
         return;
       }
+      const sameFixture = records.find(record => record.fixtureId === payload.fixtureId);
+      if (sameFixture) { send(200, { id: sameFixture.id, fixtureId: sameFixture.fixtureId }); return; }
       mutationCount++;
       mutated = true;
       const record = {

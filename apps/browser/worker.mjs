@@ -8,11 +8,13 @@ import { verifyFrozenBundle } from '../../packages/core/bundle.mjs';
 const runDir = path.resolve(process.argv[2] || '');
 const headed = process.env.QA_ADAPTANT_HEADED === '1';
 const fault = process.env.QA_ADAPTANT_FAULT || '';
-let runId, manifest, scenario, operation, fixture, page, intentAcked = false, intentId, mutationRequestSeen = false, controlLost = false, shuttingDown = false;
+let runId, manifest, scenario, operation, fixture, page, intentAcked = false, intentId, mutationRequestSeen = false, controlLost = false, shuttingDown = false, injectedExit = 0;
 function exitSoon(code) {
+  if (injectedExit && code === 0) return;
   shuttingDown = true;
+  const finalCode = injectedExit || code;
   setImmediate(() => {
-    process.exitCode = code;
+    process.exitCode = finalCode;
     try { if (process.connected) process.disconnect(); } catch {}
   });
 }
@@ -101,17 +103,23 @@ async function execute() {
         if (request.method() !== 'POST' || url.pathname !== '/records') return;
         const requestId = requestIds.get(request);
         let body = {};
-        try { body = await response.json(); } catch { /* response evidence records status and absent identity */ }
+        try {
+          body = await Promise.race([
+            response.json(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('body-timeout')), 1500))
+          ]);
+        } catch { /* response evidence records status and absent identity */ }
         const entity = body?.id ? { kind: operation.entityKind, id: String(body.id) } : null;
         const evidenceAck = requestId ? waitEvidenceAck(requestId) : Promise.resolve();
         await event('HTTP_RESPONSE', { requestId: requestId || null, status: response.status(), responseFixtureId: typeof body?.fixtureId === 'string' ? body.fixtureId : null, entity });
         await evidenceAck;
         if (fault === 'crashControlAfterMutation') {
-          process.kill(process.ppid, 'SIGKILL');
+          injectedExit = 87;
+          try { process.kill(process.ppid, 'SIGKILL'); } catch {}
           exitSoon(87);
           return;
         }
-        if (fault === 'crashAfterMutation') { exitSoon(86); return; }
+        if (fault === 'crashAfterMutation') { injectedExit = 86; exitSoon(86); return; }
       })();
       addPending(task);
     });
@@ -182,6 +190,7 @@ async function execute() {
       }
     }
     await Promise.allSettled([...pending]);
+    if (injectedExit) { exitSoon(injectedExit); return; }
     await event('DONE', { status: 'COMPLETED' });
   } finally {
     await browser.close().catch(() => {});
