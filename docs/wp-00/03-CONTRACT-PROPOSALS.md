@@ -4,7 +4,7 @@
 
 Общая версия новых объектов: `schemaVersion = "0.2.0"`. Идентификатор — строка 1…160, как в 0.1. Хеш — 64 шестнадцатеричных символа в нижнем регистре. Время — ISO-8601 UTC. Неизвестное поле отвергается.
 
-Каноническая подпись считается функцией `digest` от объекта без `signature` и `signatureAlgorithm`. Алгоритм подписи только `Ed25519`. `keyId` — SHA-256 сырого публичного ключа.
+Каноническая подпись считается функцией `digest` от объекта без `signature` и `signatureAlgorithm`. Алгоритм подписи только `Ed25519`. `keyId` — SHA-256 сырого публичного ключа. Поле `domain` входит в подписываемые байты. Проверяющий отвергает объект, если `domain` не совпадает с типом объекта или `keyId` не принадлежит ключу, назначенному этому `domain`.
 
 ## Principal
 
@@ -13,30 +13,35 @@
 | Поле | Зачем |
 |---|---|
 | `principalId` | Стабильное имя. Для владельца фиксируется при создании корня |
-| `roles` | Непустой подмножество `owner`, `operator`, `runner`, `verifier`, `agent` |
-| `keyId` | Связь с публичным ключом. У `runner`, `verifier` и `agent` ключа подписи нет, поле `null` |
+| `roles` | Непустое подмножество `owner`, `operator`, `runner`, `anchor-signer`, `verifier`, `agent` |
+| `keyId` | Связь с публичным ключом. У `runner`, `verifier` и `agent` ключа подписи нет, поле `null`. У `anchor-signer` это ключ анкера, не ключ owner |
+| `windowsSid` | Обязателен у `operator` и у человека-`owner`, если он же вызывает старт. У `runner` и `anchor-signer` — `null` |
 | `status` | `active`, `revoked` |
+| `domain` | Буквально `principal` |
 
 `displayName` не входит в проверку допуска и в 0.2 не нужен.
 
-Один Principal не совмещает `owner` и `runner`. Процесс Control — всегда `runner`. Человек-владелец — `owner`. Если человек ещё и запускает прогон, у него может быть вторая запись `operator` без права подписи approval. Совмещение `owner` и `operator` на одной записи допускается только вместе с правилом двух актов: подпись approval и вызов `startTrusted` разделяются по времени, подпись не встроена в вызов старта.
+Один Principal не совмещает `owner` и `runner` и не совмещает `owner` и `anchor-signer`. Процесс Control — всегда `runner`. Процесс подписи анкера — всегда `anchor-signer`. Человек-владелец — `owner`. Для локальной 0.2 ему разрешено иметь роль `operator` на той же или второй записи. Подпись approval и вызов `startTrusted` всё равно два действия. Вызов принимается только если SID процесса совпал с `windowsSid`.
 
 ## EnvironmentRecord
 
 | Поле | Зачем |
 |---|---|
+| `domain` | Буквально `environment-record` |
 | `environmentId` | Стабильный идентификатор, не порт и не fingerprint |
-| `generation` | Целое от 1. Меняется при смене origin, nonce или статуса |
+| `generation` | Целое от 1. Меняется при смене origin, ключа стенда или статуса |
 | `kind` | `local-stand`, `dev`, `production` |
 | `status` | `active`, `disabled`, `revoked` |
 | `origin` | Точный URL. Для local-stand только `http://127.0.0.1:<порт>` |
-| `attestationNonceSha256` | Хеш nonce. Сам nonce в запись, которая может лежать рядом с журналами, не кладётся; сверяется в памяти при опросе стенда |
+| `standKeyId` | SHA-256 публичного ключа стенда. Приватный ключ в запись не входит и на диск не пишется |
 | `credentialRef` | Ссылка, не секрет. Пусто, если мутация этой среды секрет не использует |
 | `signature`, `signatureAlgorithm`, `keyId` | Подпись owner |
 
-Поле `fingerprint` в этот контракт не входит. Существующее поле манифеста 0.1 для старого входа сохраняется и доверенным доказательством не считается.
+Поле `fingerprint` и публичный nonce в этот контракт не входят. Существующее поле манифеста 0.1 для старого входа сохраняется и доверенным доказательством не считается.
 
-Для 0.2 PDP разрешает `dispatch` только если `kind=local-stand`, `status=active`, поколение совпало с живым ответом и хеш nonce совпал.
+Отдельный объект `environment-attest` подписывает ключ стенда. В нём `environmentId`, `generation`, `origin`, PID процесса стенда и challenge, который прислал Control. Challenge — 32 случайных байта на каждую проверку. Старый ответ на тот же challenge отвергается.
+
+Для 0.2 PDP разрешает `dispatch` только если `kind=local-stand`, `status=active`, поколение совпало, подпись свежего challenge сошлась с `standKeyId` и дескриптор процесса стенда ещё жив.
 
 ## Approval
 
@@ -46,6 +51,7 @@
 |---|---|
 | `approvalId` | Нужен. Уникален в trust root |
 | `schemaVersion` | `0.2.0` |
+| `domain` | Буквально `approval` |
 | `issuerPrincipalId` | Только Principal с ролью `owner` и `status=active` |
 | `subjectPrincipalId` | Кто имеет право вызвать старт. `owner` или `operator` |
 | `operationId`, `operationVersion` | Нужны. Подмена операции ломает подпись |
@@ -87,7 +93,7 @@
 
 ## Consumption
 
-`approvalId`, `runId`, `decisionId`, `inputsHash`, `environmentGeneration`, `consumedAt`. Файл создаётся эксклюзивно. В подписи owner не нуждается: это локальный факт исполнителя, а подлинность разрешения проверяется по approval. Подмена consumption без ключа может только запретить мутацию, потому что чужой `runId` не совпадёт с повторным стартом, а отсутствие файла не создаёт PASS. Удаление consumption после успешного прогона ловится анкером: анкер содержит `approvalId` и `runId`, OBSERVE требует совпадения с consumption.
+`approvalId`, `runId`, `decisionId`, `inputsHash`, `environmentGeneration`, `consumedAt`. Файл появляется только после временной записи, fsync и rename на том же томе. Неполный временный файл расходом не является. Нечитаемое итоговое имя блокирует ACK и не стирается ради повторной мутации. В подписи owner запись не нуждается: это локальный факт исполнителя, а подлинность разрешения проверяется по approval. Удаление consumption после успешного прогона ловится анкером: анкер содержит `approvalId` и `runId`, OBSERVE требует совпадения с consumption.
 
 ## TrustDecision
 
@@ -95,11 +101,12 @@
 |---|---|
 | `decisionId` | Новый идентификатор каждого вызова PDP |
 | `effect` | `ALLOW`, `DENY`, `INDETERMINATE` |
-| `phase` | `preflight`, `dispatch`, `observe`, `reconcile`, `anchor` |
+| `phase` | `preflight`, `dispatch`, `observe`, `reconcile`, `publish` |
 | `reasonCode` | Код из таблицы ниже |
 | `approvalId` | Или `null`, если документа нет |
 | `inputsHash` | Хеш фактически замороженных входов |
 | `environmentId`, `environmentGeneration` | Что проверялось |
+| `authenticatedSid` | SID, прочитанный у процесса. `null` только для старого входа, который сюда не входит |
 | `obligations` | `consume-dispatch` или `do-not-dispatch` |
 | `evaluatedAt` | Время вычисления |
 
@@ -113,6 +120,7 @@
 | `PRINCIPAL_UNKNOWN` | Нет записи или ключ не тот |
 | `PRINCIPAL_REVOKED` | Principal отозван |
 | `ROLE_DENIED` | Роль не позволяет действие |
+| `CALLER_UNAUTHENTICATED` | SID вызывающего не совпал с `windowsSid` субъекта. Поле `subjectPrincipalId` при этом может быть верным |
 | `APPROVAL_MISSING` | Нет документа |
 | `APPROVAL_SIGNATURE_INVALID` | Подпись, алгоритм или keyId |
 | `APPROVAL_MISMATCH` | Операция, входы, fixture, эффекты, сценарий или ресурс |
@@ -123,10 +131,12 @@
 | `ENVIRONMENT_UNKNOWN` | Нет записи реестра |
 | `ENVIRONMENT_REVOKED` | Статус не `active` |
 | `ENVIRONMENT_KIND_DENIED` | Не `local-stand` в выпуске 0.2 |
-| `ENVIRONMENT_ATTESTATION_FAILED` | Nonce, origin, редирект, смена поколения |
+| `ENVIRONMENT_ATTESTATION_FAILED` | Подпись challenge, origin, PID, поколение или гибель процесса стенда |
 | `ENVIRONMENT_UNAVAILABLE` | Ответ среды не получен |
 | `TRUST_STORE_UNAVAILABLE` | Корень доверия не читается |
-| `ANCHOR_MISSING` | Нет заявления |
+| `CONSUMPTION_INCOMPLETE` | Итог расхода не читается или не синхронизирован. ACK запрещён |
+| `PUBLICATION_PENDING` | Candidate есть, терминального verdict ещё нет. Это не PASS |
+| `ANCHOR_MISSING` | Нет заявления там, где публикация уже обязана была его иметь |
 | `ANCHOR_CONFLICT` | Второе отличное заявление или несовпадение с коммитом |
 | `ANCHOR_SIGNATURE_INVALID` | Подпись анкера |
 | `RUN_CANCELED` | Отмена до dispatch |
@@ -142,7 +152,9 @@
 | Несовпадение approval, роли, повтор, просрочка, вид среды | `BLOCKED` | `CONTRACT_INVALID` |
 | Среда не подтвердилась или поколение сменилось до мутации | `BLOCKED` | `ENVIRONMENT_CHANGED` |
 | То же после durable intent | `INCONCLUSIVE` | `ENVIRONMENT_CHANGED` |
-| Анкер отсутствует или не подписан при готовом бизнес-PASS | `INCONCLUSIVE` | `EVIDENCE_MISSING` |
+| Анкер отсутствует к концу бюджета при candidate PASS | один раз `INCONCLUSIVE` | `EVIDENCE_MISSING` |
+| Вызывающий SID не совпал | `BLOCKED` | `AUTH_UNAVAILABLE` |
+| Нечитаемый consumption до ACK | мутации нет | `AUTH_UNAVAILABLE` |
 | Конфликт анкера или подмена коммита | терминальный отказ | `INTEGRITY_ERROR` |
 | Отмена до intent | `BLOCKED` | `CANCELED` |
 | Отмена после intent | `INCONCLUSIVE` | `CANCELED` |
@@ -151,14 +163,17 @@
 
 ## AnchorStatement
 
-`anchorId`, `runId`, `manifestSha256`, `terminalCommit: {sequence, envelopeSha256}`, `verdict`, `reasonCode`, `approvalId`, `inputsHash`, `environmentId`, `environmentGeneration`, `publishedAt`, подпись owner.
+`domain` буквально `anchor-statement`. Поля: `anchorId`, `runId`, `manifestSha256`, `chainHead: {sequence, envelopeSha256}` последнего коммита до verdict, `candidateSha256`, `verdict`, `reasonCode`, `approvalId`, `inputsHash`, `environmentId`, `environmentGeneration`, `publishedAt`. Подпись — ключ anchor-signer. Подпись owner для этого `domain` недействительна.
 
-`verdict` здесь — уже принятое значение 0.1: `PASS`, `FAIL`, `BLOCKED`, `INCONCLUSIVE`. Анкер не вводит новый вердикт. Для `PASS` заявление обязательно до публикации. Для `FAIL` и `BLOCKED` заявление тоже публикуется, если trust root доступен, но отсутствие анкера у `FAIL` не превращает его в PASS и не скрывает нарушение эффекта. Если анкер `FAIL` записать не удалось, локальный `FAIL` сохраняется, а `observeTrusted` помечает `ANCHOR_MISSING` как дефект доказательства, не как успех. Для `PASS` такой дефект запрещает публикацию PASS.
+`chainHead` — не хеш самого verdict: verdict дописывается только после проверки этой подписи. После записи verdict проверяющий сверяет три вещи: подпись анкера, совпадение `chainHead` с коммитом перед verdict и совпадение канонического verdict с `candidateSha256`.
+
+`verdict` — значение 0.1: `PASS`, `FAIL`, `BLOCKED`, `INCONCLUSIVE`. Пока состояние публикации не `terminal`, этой записи в evidence нет. Для candidate PASS заявление обязательно до единственной записи PASS. Для candidate FAIL отсутствие анкера не создаёт вторую запись и не скрывает FAIL: пишется один FAIL, а наблюдение показывает `ANCHOR_MISSING`.
 
 ## Совместимость
 
 - Объекты 0.1 не получают новых полей.
 - Отсутствие каталога `runDir/trust/` означает прогон старого входа.
+- `start()` не принимает `approvalId`, путь trust root и идентификатор адаптера. Эти аргументы дают отказ старого контракта и ноль мутаций вне уже принятого локального стенда.
 - `startTrusted` на операции вне `local-create-record` в 0.2 возвращает DENY `CONTRACT_INVALID`, пока отдельным изменением не расширен реестр операций. Trust Layer не является способом обойти реестр смыслов эффектов.
 - Первое расширение реестра операций — отдельный reviewed change, не часть WP-01…WP-05.
-- Ключ, nonce attestation и Bearer не входят ни в один JSON контракт, который пишется в каталог прогона.
+- Оба приватных ключа, ключ стенда и Bearer не входят ни в один JSON, который пишется в каталог прогона.
