@@ -334,8 +334,9 @@ export async function run(bundle, { root, headed = false, fault = null, fixtureT
         return persistVerdict(store, runDir, frozen, verdict);
       }
       const browserUncertain = Boolean(workerError) || !gotDone || exit.code !== 0;
+      const lossDetail = `exit=${exit.code ?? 'null'}, signal=${exit.signal || 'none'}, done=${gotDone}, phase=${workerError?.code || (gotDone ? 'DONE' : 'NO_DONE')}${workerError?.message ? `, ipc=${String(workerError.message).slice(0, 160)}` : ''}`;
       cancellations.delete(runId);
-      return await verifyAndPersist(store, runDir, { fault, browserUncertain, canceled, fixtureToken });
+      return await verifyAndPersist(store, runDir, { fault, browserUncertain, canceled, fixtureToken, lossDetail });
     } finally {
       try { fs.unlinkSync(lockFile); } catch {}
     }
@@ -377,9 +378,16 @@ async function adoptExisting(store, runId, bundle) {
 }
 
 function terminalResult(store, runDir, frozen) {
-  const evidence = store.readEvidence(runDir);
-  const verdict = assertTerminalEvidence(evidence, frozen);
-  if (!verdict) return null;
+  let evidence = store.readEvidence(runDir);
+  let verdict = assertTerminalEvidence(evidence, frozen);
+  if (!verdict) {
+    const claimed = [...store.readEvents(runDir)].reverse().find(event => event.type === 'VERDICT_DURABLE' || (event.type === 'STATE' && event.state === 'FINISHED'));
+    if (claimed) {
+      evidence = store.readEvidence(runDir);
+      verdict = assertTerminalEvidence(evidence, frozen);
+      if (!verdict) throw fail('INTEGRITY_ERROR', 'INTEGRITY_ERROR: терминальный результат в событиях не подтверждён журналом evidence');
+    } else return null;
+  }
   if (verdict.verdict === 'PASS' || verdict.verdict === 'FAIL') assertApprovedOperation(frozen.operation, frozen.scenario);
   const recorded = [...store.readEvents(runDir)].reverse().find(event => event.type === 'VERDICT_DURABLE' || (event.type === 'STATE' && event.state === 'FINISHED' && event.verdict));
   if (recorded && recorded.verdict !== verdict.verdict) throw fail('INTEGRITY_ERROR', 'INTEGRITY_ERROR: вердикт evidence не совпадает с журналом событий');
@@ -391,18 +399,19 @@ function terminalResult(store, runDir, frozen) {
   };
 }
 
-async function verifyAndPersist(store, runDir, { fault = null, browserUncertain = true, canceled = false, fixtureToken = process.env.QA_ADAPTANT_FIXTURE_TOKEN || '' } = {}) {
+async function verifyAndPersist(store, runDir, { fault = null, browserUncertain = true, canceled = false, fixtureToken = process.env.QA_ADAPTANT_FIXTURE_TOKEN || '', lossDetail = '' } = {}) {
   const frozen = verifyFrozenBundle(store, runDir);
   const finished = terminalResult(store, runDir, frozen);
   if (finished) return finished;
   const verificationFile = new URL('../verification/worker.mjs', import.meta.url);
   const args = [runDir, frozen.manifestSha256];
   if (browserUncertain) args.push('--browser-unconfirmed');
+  if (browserUncertain && lossDetail) args.push(`--browser-loss=${encodeURIComponent(lossDetail)}`);
   if (canceled) args.push('--cancellation');
   const verification = spawnWorker(verificationFile, args, { QA_ADAPTANT_FAULT: fault || '', QA_ADAPTANT_FIXTURE_TOKEN: fixtureToken });
   const result = await waitForResult(verification, frozen.manifest.runId, frozen.manifest.budget.deadlineMs);
   const verifierExit = await waitForChild(verification, 5000);
-  if (verifierExit.code !== 0) throw fail('WORKER_LOST', 'Verification Worker завершился с ошибкой');
+  if (verifierExit.code !== 0) throw fail('WORKER_LOST', `Verification Worker завершился с ошибкой: exit=${verifierExit.code}, signal=${verifierExit.signal || 'none'}`);
   if (canceled || cancelRequested(runDir, frozen.manifest.runId)) {
     return persistVerdict(store, runDir, frozen, resultVerdict(frozen, 'INCONCLUSIVE', 'CANCELED', 'Прогон отменён после начала мутации; повторная мутация не выполняется'));
   }
@@ -538,7 +547,7 @@ function waitForResult(child, runId, timeoutMs) {
       if (message?.type === 'RESULT' && message.runId === runId) { clearTimeout(timer); resolve(message.payload); }
     });
     child.once('error', error => { clearTimeout(timer); reject(error); });
-    child.once('exit', code => { if (code !== 0) { clearTimeout(timer); reject(fail('WORKER_LOST', 'Verification Worker завершился без результата')); } });
+    child.once('exit', code => { if (code !== 0) { clearTimeout(timer); reject(fail('WORKER_LOST', `Verification Worker завершился без результата: exit=${code}, phase=WAIT_RESULT`)); } });
   });
 }
 

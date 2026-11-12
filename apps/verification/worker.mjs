@@ -8,6 +8,7 @@ import { IndependentRead, validate, validateVerdictCoverage } from '../../packag
 const runDir = path.resolve(process.argv[2] || '');
 const expectedManifestHash = process.argv[3] || '';
 const browserUncertain = process.argv.includes('--browser-unconfirmed');
+const browserLoss = decodeURIComponent((process.argv.find(arg => arg.startsWith('--browser-loss=')) || '').slice('--browser-loss='.length));
 const canceled = process.argv.includes('--cancellation');
 const now = () => new Date().toISOString();
 const send = message => new Promise((resolve, reject) => {
@@ -180,7 +181,7 @@ async function execute() {
   });
   let verdict, reasonCode, message;
   if (canceled) { verdict = 'INCONCLUSIVE'; reasonCode = 'CANCELED'; message = 'Прогон отменён; начавшаяся мутация не повторяется и не откатывается'; }
-  else if (browserUncertain) { verdict = 'INCONCLUSIVE'; reasonCode = 'WORKER_LOST'; message = 'Browser Worker завершился без подтверждения полного выполнения; мутация не повторяется'; }
+  else if (browserUncertain) { verdict = 'INCONCLUSIVE'; reasonCode = 'WORKER_LOST'; message = `Browser Worker завершился без подтверждения полного выполнения; мутация не повторяется${browserLoss ? ` (${browserLoss})` : ''}`; }
   else if (identityFailure || !chain.response) { verdict = 'INCONCLUSIVE'; reasonCode = 'RESULT_UNCONFIRMED'; message = 'Независимое чтение не удалось связать с подтверждённым ответом мутации'; }
   else if (chain.response.artifact.status !== 201) { verdict = 'INCONCLUSIVE'; reasonCode = 'RESULT_UNCONFIRMED'; message = 'Ответ HTTP 200 вернул уже существующий объект; это не доказательство создания'; }
   else if (checks.some(check => check.status === 'UNKNOWN')) { verdict = 'INCONCLUSIVE'; reasonCode = 'EVIDENCE_MISSING'; message = 'Для завершения обязательных проверок недостаточно независимых данных'; }
