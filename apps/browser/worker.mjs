@@ -104,10 +104,12 @@ async function execute() {
         const requestId = requestIds.get(request);
         let body = {};
         try {
-          body = await Promise.race([
-            response.json(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('body-timeout')), 1500))
-          ]);
+          let timer;
+          body = await new Promise((resolve, reject) => {
+            timer = setTimeout(() => reject(new Error('body-timeout')), 1500);
+            if (typeof timer.unref === 'function') timer.unref();
+            response.json().then(resolve, reject).finally(() => clearTimeout(timer));
+          });
         } catch { /* response evidence records status and absent identity */ }
         const entity = body?.id ? { kind: operation.entityKind, id: String(body.id) } : null;
         const evidenceAck = requestId ? waitEvidenceAck(requestId) : Promise.resolve();

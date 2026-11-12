@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { start, observe, cancel } from '../apps/control/run.mjs';
+import { RunStore } from '../packages/core/store.mjs';
 import { serveLocalFixture } from '../adapters/local/server.mjs';
 import { localBundle, localFixtureContract } from './helpers.mjs';
 import { canonical, digest, scenarioApprovalHash } from '../packages/core/canonical.mjs';
@@ -171,4 +172,93 @@ test('WP-C: POST без fixtureId не считается мутацией', asy
   assert.equal(response.status, 400);
   assert.equal(fixture.mutationCount, 0);
   assert.equal(fixture.recordCount, 0);
+});
+
+function resign(bundle) {
+  bundle.scenario.operation.sha256 = digest(bundle.operation);
+  bundle.scenario.approval.contentSha256 = scenarioApprovalHash(bundle.scenario);
+  bundle.manifest.operation.sha256 = digest(bundle.operation);
+  bundle.manifest.scenario.sha256 = digest(bundle.scenario);
+}
+
+test('DS-P1-022: appliesWhen не превращает нарушенный эффект в PASS', { timeout: 30000 }, async t => {
+  const { root, fixture, bundle } = await setup(t, { fault: 'wrongExecutor', runId: 'audit-applies-when' });
+  bundle.operation.effects = bundle.operation.effects.map(effect => effect.id === 'title-saved' ? effect : { ...effect, appliesWhen: { field: 'title', equals: 'never-matches' } });
+  resign(bundle);
+  const result = await start(bundle, { root, fault: 'wrongExecutor', fixtureToken: fixture.authToken });
+  assert.equal(result.verdict.verdict, 'BLOCKED');
+  assert.equal(result.verdict.reasonCode, 'CONTRACT_INVALID');
+  assert.equal(fixture.mutationCount, 0);
+});
+
+test('DS-P1-022: подмена equals не подтверждает чужое сохранённое значение', { timeout: 30000 }, async t => {
+  const { root, fixture, bundle } = await setup(t, { fault: 'wrongExecutor', runId: 'audit-equals' });
+  bundle.operation.effects = bundle.operation.effects.map(effect => effect.id === 'executor-saved' ? { ...effect, equals: 'operator-wrong' } : effect);
+  resign(bundle);
+  const result = await start(bundle, { root, fault: 'wrongExecutor', fixtureToken: fixture.authToken });
+  assert.notEqual(result.verdict.verdict, 'PASS');
+  assert.equal(fixture.mutationCount, 0);
+});
+
+test('DS-P2-025: байты после анкера не выглядят как повреждение журнала', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-adaptant-gap-'));
+  const store = new RunStore(root);
+  const runDir = path.join(root, 'runs', 'gap-run');
+  fs.mkdirSync(path.join(runDir, 'evidence'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'evidence.jsonl'), '');
+  fs.writeFileSync(path.join(runDir, 'evidence-anchor.json'), `${canonical({ sequence: 0, envelopeSha256: null, byteLength: 0 })}\n`);
+  const envelope = store.appendEvidence(runDir, {
+    runId: 'gap-run', manifestSha256: 'ab'.repeat(32), fixtureId: 'fixture-gap', stepId: 'create',
+    producer: 'control', kind: 'mutation-intent', artifact: { marker: 'committed' }
+  });
+  fs.appendFileSync(path.join(runDir, 'evidence.jsonl'), '{"torn":');
+  const records = store.readEvidence(runDir);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].envelope.evidenceId, envelope.evidenceId);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('DS-P2-013: пустой каталог прогона не отдаёт сырой ENOENT и не удваивает мутацию', { timeout: 30000 }, async t => {
+  const { root, fixture, bundle, runId } = await setup(t, { runId: 'audit-empty-rundir' });
+  fs.mkdirSync(path.join(root, 'runs', runId), { recursive: true });
+  const result = await start(bundle, { root, fixtureToken: fixture.authToken });
+  assert.equal(result.verdict.verdict, 'PASS');
+  assert.equal(fixture.mutationCount, 1);
+});
+
+test('DS-P2-013: усечённый evidence останавливает повторную мутацию', { timeout: 30000 }, async t => {
+  const { root, fixture, bundle, runId } = await setup(t, { runId: 'audit-truncated' });
+  const first = await start(bundle, { root, fixtureToken: fixture.authToken });
+  assert.equal(first.verdict.verdict, 'PASS');
+  const file = path.join(first.runDir, 'evidence.jsonl');
+  const raw = fs.readFileSync(file);
+  fs.writeFileSync(file, raw.subarray(0, Math.max(1, Math.floor(raw.length / 2))));
+  await assert.rejects(observe({ root, runId }), /INCOMPLETE_RUN|INTEGRITY_ERROR/);
+  await assert.rejects(start(bundle, { root, fixtureToken: fixture.authToken }), /INCOMPLETE_RUN|INTEGRITY_ERROR/);
+  assert.equal(fixture.mutationCount, 1);
+});
+
+test('DS-P2-026: каталог fixture без bind.json не блокирует прогон навсегда', { timeout: 30000 }, async t => {
+  const { root, fixture, bundle } = await setup(t, { runId: 'audit-poison-bind' });
+  const name = digest({ environmentId: bundle.manifest.environment.id, fixtureId: bundle.fixture.fixtureId });
+  fs.mkdirSync(path.join(root, 'fixtures', name), { recursive: true });
+  const result = await start(bundle, { root, fixtureToken: fixture.authToken });
+  assert.equal(result.verdict.verdict, 'PASS');
+  assert.equal(fixture.mutationCount, 1);
+});
+
+test('DS-P2-027: HTTP 200 существующего объекта не становится PASS нового прогона', { timeout: 30000 }, async t => {
+  const { root, fixture, bundle, contract } = await setup(t, { runId: 'audit-reuse-1' });
+  const first = await start(bundle, { root, fixtureToken: fixture.authToken });
+  assert.equal(first.verdict.verdict, 'PASS');
+  for (const name of ['fixtures', 'locks', 'leases']) fs.rmSync(path.join(root, name), { recursive: true, force: true });
+  const second = structuredClone(bundle);
+  second.manifest.runId = 'audit-reuse-2';
+  second.fixture = { ...contract, runId: 'audit-reuse-2' };
+  second.manifest.fixtureSha256 = digest(second.fixture);
+  const reused = await start(second, { root, fixtureToken: fixture.authToken });
+  assert.equal(reused.verdict.verdict, 'INCONCLUSIVE');
+  assert.equal(reused.verdict.reasonCode, 'RESULT_UNCONFIRMED');
+  assert.equal(fixture.mutationCount, 1);
+  assert.equal(fixture.recordCount, 1);
 });

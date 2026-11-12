@@ -43,15 +43,21 @@ export class RunStore {
     if (owner) atomicWrite(path.join(dir, 'owner.json'), jsonBytes(owner));
     atomicWrite(path.join(dir, 'events.jsonl'), Buffer.alloc(0));
     atomicWrite(path.join(dir, 'evidence.jsonl'), Buffer.alloc(0));
+    atomicWrite(path.join(dir, 'evidence-anchor.json'), jsonBytes({ sequence: 0, envelopeSha256: null, byteLength: 0 }));
     return dir;
   }
 
   readSnapshot(runDir, name) {
     if (!['scenario', 'operation', 'fixture', 'manifest'].includes(name)) throw new Error('Неизвестный snapshot');
     const file = path.join(runDir, `${name}.json`);
-    this.#assertRegularFile(file, runDir);
-    const raw = fs.readFileSync(file);
-    return { value: JSON.parse(raw.toString('utf8')), sha256: digest(raw) };
+    try {
+      this.#assertRegularFile(file, runDir);
+      const raw = fs.readFileSync(file);
+      return { value: JSON.parse(raw.toString('utf8')), sha256: digest(raw) };
+    } catch (error) {
+      if (String(error.message || '').startsWith('INTEGRITY_ERROR')) throw error;
+      throw new Error(`INCOMPLETE_RUN: снимок ${name} недоступен`);
+    }
   }
 
   #assertRegularFile(file, root) {
@@ -85,8 +91,9 @@ export class RunStore {
     this.#assertRegularFile(file, runDir);
     const raw = fs.readFileSync(file, 'utf8');
     if (raw && !raw.endsWith('\n')) throw new Error('INTEGRITY_ERROR: неполная запись журнала событий');
-    const lines = raw.split('\n').filter(Boolean);
-    const records = lines.map(line => JSON.parse(line));
+    let records;
+    try { records = raw.split('\n').filter(Boolean).map(line => JSON.parse(line)); }
+    catch { throw new Error('INCOMPLETE_RUN: журнал событий повреждён'); }
     const runId = this.readSnapshot(runDir, 'manifest').value.runId;
     let previous = null;
     const ids = new Set();
@@ -102,42 +109,33 @@ export class RunStore {
     return records;
   }
 
-  appendEvidence(runDir, { runId, manifestSha256, fixtureId, stepId, producer, kind, artifact, requestId = null, cizId = null, entity = null, parentEvidenceIds = [], checkIds = [] }) {
-    const file = path.join(runDir, 'evidence.jsonl');
-    if (fs.existsSync(file)) this.#assertRegularFile(file, runDir);
-    const previous = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map(JSON.parse) : [];
-    if (previous.some(item => item.kind === 'verdict')) throw new Error('INTEGRITY_ERROR: после терминального verdict новые evidence запрещены');
-    const artifactPath = `${String(previous.length + 1).padStart(6, '0')}-${kind}.json`;
-    const artifactBytes = jsonBytes(artifact);
-    const artifactFile = path.join(runDir, 'evidence', artifactPath);
-    if (fs.existsSync(artifactFile)) throw new Error('INTEGRITY_ERROR: запрещена перезапись evidence');
-    atomicWrite(artifactFile, artifactBytes);
-    const envelope = {
-      schemaVersion: '0.1.0', evidenceId: randomUUID(), runId, stepId, manifestSha256, fixtureId,
-      producer, kind, sequence: previous.length + 1,
-      previousSha256: previous.length ? digest(previous.at(-1)) : null,
-      parentEvidenceIds, checkIds,
-      artifact: { path: artifactPath, sha256: digest(artifactBytes), mediaType: 'application/json' },
-      requestId, cizId, entity, observedAt: new Date().toISOString()
-    };
-    validate('EvidenceSchema', envelope);
-    const bytes = Buffer.from(`${canonical(envelope)}\n`);
-    const fd = fs.openSync(file, 'a', 0o600);
-    try { fs.writeFileSync(fd, bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-    atomicWrite(path.join(runDir, 'evidence-anchor.json'), jsonBytes({ sequence: envelope.sequence, envelopeSha256: digest(envelope) }));
-    return envelope;
+  #readAnchor(runDir) {
+    const file = path.join(runDir, 'evidence-anchor.json');
+    if (!fs.existsSync(file)) return null;
+    this.#assertRegularFile(file, runDir);
+    try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+    catch { throw new Error('INCOMPLETE_RUN: анкер evidence повреждён'); }
   }
 
-  readEvidence(runDir) {
-    const file = path.join(runDir, 'evidence.jsonl');
-    if (!fs.existsSync(file)) return [];
-    this.#assertRegularFile(file, runDir);
-    const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+  #parseCommitted(runDir, raw, anchor) {
+    if (!anchor) {
+      if (raw.length === 0) return [];
+      throw new Error('INTEGRITY_ERROR: хвост evidence не совпадает с анкером');
+    }
+    if (!Number.isInteger(anchor.byteLength) || anchor.byteLength < 0 || anchor.byteLength > raw.length) {
+      throw new Error('INTEGRITY_ERROR: хвост evidence не совпадает с анкером');
+    }
+    if (anchor.byteLength === 0) return [];
+    const prefix = raw.subarray(0, anchor.byteLength).toString('utf8');
+    if (!prefix.endsWith('\n')) throw new Error('INCOMPLETE_RUN: журнал evidence повреждён');
+    let lines;
+    try { lines = prefix.split('\n').filter(Boolean).map(line => JSON.parse(line)); }
+    catch { throw new Error('INCOMPLETE_RUN: журнал evidence повреждён'); }
     const result = [];
     const ids = new Set();
     let previous = null;
     for (let i = 0; i < lines.length; i++) {
-      const envelope = JSON.parse(lines[i]);
+      const envelope = lines[i];
       validate('EvidenceSchema', envelope);
       if (ids.has(envelope.evidenceId)) throw new Error('INTEGRITY_ERROR: повтор evidenceId');
       ids.add(envelope.evidenceId);
@@ -149,22 +147,61 @@ export class RunStore {
       this.#assertRegularFile(artifactFile, evidenceDir);
       const bytes = fs.readFileSync(artifactFile);
       if (digest(bytes) !== envelope.artifact.sha256) throw new Error('INTEGRITY_ERROR: checksum evidence не совпадает');
-      const artifact = JSON.parse(bytes.toString('utf8'));
+      let artifact;
+      try { artifact = JSON.parse(bytes.toString('utf8')); }
+      catch { throw new Error('INCOMPLETE_RUN: артефакт evidence повреждён'); }
       result.push({ envelope, artifact });
       previous = digest(envelope);
     }
-    if (result.length) {
-      const anchorFile = path.join(runDir, 'evidence-anchor.json');
-      this.#assertRegularFile(anchorFile, runDir);
-      const anchor = JSON.parse(fs.readFileSync(anchorFile, 'utf8'));
-      const last = result.at(-1).envelope;
-      if (anchor.sequence !== last.sequence || anchor.envelopeSha256 !== digest(last)) throw new Error('INTEGRITY_ERROR: хвост evidence не совпадает с анкером');
+    const last = result.at(-1)?.envelope;
+    if (!last || anchor.sequence !== last.sequence || anchor.envelopeSha256 !== digest(last)) {
+      throw new Error('INTEGRITY_ERROR: хвост evidence не совпадает с анкером');
     }
     for (const item of result) {
-      if (item.envelope.parentEvidenceIds.some(id => !ids.has(id) || result.find(x => x.envelope.evidenceId === id).envelope.sequence >= item.envelope.sequence)) {
+      if (item.envelope.parentEvidenceIds.some(id => !ids.has(id) || result.find(candidate => candidate.envelope.evidenceId === id).envelope.sequence >= item.envelope.sequence)) {
         throw new Error('INTEGRITY_ERROR: неверная ссылка parent evidence');
       }
     }
     return result;
+  }
+
+  appendEvidence(runDir, { runId, manifestSha256, fixtureId, stepId, producer, kind, artifact, requestId = null, cizId = null, entity = null, parentEvidenceIds = [], checkIds = [] }) {
+    const file = path.join(runDir, 'evidence.jsonl');
+    const previous = this.readEvidence(runDir);
+    if (previous.some(item => item.envelope.kind === 'verdict')) throw new Error('INTEGRITY_ERROR: после терминального verdict новые evidence запрещены');
+    const artifactPath = `${String(previous.length + 1).padStart(6, '0')}-${kind}.json`;
+    const artifactBytes = jsonBytes(artifact);
+    const artifactFile = path.join(runDir, 'evidence', artifactPath);
+    if (fs.existsSync(artifactFile)) throw new Error('INTEGRITY_ERROR: запрещена перезапись evidence');
+    atomicWrite(artifactFile, artifactBytes);
+    const envelope = {
+      schemaVersion: '0.1.0', evidenceId: randomUUID(), runId, stepId, manifestSha256, fixtureId,
+      producer, kind, sequence: previous.length + 1,
+      previousSha256: previous.length ? digest(previous.at(-1).envelope) : null,
+      parentEvidenceIds, checkIds,
+      artifact: { path: artifactPath, sha256: digest(artifactBytes), mediaType: 'application/json' },
+      requestId, cizId, entity, observedAt: new Date().toISOString()
+    };
+    validate('EvidenceSchema', envelope);
+    const anchor = this.#readAnchor(runDir);
+    const raw = fs.existsSync(file) ? fs.readFileSync(file) : Buffer.alloc(0);
+    const prefixLength = anchor?.byteLength || 0;
+    const next = Buffer.concat([raw.subarray(0, prefixLength), Buffer.from(`${canonical(envelope)}\n`)]);
+    atomicWrite(file, next);
+    atomicWrite(path.join(runDir, 'evidence-anchor.json'), jsonBytes({ sequence: envelope.sequence, envelopeSha256: digest(envelope), byteLength: next.length }));
+    return envelope;
+  }
+
+  readEvidence(runDir) {
+    const file = path.join(runDir, 'evidence.jsonl');
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const before = this.#readAnchor(runDir);
+      if (fs.existsSync(file)) this.#assertRegularFile(file, runDir);
+      const raw = fs.existsSync(file) ? fs.readFileSync(file) : Buffer.alloc(0);
+      const after = this.#readAnchor(runDir);
+      if (JSON.stringify(before) !== JSON.stringify(after)) continue;
+      return this.#parseCommitted(runDir, raw, before);
+    }
+    throw new Error('INTEGRITY_ERROR: хвост evidence не совпадает с анкером');
   }
 }

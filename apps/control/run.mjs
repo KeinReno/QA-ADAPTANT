@@ -47,15 +47,15 @@ function pidAlive(pid) {
 }
 
 function recordedBrowserPid(runDir) {
-  const pid = readJsonFile(path.join(runDir, 'browser.pid'))?.pid;
-  if (!pidAlive(pid)) return null;
+  const recorded = readJsonFile(path.join(runDir, 'browser.pid'));
+  if (!recorded?.nonce || !pidAlive(recorded.pid)) return null;
   if (process.platform === 'win32') {
     try {
-      const output = execFileSync('powershell.exe', ['-NoProfile', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}").CommandLine`], { encoding: 'utf8', windowsHide: true, timeout: 3000 });
-      if (!output.includes(path.basename(runDir))) return null;
+      const output = execFileSync('powershell.exe', ['-NoProfile', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${Number(recorded.pid)}").CommandLine`], { encoding: 'utf8', windowsHide: true, timeout: 3000 });
+      if (!output.includes(recorded.nonce)) return null;
     } catch { return null; }
   }
-  return pid;
+  return recorded.pid;
 }
 
 function killTree(pid) {
@@ -119,19 +119,55 @@ function assertLease(lease, runId) {
   }
 }
 
-function claimFixture(root, environmentId, fixtureId, runId) {
-  const dir = path.join(root, 'fixtures', digest({ environmentId, fixtureId }));
-  fs.mkdirSync(path.dirname(dir), { recursive: true });
+function mutationEvidenceKnown(store, runId) {
+  const runDir = store.runPath(runId);
+  if (!fs.existsSync(runDir)) return false;
+  try {
+    return store.readEvidence(runDir).some(item => ['mutation-intent', 'request', 'response'].includes(item.envelope.kind));
+  } catch {
+    return true;
+  }
+}
+
+function canReleaseFixture(store, current) {
+  if (!current?.runId) return true;
+  const owner = readJsonFile(path.join(store.runPath(current.runId), 'owner.json'));
+  if (owner && pidAlive(owner.pid) && owner.pid !== process.pid) return false;
+  return !mutationEvidenceKnown(store, current.runId);
+}
+
+function claimFixture(store, environmentId, fixtureId, runId) {
+  const parent = path.join(store.root, 'fixtures');
+  fs.mkdirSync(parent, { recursive: true });
+  const dir = path.join(parent, digest({ environmentId, fixtureId }));
   const body = `${JSON.stringify({ runId, environmentId, fixtureId, pid: process.pid, at: now() })}\n`;
-  try { fs.mkdirSync(dir); }
-  catch (error) {
-    if (error.code !== 'EEXIST') throw error;
+  const publish = () => {
+    const temp = path.join(parent, `.bind-${process.pid}-${randomUUID()}`);
+    fs.mkdirSync(temp);
+    const fd = fs.openSync(path.join(temp, 'bind.json'), 'wx', 0o600);
+    try { fs.writeFileSync(fd, body); fs.fsyncSync(fd); }
+    finally { fs.closeSync(fd); }
+    try { fs.renameSync(temp, dir); }
+    catch (error) {
+      fs.rmSync(temp, { recursive: true, force: true });
+      if (error.code !== 'EEXIST' && error.code !== 'EPERM') throw error;
+      return false;
+    }
+    return true;
+  };
+  if (fs.existsSync(dir)) {
+    const current = readJsonFile(path.join(dir, 'bind.json'));
+    if (current?.runId === runId) return dir;
+    if (!canReleaseFixture(store, current)) throw fail('CONTRACT_INVALID', 'Fixture уже связан с другим прогоном');
+    const released = path.join(store.root, 'quarantine', `fixture-${path.basename(dir)}-${Date.now()}`);
+    fs.mkdirSync(path.dirname(released), { recursive: true });
+    fs.renameSync(dir, released);
+  }
+  if (!publish()) {
     const current = readJsonFile(path.join(dir, 'bind.json'));
     if (current?.runId === runId) return dir;
     throw fail('CONTRACT_INVALID', 'Fixture уже связан с другим прогоном');
   }
-  const fd = fs.openSync(path.join(dir, 'bind.json'), 'wx', 0o600);
-  fs.writeFileSync(fd, body); fs.fsyncSync(fd); fs.closeSync(fd);
   return dir;
 }
 
@@ -183,7 +219,7 @@ export async function run(bundle, { root, headed = false, fault = null, fixtureT
     const frozen = verifyFrozenBundle(store, runDir);
     const { manifest, operation, scenario, fixture } = frozen;
     assertApprovedOperation(operation, scenario);
-    claimFixture(store.root, manifest.environment.id, fixture.fixtureId, runId);
+    claimFixture(store, manifest.environment.id, fixture.fixtureId, runId);
 
     store.appendEvent(runDir, { type: 'STATE', state: 'PREFLIGHT' });
     const before = await readJson(new URL('/environment', manifest.environment.baseUrl));
@@ -206,13 +242,14 @@ export async function run(bundle, { root, headed = false, fault = null, fixtureT
         fs.writeFileSync(path.join(runDir, 'operation.json'), `${JSON.stringify(tampered)}\n`);
       }
       const browserFile = new URL('../browser/worker.mjs', import.meta.url);
-      const browser = spawnWorker(browserFile, [runDir, frozen.manifestSha256], {
+      const browserNonce = randomUUID();
+      const browser = spawnWorker(browserFile, [runDir, frozen.manifestSha256, browserNonce], {
         QA_ADAPTANT_HEADED: headed ? '1' : '0',
         QA_ADAPTANT_FIXTURE_TOKEN: fixtureToken,
         ...(fault ? { QA_ADAPTANT_FAULT: fault } : {})
       });
       activeBrowsers.set(runId, browser);
-      fs.writeFileSync(path.join(runDir, 'browser.pid'), `${JSON.stringify({ pid: browser.pid })}\n`);
+      fs.writeFileSync(path.join(runDir, 'browser.pid'), `${JSON.stringify({ pid: browser.pid, nonce: browserNonce })}\n`);
       const cancelPoll = setInterval(() => {
         if (cancelRequested(runDir, runId)) { cancellations.set(runId, true); killTree(browser.pid); }
       }, 40);
@@ -343,6 +380,7 @@ function terminalResult(store, runDir, frozen) {
   const evidence = store.readEvidence(runDir);
   const verdict = assertTerminalEvidence(evidence, frozen);
   if (!verdict) return null;
+  if (verdict.verdict === 'PASS' || verdict.verdict === 'FAIL') assertApprovedOperation(frozen.operation, frozen.scenario);
   const recorded = [...store.readEvents(runDir)].reverse().find(event => event.type === 'VERDICT_DURABLE' || (event.type === 'STATE' && event.state === 'FINISHED' && event.verdict));
   if (recorded && recorded.verdict !== verdict.verdict) throw fail('INTEGRITY_ERROR', 'INTEGRITY_ERROR: вердикт evidence не совпадает с журналом событий');
   return {
@@ -391,13 +429,37 @@ async function verifyAndPersist(store, runDir, { fault = null, browserUncertain 
   return terminalResult(store, runDir, frozen);
 }
 
+function preserveIncomplete(store, runId) {
+  const runDir = store.runPath(runId);
+  const dest = path.join(store.root, 'quarantine', `${runId}-${Date.now()}`);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.renameSync(runDir, dest);
+  return dest;
+}
+
+function openFrozen(store, runDir) {
+  try { return verifyFrozenBundle(store, runDir); }
+  catch (error) {
+    if (String(error.message || '').startsWith('INCOMPLETE_RUN')) throw fail('INCOMPLETE_RUN', error.message);
+    throw error;
+  }
+}
+
 export async function start(bundle, options = {}) {
   if (!options.root) throw new TypeError('Нужен корень локального хранилища');
   const runId = safeRunId(bundle?.manifest?.runId);
   const store = new RunStore(options.root);
   const runDir = store.runPath(runId);
   if (!fs.existsSync(runDir)) return run(bundle, options);
-  const frozen = verifyFrozenBundle(store, runDir);
+  let frozen;
+  try { frozen = openFrozen(store, runDir); }
+  catch (error) {
+    if (error.code === 'INCOMPLETE_RUN' && !mutationEvidenceKnown(store, runId)) {
+      preserveIncomplete(store, runId);
+      return run(bundle, options);
+    }
+    throw error;
+  }
   if (!equal(frozen.scenario, bundle.scenario) || !equal(frozen.operation, bundle.operation) ||
       !equal(frozen.fixture, bundle.fixture) || !equal(frozen.manifest, bundle.manifest)) {
     throw fail('CONTRACT_INVALID', 'Повторный START содержит другой snapshot для того же runId');
@@ -412,7 +474,7 @@ export async function observe({ root, runId }) {
   const store = new RunStore(root);
   const safeId = safeRunId(runId);
   const runDir = store.runPath(safeId);
-  const frozen = verifyFrozenBundle(store, runDir);
+  const frozen = openFrozen(store, runDir);
   const evidence = store.readEvidence(runDir);
   const events = store.readEvents(runDir);
   const terminal = terminalResult(store, runDir, frozen);
@@ -431,7 +493,7 @@ export async function reconcile({ root, runId, fault = null, canceled = false, f
   const store = new RunStore(root);
   const safeId = safeRunId(runId);
   const runDir = store.runPath(safeId);
-  const frozen = verifyFrozenBundle(store, runDir);
+  const frozen = openFrozen(store, runDir);
   const finished = terminalResult(store, runDir, frozen);
   if (finished) return finished;
   if (foreignOwnerAlive(runDir)) return runningView(safeId, runDir, store);
@@ -451,7 +513,7 @@ export async function cancel({ root, runId }) {
   const store = new RunStore(root);
   const safeId = safeRunId(runId);
   const runDir = store.runPath(safeId);
-  const frozen = verifyFrozenBundle(store, runDir);
+  const frozen = openFrozen(store, runDir);
   const finished = terminalResult(store, runDir, frozen);
   if (finished) return finished;
   fs.writeFileSync(cancelFile(runDir), `${JSON.stringify({ at: now(), pid: process.pid })}\n`);

@@ -182,6 +182,7 @@ async function execute() {
   if (canceled) { verdict = 'INCONCLUSIVE'; reasonCode = 'CANCELED'; message = 'Прогон отменён; начавшаяся мутация не повторяется и не откатывается'; }
   else if (browserUncertain) { verdict = 'INCONCLUSIVE'; reasonCode = 'WORKER_LOST'; message = 'Browser Worker завершился без подтверждения полного выполнения; мутация не повторяется'; }
   else if (identityFailure || !chain.response) { verdict = 'INCONCLUSIVE'; reasonCode = 'RESULT_UNCONFIRMED'; message = 'Независимое чтение не удалось связать с подтверждённым ответом мутации'; }
+  else if (chain.response.artifact.status !== 201) { verdict = 'INCONCLUSIVE'; reasonCode = 'RESULT_UNCONFIRMED'; message = 'Ответ HTTP 200 вернул уже существующий объект; это не доказательство создания'; }
   else if (checks.some(check => check.status === 'UNKNOWN')) { verdict = 'INCONCLUSIVE'; reasonCode = 'EVIDENCE_MISSING'; message = 'Для завершения обязательных проверок недостаточно независимых данных'; }
   else if (checks.some(check => check.status === 'VIOLATED')) { verdict = 'FAIL'; reasonCode = 'BUSINESS_INVARIANT_VIOLATED'; message = 'Независимое чтение подтвердило нарушение ожидаемого эффекта'; }
   else { verdict = 'PASS'; reasonCode = 'NONE'; message = 'Все обязательные эффекты подтверждены независимым чтением'; }
