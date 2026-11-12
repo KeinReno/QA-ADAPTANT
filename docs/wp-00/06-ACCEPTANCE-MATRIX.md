@@ -11,7 +11,7 @@
 | ID | Предусловие | Действие | Решение | POST | Доказательства | Критерий |
 |---|---|---|---|---|---|---|
 | P-01 | Старый bundle 0.1, trust root отсутствует | `start()` | путь 0.1, без TrustDecision | 1 при обычном сценарии | как в Stable | Регрессия `npm test` и `npm run test:races` |
-| P-02 | Подписанный approval на точные входы локальной операции, среда `local-stand` поколения N | `startTrusted` | ALLOW `TRUST_OK`, затем бизнес-PASS | 1 | intent, request, response, independent-read, consumption на этот `runId`, анкер с тем же `envelopeSha256` | `observeTrusted` показывает PASS |
+| P-02 | Подписанный approval на точные входы локальной операции, среда `local-stand` поколения N | `startTrusted` | ALLOW `TRUST_OK`, затем бизнес-PASS | 1 | intent, request, response, independent-read, consumption на этот `runId`, анкер на `chainHead` до verdict и на `candidateSha256` этого PASS | `observeTrusted` показывает PASS, байты verdict равны candidate |
 | P-03 | Прогон P-02 завершён | `observeTrusted` и `reconcileTrusted` | ALLOW фазы чтения, `do-not-dispatch` | 0 новых | тот же consumption | verdict не меняется, второго POST нет |
 | P-04 | Approval подписан, старт ещё не вызывался | два одинаковых запроса consumption с одним `runId` | один файл, второй вызов идемпотентен | 0 до старта | один consumption | нет двух записей расхода |
 | P-05 | Бизнес-эффект нарушен, анкер доступен | доверенный прогон | бизнес-FAIL, анкер публикуется | 1 | вердикт FAIL и анкер FAIL | отсутствие анкера не требуется, чтобы увидеть FAIL; при доступном корне анкер есть |
@@ -58,6 +58,7 @@
 | V-09 | Бюджет истекает в тот же момент, когда подписант уже создал анкер PASS | выбор исхода | один `CREATE_NEW` | 0 новых | один verdict | если выбран INCONCLUSIVE, опоздавший анкер `ANCHOR_UNLINKED`: нет перехода в PASS и нет `ANCHOR_CONFLICT` |
 | V-10 | Каталог прогона содержит подложный PASS-candidate, consumption и approval его не подтверждают | запрос к anchor-signer от процесса с тем же SID | `ANCHOR_BINDING_REJECTED` | 0 | годного анкера нет | хеш, посчитанный вызывающим, подпись не заменяет |
 | V-11 | Выбор `anchor` записан, verdict в evidence ещё нет, процесс упал | восстановление, бюджет уже истёк бы заново | дописывается ровно выбранный candidate | 0 новых | одна запись verdict | повторный розыгрыш бюджета — провал |
+| V-12 | `CREATE_NEW` создал `terminal-choice.json`, процесс упал до полного тела | восстановление | публикация PASS блокируется | 0 новых | имя выбора занято и не заменено | дописывание PASS поверх неполного выбора — провал. Это обязательный тест WP-05, не проверка WP-01 |
 | V-04 | Два разных заявления на один `runId` | публикация второго | `ANCHOR_CONFLICT` | 0 новых | первый анкер сохранён | второй не становится истиной |
 | V-05 | Повторная публикация тех же байт | `publishAnchor` | идемпотентный успех | 0 | один смысл заявления | нет конфликта |
 | V-06 | Падение после локального response и до анкера | новый процесс `reconcileTrusted` | чтение без dispatch, PASS только если анкер затем записан в срок | 1 суммарно | нет второго request evidence | иначе терминальный INCONCLUSIVE |
