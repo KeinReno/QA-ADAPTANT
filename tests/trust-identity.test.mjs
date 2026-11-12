@@ -4,55 +4,94 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { readAcl } from '../packages/trust/acl.mjs';
-import { assertPrincipal, createTrustRoot, loadTrustRoot, signTrustedDocument, unwrapPrivateKey, verifyTrustedDocument } from '../packages/trust/identity.mjs';
+import { createTrustRoot, loadTrustRoot, signTrustedDocument, unwrapPrivateKey, verifyAndAssertPrincipal, verifyTrustedDocument } from '../packages/trust/identity.mjs';
 
+const repoRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-trust-'));
 const secretsDir = path.join(root, 'secrets');
 const trustRoot = path.join(root, 'trust-root');
 const created = await createTrustRoot({ secretsDir, trustRoot });
 const trust = loadTrustRoot(trustRoot);
+const ownerKey = await unwrapPrivateKey(path.join(secretsDir, 'owner.key'));
+const anchorKey = await unwrapPrivateKey(path.join(secretsDir, 'anchor.key'));
 
 test('корень доверия загружает только публичные ключи', () => {
+  assert.deepEqual(Object.keys(created).sort(), ['anchorKeyId', 'ownerKeyId']);
   assert.equal(trust.owner.keyId, created.ownerKeyId);
   assert.equal(trust['anchor-signer'].keyId, created.anchorKeyId);
-  assert.equal(trust.owner.privateKey, undefined);
   assert.equal(JSON.stringify(trust).includes('protectedPkcs8'), false);
 });
 
 test('приватные файлы закрыты DPAPI и ACL текущего пользователя', async () => {
   for (const name of ['owner.key', 'anchor.key']) {
     const file = path.join(secretsDir, name);
-    const bytes = fs.readFileSync(file);
-    assert.equal(bytes.includes(created.ownerPkcs8), false);
-    assert.equal(bytes.includes(created.anchorPkcs8), false);
+    const key = await unwrapPrivateKey(file);
+    const pkcs8 = key.export({ type: 'pkcs8', format: 'der' });
+    assert.equal(fs.readFileSync(file).includes(pkcs8), false);
     const acl = await readAcl(file);
     assert.equal(acl.protected, true);
     assert.deepEqual(acl.aces, [`${acl.current}|Allow`]);
   }
-  const owner = await unwrapPrivateKey(path.join(secretsDir, 'owner.key'));
-  const card = signTrustedDocument(owner, principal());
-  assert.equal(verifyTrustedDocument(trust, card).principalId, 'local-owner');
+  const card = signTrustedDocument(ownerKey, principal());
+  assert.equal(verifyAndAssertPrincipal(trust, card, { role: 'owner', domain: 'approval' }).principalId, 'local-owner');
 });
 
 test('ключ анкера не создаёт годный approval, ключ owner не создаёт годный анкер', () => {
-  const anchorSigned = signTrustedDocument(created.anchorPrivate, { schemaVersion: '0.2.0', domain: 'approval', keyId: created.anchorKeyId, approvalId: 'a-1' });
+  const anchorSigned = signTrustedDocument(anchorKey, { schemaVersion: '0.2.0', domain: 'approval', keyId: created.anchorKeyId, approvalId: 'a-1' });
   assert.throws(() => verifyTrustedDocument(trust, anchorSigned), error => error.code === 'APPROVAL_SIGNATURE_INVALID');
-  assert.throws(() => signTrustedDocument(created.anchorPrivate, { schemaVersion: '0.2.0', domain: 'approval', keyId: created.ownerKeyId, approvalId: 'a-2' }), error => error.code === 'APPROVAL_SIGNATURE_INVALID');
-  const ownerSigned = signTrustedDocument(created.ownerPrivate, { schemaVersion: '0.2.0', domain: 'anchor-statement', keyId: created.ownerKeyId, runId: 'run-1' });
+  assert.throws(() => signTrustedDocument(anchorKey, { schemaVersion: '0.2.0', domain: 'approval', keyId: created.ownerKeyId, approvalId: 'a-2' }), error => error.code === 'APPROVAL_SIGNATURE_INVALID');
+  const ownerSigned = signTrustedDocument(ownerKey, { schemaVersion: '0.2.0', domain: 'anchor-statement', keyId: created.ownerKeyId, runId: 'run-1' });
   assert.throws(() => verifyTrustedDocument(trust, ownerSigned), error => error.code === 'APPROVAL_SIGNATURE_INVALID');
 });
 
-test('runner не издаёт approval, отозванный principal и чужой SID отвергаются', () => {
-  const owner = verifyTrustedDocument(trust, signTrustedDocument(created.ownerPrivate, principal()));
-  assertPrincipal(owner, { role: 'owner', domain: 'approval', windowsSid: 'S-1-5-21-owner' });
-  assert.throws(() => assertPrincipal({ domain: 'principal', principalId: 'control', roles: ['runner'], keyId: null, windowsSid: null, status: 'active' }, { domain: 'approval' }), error => error.code === 'ROLE_DENIED');
-  assert.throws(() => assertPrincipal({ ...owner, status: 'revoked' }), error => error.code === 'PRINCIPAL_REVOKED');
-  assert.throws(() => assertPrincipal(owner, { windowsSid: 'S-1-5-21-other' }), error => error.code === 'CALLER_UNAUTHENTICATED');
+test('неподписанная карточка не авторизует, даже если поля формально верны', () => {
+  const signed = signTrustedDocument(ownerKey, principal());
+  assert.throws(() => verifyAndAssertPrincipal(trust, principal(), { role: 'owner', domain: 'approval' }), error => error.code === 'APPROVAL_SIGNATURE_INVALID');
+  const forged = { ...signed, roles: ['owner'] };
+  assert.throws(() => verifyAndAssertPrincipal(trust, forged, { role: 'owner', domain: 'approval' }), error => error.code === 'APPROVAL_SIGNATURE_INVALID');
 });
 
-test('отсутствующий корень доверия не подменяется пустым успехом', () => {
+test('после верной подписи runner, отзыв и чужой SID отвергаются', () => {
+  const owner = verifyAndAssertPrincipal(trust, signTrustedDocument(ownerKey, principal()), { role: 'owner', domain: 'approval', windowsSid: 'S-1-5-21-owner' });
+  const runner = signTrustedDocument(ownerKey, { schemaVersion: '0.2.0', domain: 'principal', principalId: 'control', roles: ['runner'], keyId: created.ownerKeyId, windowsSid: null, status: 'active' });
+  assert.throws(() => verifyAndAssertPrincipal(trust, runner, { domain: 'approval' }), error => error.code === 'ROLE_DENIED');
+  const revoked = signTrustedDocument(ownerKey, { ...principal(), status: 'revoked' });
+  assert.throws(() => verifyAndAssertPrincipal(trust, revoked), error => error.code === 'PRINCIPAL_REVOKED');
+  assert.throws(() => verifyAndAssertPrincipal(trust, signTrustedDocument(ownerKey, principal()), { windowsSid: 'S-1-5-21-other' }), error => error.code === 'CALLER_UNAUTHENTICATED');
+  assert.equal(owner.principalId, 'local-owner');
+});
+
+test('отсутствующий и незавершённый корень доверия недействительны', async () => {
   assert.throws(() => loadTrustRoot(path.join(root, 'missing')), error => error.code === 'TRUST_STORE_UNAVAILABLE');
+  const broken = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-trust-broken-'));
+  await assert.rejects(createTrustRoot({ secretsDir: path.join(broken, 'secrets'), trustRoot: path.join(broken, 'trust-root'), fault: 'after-owner' }), error => error.code === 'TRUST_STORE_UNAVAILABLE');
+  assert.equal(fs.existsSync(path.join(broken, 'secrets', 'owner.key')), false);
+  assert.equal(fs.existsSync(path.join(broken, 'trust-root', 'owner.pub')), false);
+  assert.throws(() => loadTrustRoot(path.join(broken, 'trust-root')), error => error.code === 'TRUST_STORE_UNAVAILABLE');
+});
+
+test('ключи не попадают в репозиторий, каталог прогона, trust root и не заменяют существующие', async () => {
+  const nested = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-trust-nested-'));
+  await assert.rejects(createTrustRoot({ secretsDir: nested, trustRoot: nested }), error => error.code === 'TRUST_STORE_UNAVAILABLE');
+  await assert.rejects(createTrustRoot({ secretsDir: path.join(nested, 'inner'), trustRoot: nested }), error => error.code === 'TRUST_STORE_UNAVAILABLE');
+  await assert.rejects(createTrustRoot({ secretsDir: path.join(repoRoot, 'must-not-create-secrets'), trustRoot: path.join(os.tmpdir(), 'qa-trust-outside') }), error => error.code === 'TRUST_STORE_UNAVAILABLE');
+  assert.equal(fs.existsSync(path.join(repoRoot, 'must-not-create-secrets')), false);
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-run-'));
+  await assert.rejects(createTrustRoot({ secretsDir: path.join(runDir, 'secrets'), trustRoot: path.join(os.tmpdir(), 'qa-trust-run-public'), runDir }), error => error.code === 'TRUST_STORE_UNAVAILABLE');
+  const linkParent = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-trust-link-'));
+  const link = path.join(linkParent, 'secrets-link');
+  fs.symlinkSync(repoRoot, link, 'junction');
+  await assert.rejects(createTrustRoot({ secretsDir: link, trustRoot: path.join(linkParent, 'public') }), error => error.code === 'TRUST_STORE_UNAVAILABLE');
+  assert.equal(fs.existsSync(path.join(repoRoot, 'owner.key')), false);
+  const kept = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-trust-kept-'));
+  const keptSecrets = path.join(kept, 'secrets');
+  fs.mkdirSync(keptSecrets);
+  fs.writeFileSync(path.join(keptSecrets, 'owner.key'), 'keep');
+  await assert.rejects(createTrustRoot({ secretsDir: keptSecrets, trustRoot: path.join(kept, 'trust-root') }), error => error.code === 'TRUST_STORE_UNAVAILABLE');
+  assert.equal(fs.readFileSync(path.join(keptSecrets, 'owner.key'), 'utf8'), 'keep');
+  assert.equal(fs.existsSync(path.join(kept, 'trust-root', 'owner.pub')), false);
 });
 
 test('утилита генерации печатает только keyId и не вызывается из Control', () => {
