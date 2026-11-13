@@ -6,6 +6,9 @@ import { RunStore } from '../../packages/core/store.mjs';
 import { verifyFrozenBundle } from '../../packages/core/bundle.mjs';
 import { digest } from '../../packages/core/canonical.mjs';
 import { assertTerminalEvidence } from '../../packages/core/evidence-policy.mjs';
+import {
+  buildTerminalChoice, publishTerminalChoice, readCandidate, readCandidateBody, readTerminalChoice, verifyAnchorStatement
+} from '../../packages/trust/anchor.mjs';
 import { assertApprovedOperation } from '../../packages/core/approved-registry.mjs';
 import { IntentCommand, IntentAck, reasonCodes, validate, validateVerdictCoverage } from '../../packages/contracts/index.mjs';
 
@@ -564,6 +567,54 @@ export async function observe(options = {}) {
   };
 }
 
+// P1-02/V-06: уже выданный анкер и durable candidate восстанавливаются без нового раунда бюджета.
+// Возвращает null, если восстанавливать нечего (публикация ещё не начиналась).
+function findReusableAnchorId({ trust, trustRoot, runId, candidateSha256 }) {
+  if (!trust || typeof trustRoot !== 'string' || trustRoot.length === 0) return null;
+  const directory = path.join(trustRoot, 'anchors');
+  if (!fs.existsSync(directory)) return null;
+  for (const name of fs.readdirSync(directory).filter(item => item.endsWith('.json')).sort()) {
+    let statement;
+    try { statement = JSON.parse(fs.readFileSync(path.join(directory, name), 'utf8')); }
+    catch { continue; }
+    let body;
+    try { body = verifyAnchorStatement(trust, statement); }
+    catch { continue; }
+    if (body.runId === runId && body.candidateSha256 === candidateSha256) return body.anchorId;
+  }
+  return null;
+}
+
+async function recoverPendingPublication({ store, runDir, frozen, trust }) {
+  if (!trust || typeof trust.publish !== 'function') return null;
+  // Здесь trust — контекст доверенного входа; публичные ключи лежат в trust.trust (loadTrustRoot).
+  const trustStore = trust.trust && typeof trust.trust === 'object' ? trust.trust : trust;
+  // Битый terminal-choice не перезаписывается: отказ fail-closed, verdict не пишется.
+  const choice = readTerminalChoice(runDir);
+  let candidate = null;
+  try { candidate = readCandidate(runDir); }
+  catch (error) { if (!choice) throw error; }
+  if (!choice && !candidate) return null;
+  let verdict;
+  if (choice) {
+    const body = readCandidateBody(runDir, choice.candidateSha256);
+    if (!body) fail('EVIDENCE_MISSING', 'Тело выбранного candidate отсутствует; verdict не пересчитывается');
+    // Ровно выбранные байты: новый раунд Verification и новый бюджет не запускаются.
+    verdict = body.candidate;
+  } else {
+    verdict = candidate.candidate;
+    // Анкер мог быть записан до аварии: он переиспользуется, второе заявление не выпускается.
+    if (verdict.verdict === 'PASS') {
+      const anchorId = findReusableAnchorId({ trust: trustStore, trustRoot: trust.trustRoot, runId: frozen.manifest.runId, candidateSha256: digest(verdict) });
+      if (anchorId) {
+        publishTerminalChoice(runDir, buildTerminalChoice({ outcome: 'anchor', candidateSha256: digest(verdict), anchorId }));
+      }
+    }
+  }
+  store.appendEvent(runDir, { type: 'STATE', state: 'PUBLICATION_RECOVERING', candidateSha256: digest(verdict), outcome: choice?.outcome || null });
+  return trust.publish({ store, runDir, frozen, verdict });
+}
+
 export async function reconcile(options = {}) {
   assertOldEntryOptions(options);
   const { root, runId, fault = null, canceled = false, fixtureToken = process.env.QA_ADAPTANT_FIXTURE_TOKEN || '', trust = null } = options;
@@ -583,6 +634,8 @@ export async function reconcile(options = {}) {
     return persistVerdict(store, runDir, frozen, verdict);
   }
   store.appendEvent(runDir, { type: 'STATE', state: 'RECONCILING' });
+  const recovered = await recoverPendingPublication({ store, runDir, frozen, trust });
+  if (recovered) return recovered;
   // E-04: чтение при восстановлении тоже получает только секрет, разрешённый credentialRef среды.
   let deliveredToken = fixtureToken;
   if (trust && typeof trust.ensureCredential === 'function') deliveredToken = await trust.ensureCredential({ frozen });
