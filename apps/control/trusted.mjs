@@ -239,6 +239,18 @@ function assertTrustedOptions(options, required) {
   }
 }
 
+// PASS из общего терминального результата не считается доверенным, пока не подтверждён анкером.
+// Это закрывает показ подложного PASS через start/reconcile и через adopt существующего прогона.
+function assertTrustedPass(result, { root, trustRoot, trust }) {
+  if (!result || !result.verdict || result.verdict.verdict !== 'PASS') return result;
+  const store = new RunStore(root);
+  const runDir = store.runPath(result.runId);
+  const frozen = verifyFrozenBundle(store, runDir);
+  const anchored = observeTrustedVerdict({ store, runDir, frozen, trust, trustRoot });
+  if (!anchored.trusted || !anchored.passed) throw fail('INTEGRITY_ERROR', 'PASS доверенного прогона не подтверждён анкером');
+  return result;
+}
+
 async function signerFor(options) {
   if (!options.signerPipe) return null;
   return connectAnchorSigner(options.signerPipe);
@@ -251,7 +263,8 @@ export async function startTrusted(bundle, options = {}) {
   const signer = await signerFor(options);
   const context = createTrustContext({ trust, trustRoot: options.trustRoot, approvalId: options.approvalId, approval: options.approval || null, issuer: options.issuer, subject: options.subject, sid, standPublicKey: options.standPublicKey || null, signer });
   try {
-    return await start(bundle, { root: options.root, headed: options.headed || false, fault: options.fault || null, fixtureToken: options.fixtureToken || process.env.QA_ADAPTANT_FIXTURE_TOKEN || '', trust: context });
+    const result = await start(bundle, { root: options.root, headed: options.headed || false, fault: options.fault || null, fixtureToken: options.fixtureToken || process.env.QA_ADAPTANT_FIXTURE_TOKEN || '', trust: context });
+    return assertTrustedPass(result, { root: options.root, trustRoot: options.trustRoot, trust });
   } finally {
     if (signer && typeof signer.close === 'function') signer.close();
   }
@@ -294,7 +307,8 @@ export async function reconcileTrusted({ root, trustRoot, approvalId, approval =
   const signer = await signerFor({ signerPipe });
   const context = createTrustContext({ trust, trustRoot, approvalId, approval, issuer, subject, sid, standPublicKey, signer });
   try {
-    return await reconcile({ root, runId, trust: context, fault });
+    const result = await reconcile({ root, runId, trust: context, fault });
+    return assertTrustedPass(result, { root, trustRoot, trust });
   } finally {
     if (signer && typeof signer.close === 'function') signer.close();
   }
