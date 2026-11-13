@@ -1,0 +1,13 @@
+✔ trusted adapter rejects symlinked prepared or launch storage directories (12.0408ms)
+✔ Task→approved plan→public trusted facade→independent observer yields PASS with linked local evidence (13856.7864ms)
+✔ crash recovery reconciles the durable intent by its existing runId without a second mutation (15743.1245ms)
+✔ post-dispatch cancellation uses trusted cancel/observe and never repeats the local mutation (14745.9383ms)
+✔ a competing canceled result wins Task CAS and start returns the persisted outcome (14059.8123ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 63994.1579

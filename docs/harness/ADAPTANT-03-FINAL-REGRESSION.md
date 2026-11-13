@@ -1,4 +1,4 @@
-# ADAPTANT 0.3 — финальная регрессия на исходном snapshot
+# ADAPTANT 0.3 — регрессия baseline и финального результата
 
 Дата: 2026-11-14
 
@@ -33,3 +33,21 @@ Worktree: `C:\Users\gvi\.codex\worktrees\adaptant-03-execution\QA-ADAPTANT`
 На точном опубликованном snapshot все 322 теста полного gate и три требуемых набора проходят после настройки совместимого `PSModulePath` для дочернего Windows PowerShell 5.1. В исходном пользовательском окружении `npm test` не проходит без такой настройки; это ограничение воспроизводимости окружения должно оставаться видимым при последующих запусках. В ходе gate Trust Foundation не изменялась.
 
 В `npm test` включены `execution`, `adaptant03-e2e`, `adaptant03-ui`, top-level recovery tests и top-level race tests. Отдельные скрипты внутри `tests/redteam/` сам `scripts/run-tests.mjs gate` не перечисляет; дополнительные recovery/race-наборы, относящиеся к gate, были включены.
+
+## Финальный gate после изменений LUNA-03.1
+
+Базовый snapshot gate выше предшествует работе. Для приёмки кода дополнительно выполнен полный gate после provenance и UI исправлений.
+
+- Final code SHA: `7ba6ad7cb3efb403752c88e1aa35bfc03c41413d`.
+- Branch: `feat/adaptant-03-execution-foundation`; перед запуском финального gate исходники были закоммичены, worktree чистый. Ветка не объединялась с `main`, WP-08 или remediation.
+- OS/Node/npm/PowerShell версии совпадают с таблицей выше. `PSModulePath` ограничен штатными путями Windows PowerShell 5.1 для запуска Windows ACL checks из дочернего `powershell.exe`.
+- `npm test`: exit 0; 326/326 passed, 0 failed, 0 skipped; 640188 ms.
+- `node --test tests/execution.test.mjs`: exit 0; 12/12 passed.
+- `node --test tests/adaptant03-e2e.test.mjs`: exit 0; 5/5 passed.
+- `node --test tests/adaptant03-ui.test.mjs`: exit 0; 4/4 passed.
+
+Полные stdout/stderr и отдельные exit code сохранены в [финальных логах](evidence/adaptant03-2/README.md). Все stderr файлы пусты. Исходный сценарий без корректировки `PSModulePath` на финальном коде повторно не запускался: исходная проблема окружения воспроизведена и записана на baseline SHA выше.
+
+## Границы результата
+
+Финальный gate проверяет unit и локальные browser/Trust test worlds. Dev environment не запускалась. Реальный AI backend не подключён, а тесты подтверждают явный `MOCK`/`MODEL` контракт, не автономное планирование. Совместимость с будущей Trust remediation описана как contract test plan; новая remediation не переносилась и независимым аудитом Qwen здесь не принималась. UI защита от другого процесса того же Windows SID не доказана; см. [UI security review](ADAPTANT-03-UI-SECURITY-REVIEW.md).

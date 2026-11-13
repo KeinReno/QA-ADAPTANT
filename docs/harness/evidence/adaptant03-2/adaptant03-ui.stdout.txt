@@ -1,0 +1,12 @@
+✔ local browser UI creates, approves, starts, and observes one trusted Task (21325.9779ms)
+✔ IPv6 loopback URL authority is bracketed and non-loopback hosts are rejected (0.482ms)
+✔ loopback HTTP rejects hostile Host, Origin, missing Origin, simple content types, and OPTIONS before service access (11.1078ms)
+✔ owner scoping hides foreign Tasks; HTTP cannot approve without a host grant or start before READY (9707.3742ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 36952.4887
