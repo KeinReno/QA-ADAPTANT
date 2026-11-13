@@ -80,12 +80,14 @@
 
 | Состояние | Условие |
 |---|---|
-| `issued` | Подпись верна, отзыва нет, срок не прошёл, consumption нет |
+| `issued` | Подпись верна, отзыва нет, `issuedAt <= часы процесса < expiresAt`, consumption нет |
 | `consumed` | Есть consumption на один `runId` |
 | `revoked` | Есть верная подпись отзыва |
 | `expired` | `now >= expiresAt` и расхода ещё не было |
 
 После `consumed` наступление `expiresAt` не переводит запись в `expired` для чтения. Для нового `dispatch` запись уже непригодна в любом случае.
+
+Закрепление: подписанный документ лежит в `trust-root/approvals/<approvalId>.json`. Имя создаётся через `CREATE_NEW`, затем `fsync` и повторное чтение. Повтор того же `approvalId` с другим каноническим содержимым не перезаписывает файл. Расход и будущий anchor-signer читают этот файл сами. `inputsHash` в consumption равен `approvedInputsHash` именно этого документа, а не копии из запроса. На пути расхода часы берутся у процесса: `issuedAt <= сейчас < expiresAt`. Поле `now` запроса срок не сдвигает. Отзыв и расход одного `approvalId` входят в одну секцию: отзыв, уже прочитанный из `revocations/<approvalId>.json` до создания consumption, ACK не открывает.
 
 ## Revocation
 

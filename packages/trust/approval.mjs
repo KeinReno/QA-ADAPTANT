@@ -148,40 +148,132 @@ function stateOf(consumption, revocation, body, now) {
   if (consumption.status === 'incomplete') return 'incomplete';
   if (consumption.status === 'complete') return 'consumed';
   if (revocation) return 'revoked';
+  if (Date.parse(now) < Date.parse(body.issuedAt)) return 'not-yet-valid';
   if (Date.parse(now) >= Date.parse(body.expiresAt)) return 'expired';
   return 'issued';
 }
 
-export function signApproval(privateKey, fields) {
+function trustedNow(purpose, testNow) {
+  if (purpose === 'view' && testNow !== undefined) {
+    assertTime(testNow);
+    return testNow;
+  }
+  return new Date().toISOString();
+}
+
+function writeExclusive(file, payload) {
+  let fd;
+  try { fd = fs.openSync(file, 'wx'); }
+  catch (error) {
+    if (error.code === 'EEXIST') return 'exists';
+    fail('TRUST_STORE_UNAVAILABLE', 'Имя в корне доверия не создано');
+  }
+  try {
+    fs.writeFileSync(fd, payload);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return 'created';
+}
+
+function readStoredApproval(trust, trustRoot, approvalId) {
+  const { file } = storeFile(trustRoot, 'approvals', approvalId);
+  if (!fs.existsSync(file)) fail('APPROVAL_MISSING', 'Закреплённый approval отсутствует');
+  let document;
+  try { document = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch { fail('APPROVAL_SIGNATURE_INVALID', 'Закреплённый approval не читается'); }
+  verifyTrustedDocument(trust, document);
+  assertApprovalBody(document);
+  if (document.approvalId !== approvalId) fail('CONTRACT_INVALID', 'Имя файла approval не совпало с документом');
+  return document;
+}
+
+function withGuard(trustRoot, approvalId, fn) {
+  assertId(approvalId);
+  const directory = path.resolve(trustRoot, 'guards');
+  const guardFile = path.resolve(directory, `${approvalId}.lock`);
+  if (path.dirname(guardFile) !== directory) fail('CONTRACT_INVALID', 'Блокировка выходит из каталога');
+  fs.mkdirSync(directory, { recursive: true });
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    let fd;
+    try { fd = fs.openSync(guardFile, 'wx'); }
+    catch (error) {
+      if (error.code !== 'EEXIST') fail('CONSUMPTION_INCOMPLETE', 'Блокировка approval не создана');
+      if (Date.now() > deadline) fail('CONSUMPTION_INCOMPLETE', 'Отзыв и расход не дождались очереди');
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+      continue;
+    }
+    try { return fn(); }
+    finally {
+      fs.closeSync(fd);
+      fs.rmSync(guardFile, { force: true });
+    }
+  }
+}
+
+function pauseBeforeGuard(request) {
+  if (request.fault !== 'before-guard') return;
+  fs.writeFileSync(request.readyFile, 'paused');
+  const deadline = Date.now() + 20000;
+  while (!fs.existsSync(request.releaseFile)) {
+    if (Date.now() > deadline) fail('CONSUMPTION_INCOMPLETE', 'Ожидание подтверждённого отзыва прервано');
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+  }
+}
+
+export function signApproval(privateKey, fields, trust, trustRoot) {
   const body = { ...fields, schemaVersion: '0.2.0', domain: 'approval', signature: '00', signatureAlgorithm: 'Ed25519' };
   assertApprovalBody(body);
   delete body.signature;
   delete body.signatureAlgorithm;
-  return signTrustedDocument(privateKey, body);
+  const signed = signTrustedDocument(privateKey, body);
+  return trustRoot ? commitApproval(trust, trustRoot, signed) : signed;
+}
+
+export function commitApproval(trust, trustRoot, document) {
+  verifyTrustedDocument(trust, document);
+  assertApprovalBody(document);
+  const payload = `${JSON.stringify(document)}\n`;
+  const { directory, file } = storeFile(trustRoot, 'approvals', document.approvalId);
+  fs.mkdirSync(directory, { recursive: true });
+  if (writeExclusive(file, payload) === 'exists') {
+    const existing = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (digest(existing) !== digest(document)) fail('CONTRACT_INVALID', 'approvalId уже закреплён с другим содержимым');
+    return existing;
+  }
+  if (fs.readFileSync(file, 'utf8') !== payload) fail('TRUST_STORE_UNAVAILABLE', 'Закреплённый approval не сошёлся при чтении');
+  return document;
 }
 
 export function verifyApproval(trust, approval, options = {}) {
-  const unsigned = verifyTrustedDocument(trust, approval);
-  assertApprovalBody(approval);
-  const now = options.now || new Date().toISOString();
-  assertTime(now);
-  assertCaller(trust, unsigned, options.issuer, options.subject, options.windowsSid, options.purpose === 'dispatch');
-  if (options.expected || options.purpose === 'dispatch') assertBindings(unsigned, options.expected);
-  const revocation = readRevocation(trust, options.trustRoot, unsigned.approvalId);
-  const consumption = inspectConsumption(options.trustRoot, unsigned.approvalId);
-  const state = stateOf(consumption, revocation, unsigned, now);
+  const approvalId = approval?.approvalId || options.approvalId;
+  if (approval) {
+    verifyTrustedDocument(trust, approval);
+    assertApprovalBody(approval);
+  }
+  const stored = readStoredApproval(trust, options.trustRoot, approvalId);
+  if (approval && digest(approval) !== digest(stored)) fail('CONTRACT_INVALID', 'Переданный approval не совпадает с закреплённым документом');
+  const now = trustedNow(options.purpose, options.testNow);
+  assertCaller(trust, stored, options.issuer, options.subject, options.windowsSid, options.purpose === 'dispatch');
+  if (options.expected || options.purpose === 'dispatch') assertBindings(stored, options.expected);
+  const revocation = readRevocation(trust, options.trustRoot, stored.approvalId);
+  const consumption = inspectConsumption(options.trustRoot, stored.approvalId);
+  const state = stateOf(consumption, revocation, stored, now);
   if (options.purpose === 'dispatch') {
     if (state === 'incomplete') fail('CONSUMPTION_INCOMPLETE', 'Файл расхода занят и неполон');
-    if (state === 'revoked') fail('APPROVAL_REVOKED', 'Approval отозван до расхода');
+    if (state === 'revoked') fail('APPROVAL_REVOKED', 'Отзыв подтверждён до расхода');
+    if (state === 'not-yet-valid') fail('CONTRACT_INVALID', 'Момент расхода раньше issuedAt');
     if (state === 'expired') fail('APPROVAL_EXPIRED', 'Срок approval истёк до расхода');
     if (state === 'consumed' && consumption.body.runId !== options.runId) fail('APPROVAL_REPLAY', 'Approval уже связан с другим runId');
-    if (state === 'consumed' && (consumption.body.inputsHash !== unsigned.approvedInputsHash || consumption.body.environmentGeneration !== unsigned.environmentGeneration)) fail('CONSUMPTION_INCOMPLETE', 'Полный расход не совпал с approval');
+    if (state === 'consumed' && (consumption.body.inputsHash !== stored.approvedInputsHash || consumption.body.environmentGeneration !== stored.environmentGeneration)) fail('CONSUMPTION_INCOMPLETE', 'Полный расход не совпал с approval');
   }
-  return { body: unsigned, state, ack: false, consumption: consumption.status === 'complete' ? consumption.body : null, revocation, code: state === 'incomplete' ? 'CONSUMPTION_INCOMPLETE' : null };
+  return { body: stored, state, ack: false, consumption: consumption.status === 'complete' ? consumption.body : null, revocation, code: state === 'incomplete' ? 'CONSUMPTION_INCOMPLETE' : null };
 }
 
 export function readApprovalState(trust, approval, options = {}) {
-  return verifyApproval(trust, approval, { ...options, purpose: 'view' });
+  return verifyApproval(trust, approval, { issuer: options.issuer, subject: options.subject, windowsSid: options.windowsSid, trustRoot: options.trustRoot, expected: options.expected, testNow: options.testNow, purpose: 'view' });
 }
 
 export function revokeApproval(privateKey, trustRoot, fields) {
@@ -196,28 +288,44 @@ export function revokeApproval(privateKey, trustRoot, fields) {
     reason: fields.reason,
     keyId: fields.keyId
   });
-  const { directory, file } = storeFile(trustRoot, 'revocations', fields.approvalId);
-  fs.mkdirSync(directory, { recursive: true });
-  try {
-    fs.writeFileSync(file, `${JSON.stringify(signed)}\n`, { flag: 'wx' });
-  } catch (error) {
-    if (error.code === 'EEXIST') fail('APPROVAL_REVOKED', 'Файл отзыва уже существует и не заменяется');
-    throw error;
-  }
-  return signed;
+  return withGuard(trustRoot, fields.approvalId, () => {
+    const { directory, file } = storeFile(trustRoot, 'revocations', fields.approvalId);
+    fs.mkdirSync(directory, { recursive: true });
+    const payload = `${JSON.stringify(signed)}\n`;
+    if (writeExclusive(file, payload) === 'exists') fail('APPROVAL_REVOKED', 'Файл отзыва уже существует и не заменяется');
+    if (fs.readFileSync(file, 'utf8') !== payload) fail('APPROVAL_SIGNATURE_INVALID', 'Отзыв не сошёлся при повторном чтении');
+    return signed;
+  });
 }
 
 export function consumeDispatch(request) {
+  pauseBeforeGuard(request);
   const trust = request.trust || loadTrustRoot(request.trustRoot);
-  const viewed = verifyApproval(trust, request.approval, { ...request, purpose: 'dispatch' });
+  const approvalId = request.approval?.approvalId || request.approvalId;
+  return withGuard(request.trustRoot, approvalId, () => dispatchLocked(trust, request));
+}
+
+function dispatchLocked(trust, request) {
+  const viewed = verifyApproval(trust, request.approval, {
+    trustRoot: request.trustRoot,
+    issuer: request.issuer,
+    subject: request.subject,
+    windowsSid: request.windowsSid,
+    expected: request.expected,
+    runId: request.runId,
+    purpose: 'dispatch'
+  });
   if (viewed.state === 'consumed') return { ...viewed, ack: false, code: 'APPROVAL_CONSUMED' };
+  const consumedAt = new Date().toISOString();
+  if (Date.parse(consumedAt) < Date.parse(viewed.body.issuedAt)) fail('CONTRACT_INVALID', 'Момент расхода раньше issuedAt');
+  if (Date.parse(consumedAt) >= Date.parse(viewed.body.expiresAt)) fail('APPROVAL_EXPIRED', 'Срок approval истёк до расхода');
   const body = {
     approvalId: viewed.body.approvalId,
     runId: request.runId,
     decisionId: request.decisionId,
     inputsHash: viewed.body.approvedInputsHash,
     environmentGeneration: viewed.body.environmentGeneration,
-    consumedAt: request.consumedAt || request.now || new Date().toISOString()
+    consumedAt
   };
   assertId(body.runId);
   assertId(body.decisionId);
@@ -225,6 +333,7 @@ export function consumeDispatch(request) {
   const record = { ...body, bodySha256: digest(body) };
   const { directory, file } = storeFile(request.trustRoot, 'consumption', body.approvalId);
   fs.mkdirSync(directory, { recursive: true });
+  if (readRevocation(trust, request.trustRoot, body.approvalId)) fail('APPROVAL_REVOKED', 'Отзыв подтверждён до расхода');
   let fd;
   try {
     fd = fs.openSync(file, 'wx');
@@ -233,6 +342,7 @@ export function consumeDispatch(request) {
     return finishExisting(trust, request);
   }
   try {
+    if (readRevocation(trust, request.trustRoot, body.approvalId)) fail('APPROVAL_REVOKED', 'Отзыв подтверждён до расхода');
     if (request.fault === 'after-create') {
       fs.writeSync(fd, '{');
       fail('CONSUMPTION_INCOMPLETE', 'Обрыв после CREATE_NEW и до полного bodySha256');
@@ -240,19 +350,24 @@ export function consumeDispatch(request) {
     fs.writeFileSync(fd, `${JSON.stringify(record)}\n`);
     fs.fsyncSync(fd);
   } catch (error) {
-    if (error.code === 'CONSUMPTION_INCOMPLETE' || error.code === 'CONTRACT_INVALID') throw error;
+    if (error.code === 'CONSUMPTION_INCOMPLETE' || error.code === 'CONTRACT_INVALID' || error.code === 'APPROVAL_REVOKED') throw error;
     fail('CONSUMPTION_INCOMPLETE', 'Запись расхода оборвана');
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
   }
   const directorySync = syncDirectory(directory);
+  if (readRevocation(trust, request.trustRoot, body.approvalId)) fail('APPROVAL_REVOKED', 'Отзыв подтверждён до расхода');
   const written = inspectConsumption(request.trustRoot, body.approvalId);
   if (written.status !== 'complete' || written.body.runId !== request.runId || digest(written.body) !== record.bodySha256) fail('CONSUMPTION_INCOMPLETE', 'Повторное чтение расхода не сошлось');
-  return { body: viewed.body, state: 'consumed', ack: true, consumption: written.body, revocation: viewed.revocation, code: 'TRUST_OK', directorySync };
+  if (written.body.inputsHash !== viewed.body.approvedInputsHash) fail('CONSUMPTION_INCOMPLETE', 'Расход не связан с закреплённым approval');
+  return { body: viewed.body, state: 'consumed', ack: true, consumption: written.body, revocation: null, code: 'TRUST_OK', directorySync };
 }
 
 function finishExisting(trust, request) {
-  const checked = verifyApproval(trust, request.approval, { ...request, purpose: 'dispatch' });
+  const checked = verifyApproval(trust, request.approval, {
+    trustRoot: request.trustRoot, issuer: request.issuer, subject: request.subject,
+    windowsSid: request.windowsSid, expected: request.expected, runId: request.runId, purpose: 'dispatch'
+  });
   if (checked.state === 'incomplete') fail('CONSUMPTION_INCOMPLETE', 'Занятое имя расхода неполно и не заменяется');
   if (checked.state === 'consumed' && checked.consumption.runId === request.runId) return { ...checked, ack: false, code: 'APPROVAL_CONSUMED' };
   if (checked.state === 'consumed') fail('APPROVAL_REPLAY', 'Approval уже связан с другим runId');

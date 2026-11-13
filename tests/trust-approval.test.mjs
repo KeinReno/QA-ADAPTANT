@@ -15,9 +15,8 @@ const created = await createTrustRoot({ secretsDir, trustRoot });
 const trust = loadTrustRoot(trustRoot);
 const ownerKey = await unwrapPrivateKey(path.join(secretsDir, 'owner.key'));
 const anchorKey = await unwrapPrivateKey(path.join(secretsDir, 'anchor.key'));
-const issuedAt = '2026-11-13T00:00:00.000Z';
-const expiresAt = '2026-11-13T00:10:00.000Z';
-const now = '2026-11-13T00:05:00.000Z';
+const issuedAt = new Date(Date.now() - 60_000).toISOString();
+const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
 const inputs = { comment: 'заметка', executorId: 'operator-1', title: 'запись' };
 const effects = [
   { id: 'title-saved', field: 'title', equals: 'запись' },
@@ -66,21 +65,26 @@ test('повтор того же runId не шлёт второй ACK и не в
   assert.equal(second.ack, false);
   assert.equal(second.code, 'APPROVAL_CONSUMED');
   assert.deepEqual(fs.readFileSync(file), kept);
-  const viewed = readApprovalState(trust, approval, { ...context(approval), now: '2026-11-13T00:20:00.000Z' });
+  const viewed = readApprovalState(trust, approval, { ...context(approval), testNow: new Date(Date.parse(expiresAt) + 1000).toISOString() });
   assert.equal(viewed.state, 'consumed');
   assert.equal(viewed.ack, false);
 });
 
 test('отзыв и просрочка до расхода запрещают мутацию и не создают файл', () => {
   const revoked = approvalFor('approval-revoked');
-  revokeApproval(ownerKey, trustRoot, { approvalId: 'approval-revoked', reason: 'owner-revoked', revokedAt: now, keyId: created.ownerKeyId });
+  revokeApproval(ownerKey, trustRoot, { approvalId: 'approval-revoked', reason: 'owner-revoked', revokedAt: new Date().toISOString(), keyId: created.ownerKeyId });
   assert.throws(() => consumeDispatch(dispatch(revoked, { runId: 'run-revoked', decisionId: 'decision-revoked' })), error => error.code === 'APPROVAL_REVOKED');
   assert.equal(fs.existsSync(path.join(trustRoot, 'consumption', 'approval-revoked.json')), false);
   assert.equal(fs.existsSync(path.join(trustRoot, 'revocations', 'approval-revoked.json')), true);
-  const expired = approvalFor('approval-expired', { issuedAt: '2026-11-13T00:00:00.000Z', expiresAt: '2026-11-13T00:10:00.000Z' });
-  assert.throws(() => consumeDispatch(dispatch(expired, { runId: 'run-expired', decisionId: 'decision-expired', now: '2026-11-13T00:10:00.000Z' })), error => error.code === 'APPROVAL_EXPIRED');
+  const pastIssued = new Date(Date.now() - 12 * 60_000).toISOString();
+  const pastExpires = new Date(Date.now() - 60_000).toISOString();
+  const expired = approvalFor('approval-expired', { issuedAt: pastIssued, expiresAt: pastExpires });
+  assert.throws(() => consumeDispatch(dispatch(expired, { runId: 'run-expired', decisionId: 'decision-expired', now: pastIssued })), error => error.code === 'APPROVAL_EXPIRED');
   assert.equal(fs.existsSync(path.join(trustRoot, 'consumption', 'approval-expired.json')), false);
-  assert.throws(() => signApproval(ownerKey, fields('approval-long', { expiresAt: '2026-11-13T00:15:00.001Z' })), error => error.code === 'CONTRACT_INVALID');
+  const early = approvalFor('approval-early', { issuedAt: new Date(Date.now() + 5 * 60_000).toISOString(), expiresAt: new Date(Date.now() + 12 * 60_000).toISOString() });
+  assert.throws(() => consumeDispatch(dispatch(early, { runId: 'run-early', decisionId: 'decision-early' })), error => error.code === 'CONTRACT_INVALID');
+  assert.equal(fs.existsSync(path.join(trustRoot, 'consumption', 'approval-early.json')), false);
+  assert.throws(() => signApproval(ownerKey, fields('approval-long', { expiresAt: new Date(Date.parse(issuedAt) + 15 * 60_000 + 1).toISOString() })), error => error.code === 'CONTRACT_INVALID');
 });
 
 test('чужой издатель, чужой субъект и ключ анкера не создают годный расход', () => {
@@ -152,6 +156,50 @@ test('два процесса и один approval оставляют один �
   assert.deepEqual(fs.readFileSync(file), firstRead);
 });
 
+test('закреплённый approval не подменяется другим документом с тем же id', () => {
+  const approval = approvalFor('approval-stored');
+  const file = path.join(trustRoot, 'approvals', 'approval-stored.json');
+  const kept = fs.readFileSync(file);
+  assert.equal(digest(JSON.parse(kept.toString('utf8'))), digest(approval));
+  assert.throws(() => signApproval(ownerKey, fields('approval-stored', { approvalNonce: 'cd'.repeat(32) }), trust, trustRoot), error => error.code === 'CONTRACT_INVALID');
+  assert.deepEqual(fs.readFileSync(file), kept);
+  const other = signApproval(ownerKey, fields('approval-stored', { approvalNonce: 'cd'.repeat(32) }));
+  assert.throws(() => consumeDispatch(dispatch(other, { runId: 'run-stored', decisionId: 'decision-stored' })), error => error.code === 'CONTRACT_INVALID');
+  assert.equal(fs.existsSync(path.join(trustRoot, 'consumption', 'approval-stored.json')), false);
+  const loose = signApproval(ownerKey, fields('approval-loose'));
+  assert.throws(() => consumeDispatch(dispatch(loose, { runId: 'run-loose', decisionId: 'decision-loose' })), error => error.code === 'APPROVAL_MISSING');
+});
+
+test('отзыв другого процесса, подтверждённый до расхода, не даёт ACK', async () => {
+  const approval = approvalFor('approval-revoke-race');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-revoke-race-'));
+  const readyFile = path.join(directory, 'ready');
+  const releaseFile = path.join(directory, 'release');
+  const consumeResult = path.join(directory, 'consume-result.json');
+  const revokeResult = path.join(directory, 'revoke-result.json');
+  const consumeRequest = path.join(directory, 'consume.json');
+  fs.writeFileSync(consumeRequest, JSON.stringify({
+    ...dispatch(approval, { runId: 'run-revoke-race', decisionId: 'decision-revoke-race', fault: 'before-guard' }),
+    readyFile, releaseFile, resultFile: consumeResult
+  }));
+  const consumer = spawn(process.execPath, [path.join('tests', 'approval-consume-worker.mjs'), consumeRequest], { stdio: 'ignore' });
+  const consumerDone = exitOf(consumer);
+  await waitFor(readyFile);
+  const revokeRequest = path.join(directory, 'revoke.json');
+  fs.writeFileSync(revokeRequest, JSON.stringify({
+    mode: 'revoke', secretsDir, trustRoot, approvalId: 'approval-revoke-race', resultFile: revokeResult,
+    reason: 'owner-revoked', revokedAt: new Date().toISOString(), keyId: created.ownerKeyId
+  }));
+  const revoker = spawn(process.execPath, [path.join('tests', 'approval-consume-worker.mjs'), revokeRequest], { stdio: 'ignore' });
+  await exitOf(revoker);
+  assert.equal(JSON.parse(fs.readFileSync(revokeResult, 'utf8')).code, 'REVOKED_STORED');
+  fs.writeFileSync(releaseFile, 'go');
+  await consumerDone;
+  assert.deepEqual(JSON.parse(fs.readFileSync(consumeResult, 'utf8')), { ack: false, code: 'APPROVAL_REVOKED' });
+  assert.equal(fs.existsSync(path.join(trustRoot, 'consumption', 'approval-revoke-race.json')), false);
+  assert.equal(digest(JSON.parse(fs.readFileSync(path.join(trustRoot, 'approvals', 'approval-revoke-race.json'), 'utf8'))), digest(approval));
+});
+
 test('просмотр состояния не расходует approval и модуль не ходит в сеть', () => {
   const approval = approvalFor('approval-view');
   const viewed = readApprovalState(trust, approval, context(approval));
@@ -159,14 +207,15 @@ test('просмотр состояния не расходует approval и м
   assert.equal(viewed.ack, false);
   assert.equal(fs.existsSync(path.join(trustRoot, 'consumption', 'approval-view.json')), false);
   const source = fs.readFileSync(new URL('../packages/trust/approval.mjs', import.meta.url), 'utf8');
-  for (const token of ['node:http', 'node:net', 'playwright', 'fetch(', 'rename(', 'unlink', 'rmSync']) assert.equal(source.includes(token), false);
+  for (const token of ['node:http', 'node:net', 'playwright', 'fetch(', 'rename(', 'unlink', 'request.now', 'options.now', 'request.consumedAt']) assert.equal(source.includes(token), false);
+  assert.deepEqual(source.split('\n').filter(line => line.includes('rmSync')), ['      fs.rmSync(guardFile, { force: true });']);
   for (const file of ['apps/control/run.mjs', 'apps/browser/worker.mjs', 'apps/verification/worker.mjs']) {
     assert.equal(fs.readFileSync(file, 'utf8').includes('packages/trust'), false);
   }
 });
 
 function approvalFor(approvalId, overrides = {}) {
-  return signApproval(ownerKey, fields(approvalId, overrides));
+  return signApproval(ownerKey, fields(approvalId, overrides), trust, trustRoot);
 }
 
 function fields(approvalId, overrides = {}) {
@@ -200,11 +249,17 @@ function expected() {
 }
 
 function context(approval) {
-  return { trustRoot, issuer, subject, windowsSid: 'S-1-5-21-operator', now, approval };
+  return { trustRoot, issuer, subject, windowsSid: 'S-1-5-21-operator', approval };
 }
 
 function dispatch(approval, overrides) {
-  return { ...context(approval), expected: expected(), consumedAt: now, ...overrides };
+  return { ...context(approval), expected: expected(), ...overrides };
+}
+
+function exitOf(child) {
+  return new Promise((resolve, reject) => {
+    child.on('exit', code => code === 0 ? resolve() : reject(new Error(`процесс завершился с ${code}`)));
+  });
 }
 
 function startRacer(directory, goFile, approval, run) {
@@ -215,12 +270,7 @@ function startRacer(directory, goFile, approval, run) {
   const child = spawn(process.execPath, [path.join('tests', 'approval-consume-worker.mjs'), requestFile], { stdio: 'ignore' });
   return {
     ready: waitFor(readyFile),
-    done: new Promise((resolve, reject) => {
-      child.on('exit', code => {
-        if (code !== 0) reject(new Error(`worker ${run.runId} завершился с ${code}`));
-        else resolve(JSON.parse(fs.readFileSync(resultFile, 'utf8')));
-      });
-    })
+    done: exitOf(child).then(() => JSON.parse(fs.readFileSync(resultFile, 'utf8')))
   };
 }
 
