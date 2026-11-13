@@ -172,22 +172,24 @@ export function signEnvironmentRecord(ownerPrivateKey, fields) {
 }
 
 export function verifyEnvironmentRecord(trust, record) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) fail('CONTRACT_INVALID', 'Запись среды не объект');
+  // D-03: повторная проверка уже проверенного тела идемпотентна по Symbol-метке.
+  if (record[verifiedRecord]) {
+    exactKeys(record, unsignedRecordKeys);
+    assertRecordContent(record);
+    return markVerified({ ...record });
+  }
+  if (typeof record.signature !== 'string') fail('CONTRACT_INVALID', 'Неподписанная запись среды не проходила проверку подписи');
   const body = verifyTrustedDocument(trust, record);
   exactKeys(record, recordKeys);
   assertRecordContent(record);
-  if (typeof record.signature !== 'string' || !hex.test(record.signature)) fail('CONTRACT_INVALID', 'Подпись записи среды отсутствует');
+  if (!hex.test(record.signature)) fail('CONTRACT_INVALID', 'Подпись записи среды отсутствует');
   if (body.domain !== 'environment-record') fail('CONTRACT_INVALID', 'Документ не является записью среды');
   return markVerified(body);
 }
 
 function recordBody(trust, record) {
-  if (!record || typeof record !== 'object' || Array.isArray(record)) fail('CONTRACT_INVALID', 'Запись среды не объект');
-  if (typeof record.signature === 'string') return verifyEnvironmentRecord(trust, record);
-  // Тело после loadEnvironmentRecord/verifyEnvironmentRecord: подпись уже проверена.
-  if (!record[verifiedRecord]) fail('CONTRACT_INVALID', 'Неподписанная запись среды не проходила проверку подписи');
-  exactKeys(record, unsignedRecordKeys);
-  assertRecordContent(record);
-  return markVerified({ ...record });
+  return verifyEnvironmentRecord(trust, record);
 }
 
 function syncDirectory(directory) {
@@ -204,53 +206,102 @@ function syncDirectory(directory) {
   }
 }
 
-function environmentFile(trustRoot, environmentId) {
+// D-01 (решение Lead, docs/changes/005): поколенческая раскладка
+// trustRoot/environments/<environmentId>/<generation>.json. Отдельный CREATE_NEW-файл на поколение.
+function environmentDirectory(trustRoot, environmentId) {
   assertId(environmentId, 'environmentId');
-  const directory = path.resolve(trustRoot, 'environments');
-  const file = path.resolve(directory, environmentId + '.json');
-  if (path.dirname(file) !== directory) fail('CONTRACT_INVALID', 'Файл среды выходит из своего каталога');
-  return { directory, file };
+  const root = path.resolve(trustRoot, 'environments');
+  const directory = path.resolve(root, environmentId);
+  if (path.dirname(directory) !== root) fail('CONTRACT_INVALID', 'Каталог среды выходит из реестра');
+  return { root, directory };
+}
+
+function generationFile(directory, generation) {
+  assertGeneration(generation);
+  const file = path.resolve(directory, generation + '.json');
+  if (path.dirname(file) !== directory) fail('CONTRACT_INVALID', 'Файл поколения среды выходит из каталога');
+  return file;
+}
+
+function existingGenerations(directory) {
+  let entries;
+  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
+  catch { fail('CONTRACT_INVALID', 'Каталог среды не читается'); }
+  const generations = [];
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const match = /^([1-9]\d*)\.json$/.exec(entry.name);
+    if (!match) continue;
+    generations.push(Number(match[1]));
+  }
+  generations.sort((left, right) => left - right);
+  return generations;
+}
+
+function readGeneration(trust, directory, environmentId, generation) {
+  const file = generationFile(directory, generation);
+  let document;
+  try { document = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch { fail('CONTRACT_INVALID', 'Запись поколения среды не читается'); }
+  const body = verifyEnvironmentRecord(trust, document);
+  if (body.environmentId !== environmentId) fail('CONTRACT_INVALID', 'environmentId записи не совпал с каталогом');
+  if (body.generation !== generation) fail('CONTRACT_INVALID', 'generation записи не совпала с именем файла');
+  return { file, document, body };
 }
 
 export function commitEnvironmentRecord(trust, trustRoot, record) {
   const body = verifyEnvironmentRecord(trust, record);
   const payload = JSON.stringify(record) + '\n';
-  const { directory, file } = environmentFile(trustRoot, body.environmentId);
+  const { directory } = environmentDirectory(trustRoot, body.environmentId);
   fs.mkdirSync(directory, { recursive: true });
+  const file = generationFile(directory, body.generation);
+  if (fs.existsSync(file)) {
+    const existing = readGeneration(trust, directory, body.environmentId, body.generation);
+    if (canonical(existing.document) !== canonical(record)) fail('CONTRACT_INVALID', 'Поколение среды уже опубликовано с другим содержимым');
+    return existing.document;
+  }
+  const before = existingGenerations(directory);
+  const maximum = before.length === 0 ? 0 : before[before.length - 1];
+  if (body.generation < maximum) fail('CONTRACT_INVALID', 'Публикация поколения ниже уже существующего максимума');
   let fd;
   try {
     fd = fs.openSync(file, 'wx');
   } catch (error) {
-    if (error.code !== 'EEXIST') fail('TRUST_STORE_UNAVAILABLE', 'Имя записи среды не создано');
-    let existing;
-    try { existing = JSON.parse(fs.readFileSync(file, 'utf8')); }
-    catch { fail('CONTRACT_INVALID', 'Существующая запись среды не читается'); }
-    const existingBody = verifyEnvironmentRecord(trust, existing);
-    if (existingBody.environmentId !== body.environmentId) fail('CONTRACT_INVALID', 'Имя файла среды не совпало с документом');
-    if (canonical(existing) !== canonical(record)) fail('CONTRACT_INVALID', 'environmentId уже закреплён с другим содержимым');
-    return existing;
+    if (error.code !== 'EEXIST') fail('TRUST_STORE_UNAVAILABLE', 'Файл поколения среды не создан');
+    const existing = readGeneration(trust, directory, body.environmentId, body.generation);
+    if (canonical(existing.document) !== canonical(record)) fail('CONTRACT_INVALID', 'Поколение среды уже опубликовано с другим содержимым');
+    return existing.document;
   }
   try {
     fs.writeFileSync(fd, payload);
     fs.fsyncSync(fd);
   } catch {
-    fail('TRUST_STORE_UNAVAILABLE', 'Запись среды не сохранена');
+    fail('TRUST_STORE_UNAVAILABLE', 'Поколение среды не сохранено');
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
   }
   syncDirectory(directory);
-  if (fs.readFileSync(file, 'utf8') !== payload) fail('TRUST_STORE_UNAVAILABLE', 'Закреплённая запись среды не сошлась при чтении');
+  if (fs.readFileSync(file, 'utf8') !== payload) fail('TRUST_STORE_UNAVAILABLE', 'Опубликованное поколение среды не сошлось при чтении');
+  const after = existingGenerations(directory);
+  const latest = after.length === 0 ? 0 : after[after.length - 1];
+  if (latest > body.generation) {
+    fs.rmSync(file, { force: true });
+    fail('CONTRACT_INVALID', 'Публикация поколения ниже уже существующего максимума');
+  }
   return record;
 }
 
 export function loadEnvironmentRecord(trust, trustRoot, environmentId) {
-  const { file } = environmentFile(trustRoot, environmentId);
-  if (!fs.existsSync(file)) fail('ENVIRONMENT_UNKNOWN', 'Среда отсутствует в реестре');
-  let document;
-  try { document = JSON.parse(fs.readFileSync(file, 'utf8')); }
-  catch { fail('CONTRACT_INVALID', 'Запись среды не читается'); }
-  const body = verifyEnvironmentRecord(trust, document);
-  if (body.environmentId !== environmentId) fail('CONTRACT_INVALID', 'Имя файла среды не совпало с документом');
+  const { directory } = environmentDirectory(trustRoot, environmentId);
+  let isDirectory = false;
+  try { isDirectory = fs.statSync(directory).isDirectory(); }
+  catch { isDirectory = false; }
+  if (!isDirectory) fail('ENVIRONMENT_UNKNOWN', 'Среда отсутствует в реестре');
+  const generations = existingGenerations(directory);
+  if (generations.length === 0) fail('ENVIRONMENT_UNKNOWN', 'Среда отсутствует в реестре');
+  let latest = null;
+  for (const generation of generations) latest = readGeneration(trust, directory, environmentId, generation);
+  const body = latest.body;
   if (body.status === 'revoked') fail('ENVIRONMENT_REVOKED', 'Среда отозвана');
   return markVerified(body);
 }
@@ -282,7 +333,9 @@ export function verifyEnvironmentAttestation(trust, record, attestation, options
   if (!attestation || typeof attestation !== 'object' || Array.isArray(attestation)) fail('CONTRACT_INVALID', 'Аттестация не объект');
   exactKeys(attestation, attestationKeys);
   assertAttestationContent(attestation);
-  if (attestation.signatureAlgorithm !== 'Ed25519' || typeof attestation.signature !== 'string' || !hex.test(attestation.signature)) fail('CONTRACT_INVALID', 'Подпись аттестации отсутствует');
+  // D-02: неверный алгоритм/пустая/не-hex подпись — провал аттестации, а не формы документа.
+  if (attestation.signatureAlgorithm !== 'Ed25519') fail('ENVIRONMENT_ATTESTATION_FAILED', 'Алгоритм подписи аттестации не Ed25519');
+  if (typeof attestation.signature !== 'string' || !hex.test(attestation.signature)) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Подпись аттестации отсутствует или не hex');
   if (attestation.environmentId !== recordFields.environmentId) fail('ENVIRONMENT_ATTESTATION_FAILED', 'environmentId аттестации не совпал с реестром');
   if (attestation.generation !== recordFields.generation) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Поколение среды изменилось');
   if (attestation.origin !== recordFields.origin) fail('ENVIRONMENT_ATTESTATION_FAILED', 'origin аттестации не совпал с реестром');
@@ -301,8 +354,52 @@ function timeoutOf(value) {
   return DEFAULT_ATTEST_TIMEOUT_MS;
 }
 
+function responseFailure(error) {
+  if (error && typeof error.code === 'string'
+    && (error.code.startsWith('ENVIRONMENT_') || error.code === 'CONTRACT_INVALID' || error.code === 'TRUST_STORE_UNAVAILABLE')) return error;
+  return null;
+}
+
+function declaredContentLength(response) {
+  try {
+    if (response.headers && typeof response.headers.get === 'function') {
+      const value = Number(response.headers.get('content-length'));
+      return Number.isFinite(value) ? value : null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+// D-04: читаем поток с капом до буферизации всего тела; content-length проверяется заранее.
 async function responseText(response) {
   if (!response || typeof response.text !== 'function') fail('ENVIRONMENT_ATTESTATION_FAILED', 'Ответ среды не читается');
+  const declared = declaredContentLength(response);
+  if (declared !== null && declared > maxAttestationBytes) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Ответ среды слишком большой');
+  if (response.body && typeof response.body.getReader === 'function') {
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = Buffer.from(value);
+        total += chunk.length;
+        if (total > maxAttestationBytes) {
+          try { await reader.cancel(); } catch { /* поток уже закрыт */ }
+          fail('ENVIRONMENT_ATTESTATION_FAILED', 'Ответ среды слишком большой');
+        }
+        chunks.push(chunk);
+      }
+    } catch (error) {
+      const own = responseFailure(error);
+      if (own) throw own;
+      fail('ENVIRONMENT_UNAVAILABLE', 'Ответ среды оборван');
+    }
+    return Buffer.concat(chunks).toString('utf8');
+  }
   let text;
   try { text = await response.text(); }
   catch { fail('ENVIRONMENT_UNAVAILABLE', 'Ответ среды оборван'); }
@@ -334,8 +431,6 @@ export async function attestEnvironment({ record, trust, challenge, fetchImpl, t
   if (!response || !Number.isSafeInteger(response.status)) fail('ENVIRONMENT_UNAVAILABLE', 'Аттестация среды не получена');
   if (response.status >= 300 && response.status < 400) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Редирект среды запрещён');
   if (response.status !== 200) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Среда ответила ' + response.status);
-  const declared = response.headers && typeof response.headers.get === 'function' ? Number(response.headers.get('content-length')) : NaN;
-  if (Number.isFinite(declared) && declared > maxAttestationBytes) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Ответ среды слишком большой');
   const text = await responseText(response);
   let attestation;
   try { attestation = JSON.parse(text); }
