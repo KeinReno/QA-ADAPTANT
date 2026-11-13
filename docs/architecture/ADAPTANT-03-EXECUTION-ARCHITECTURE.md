@@ -23,7 +23,7 @@ Execution Foundation принимает поручение, сохраняет �
 | Компонент | Предлагаемый путь | Ответственность | Зависимости |
 |---|---|---|---|
 | Task contracts | `packages/execution/contracts.mjs` | Task/Plan/Step/Result schemas, переходы и инварианты нового контура | `zod` |
-| Task store | `packages/execution/store.mjs` | Durable task snapshots и hash-chained task journal в локальном каталоге | `node:*`; свой namespace, отдельный от RunStore |
+| Task store | `packages/execution/store.mjs` | Durable task snapshots и hash-chained task journal в локальном каталоге; PASS закрыт до независимой проверки run/evidence | `node:*`, `packages/core/canonical.mjs`, `packages/core/file-mutex.mjs`; собственный namespace отдельно от RunStore |
 | Planner API | `packages/planner/provider.mjs` | Типизированный `PlannerProvider`, статусы доступности и ошибки | только Task contracts |
 | Planner validation | `packages/planner/validate.mjs` | Проверка формы, ссылок, capability allowlist и зависимостей плана | Task contracts |
 | Planner coordinator | `packages/planner/plan.mjs` | Сохранить исходный запрос, вызвать provider, валидировать и версионировать черновик | provider interface, store API |
@@ -47,8 +47,11 @@ PlannerProvider {
 ExecutionAdapter {
   id: string;
   capabilities(): readonly string[];
-  start(input: {taskId: string, planId: string, step: ExecutionStep,
-               executionRef: TrustedExecutionRef, idempotencyKey: string})
+  prepare(input: {taskId: string, planId: string, step: ExecutionStep,
+                 executionRef: TrustedExecutionRef})
+    : Promise<{runId: string, bundleDigest: string, preparedRef: string}>; // no dispatch side effect
+  start(input: {taskId: string, planId: string, step: ExecutionStep, prepared: PreparedRun,
+               idempotencyKey: string})
     : Promise<{runId: string, runnerResult: unknown, executionOutcome: 'SUCCEEDED'|'FAILED'|'UNKNOWN'}>;
   observe(input: {runId: string}): Promise<TrustedRunObservation>;
   cancel(input: {runId: string, actorRef: string}): Promise<TrustedRunObservation>;
@@ -58,7 +61,7 @@ ExecutionAdapter {
 TaskService {
   create(input: {originalRequest: string, ownerRef: string, contextRefs: string[]}): Promise<Task>;
   plan(taskId: string, providerId: string): Promise<ExecutionPlan>;
-  approvePlan(taskId: string, planId: string, approvalRef: string): Promise<Task>;
+  approvePlan(taskId: string, planId: string, approvalRef: string): Promise<Task>; // host verifier + atomic compare-and-transition
   start(taskId: string, planId: string): Promise<Task>;
   observe(taskId: string): Promise<TaskView>;
   cancel(taskId: string, actorRef: string): Promise<Task>;
@@ -72,11 +75,11 @@ TaskService {
 
 1. `create` пишет точный `originalRequest`, owner ref, время и `DRAFT` до вызова любой модели.
 2. Planner получает только исходный текст и безопасный контекст. Возвращает PlanDraft с идентификаторами разрешённых типов действий; произвольные команды, JS, URL-ы и locator-ы не являются исполняемыми инструкциями.
-3. Validator отклоняет неизвестный adapter/capability, циклические или отсутствующие зависимости, пустые проверки, неподдерживаемый action type и попытку задать approval/policy результат со стороны модели.
+3. Validator отклоняет неизвестный adapter/capability, циклические или отсутствующие зависимости, пустые проверки, несовпадающие пары rule/requirement и неподдерживаемый action type. Перед dispatch Orchestrator сверяет capabilities шага с конкретным adapter. Host вычисляет owner-approval и Trust-approval requirements из локальной policy и классификации шага; ответ модели не может снять подтверждение.
 4. План хранится как неизменяемая версия. Изменение плана создаёт следующую версию и сбрасывает прежнее подтверждение.
-5. Policy/approval решается Orchestrator по локальным правилам и доверенным refs. План модели не может объявить действие разрешённым. Для существующего 0.2 mutation run необходим Trust approval, связанный с точным approved Scenario/Operation/Fixture/inputs; подтверждение Task plan само по себе его не заменяет.
+5. Policy/approval решается Orchestrator по локальным правилам и доверенным refs. Execution ref исполним только в пересечении host allowlist и явно переданного каталога `approvedScenarioRefs`. План модели не может объявить действие разрешённым. Owner approval привязывается к точной версии плана и проходит атомарное сравнение revision/planId/hash при переходе; для существующего 0.2 mutation run необходим отдельный Trust approval, связанный с точным approved Scenario/Operation/Fixture/inputs.
 6. Adapter разрешает executionRef, фиксирует `dispatch-intent` в Task journal и вызывает только публичный `startTrusted`. До начала вызова повтор dispatch после рестарта запрещён; если исход вызова неизвестен, разрешены только `observeTrusted`/`reconcileTrusted` по известному runId.
-7. Adapter сохраняет исходное возвращённое значение `startTrusted` только как технический `runnerResult`, извлекает проверенный `runId` из заранее закреплённого bundle и получает trusted outcome отдельным вызовом `observeTrusted`. Нормализация исключений/ошибок Runner в `executionOutcome` не создаёт verification verdict. Orchestrator сохраняет ссылки evidence и не пересчитывает/не переписывает verdict.
+7. Adapter сохраняет исходное возвращённое значение `startTrusted` только как технический `runnerResult`, извлекает проверенный `runId` из заранее закреплённого bundle и получает trusted outcome отдельным вызовом `observeTrusted`. Нормализация исключений/ошибок Runner в `executionOutcome` не создаёт verification verdict. Orchestrator сохраняет ссылки evidence и не пересчитывает/не переписывает verdict. `TaskStore` принимает `PASS` только при наличии fail-closed `verifyTaskPass`, который независимо повторно читает trusted run/evidence chain для всех обязательных шагов; булево поле и непустые IDs без этой проверки недостаточны.
 
 ## Совместимость и известные ограничения
 

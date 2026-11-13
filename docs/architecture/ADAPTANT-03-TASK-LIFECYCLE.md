@@ -5,12 +5,12 @@ Status: **этап A — архитектурное предложение дл�
 
 ## Сущности
 
-- **Task** хранит `taskId`, исходный `originalRequest` без нормализации/перезаписи, `normalizedGoal`, `status`, `createdAt`, `updatedAt`, `ownerRef`, refs на контекст и активный `executionPlanId`, `environmentRef`, `policyRef`, `approvalRef`, список `runIds`, `result` и `journalHead`.
+- **Task** хранит `taskId`, исходный `originalRequest` без нормализации/перезаписи и его SHA-256, `normalizedGoal`, `status`, `createdAt`, `updatedAt`, `ownerRef`, refs на контекст и активный `executionPlanId`, `environmentRef`, `policyRef`, `approvalRef`, список `runIds`, типизированный `result`, `journalSequence` и `journalHeadSha256`.
 - **ExecutionPlan** — неизменяемая версия с `planId`, `taskId`, `version`, `provider` (`providerId`, `modelId`, `mode=MODEL|MOCK`), `steps`, dependency edges, proposed capabilities, risk annotations, approval requirements и validation summary.
 - **ExecutionStep** имеет `stepId`, описание, ограниченный `actionType`, dependency refs, конкретный `adapterId`, status, `attemptCount`, связанные `runIds`, evidence refs, `executionOutcome`, `verificationOutcome`, `failureReason`.
 - **JournalEvent** связывает taskId и при наличии planId/stepId/runId; append-only sequence/hash chain; секреты и приватные payloads не записываются.
 
-Task status и step status — разные поля. Task `COMPLETED` означает завершение lifecycle; бизнес-успех хранится отдельно в `result.taskOutcome`.
+Task status и step status — разные поля. Журнал — источник истины: каждое событие содержит состояние Task после события; событие с hash-chain записывается до обновления snapshot. После аварии устаревший snapshot восстанавливается из журнала, а snapshot, опережающий его sequence/head, означает усечение и блокирует Task. Task `COMPLETED` означает завершение lifecycle; бизнес-успех хранится отдельно в типизированном `result.taskOutcome`.
 
 ## Task states
 
@@ -18,7 +18,7 @@ Task status и step status — разные поля. Task `COMPLETED` озна�
 DRAFT → PLANNING → PLAN_READY → AWAITING_APPROVAL → READY → RUNNING → VERIFYING → COMPLETED
 ```
 
-Терминальные альтернативы: `FAILED`, `CANCELED`, `BLOCKED`, `INCONCLUSIVE`. До создания Task ошибки валидации запроса возвращаются клиенту; после сохранения Task ошибки превращаются в event и допустимый terminal state.
+Терминальные исходы: `FAILED`, `CANCELED`, `INCONCLUSIVE`, `COMPLETED`. `BLOCKED` означает паузу без исполнения и допускает повторное планирование после добавления контекста; новая попытка создаёт новую версию плана и сбрасывает прежнее подтверждение. До создания Task ошибки валидации запроса возвращаются клиенту; после сохранения Task ошибки превращаются в event и допустимый state.
 
 | Из | В | Условие |
 |---|---|---|
@@ -27,6 +27,7 @@ DRAFT → PLANNING → PLAN_READY → AWAITING_APPROVAL → READY → RUNNING �
 | PLANNING | BLOCKED | provider отсутствует/недоступен, лимит исчерпан, либо контекста недостаточно для допустимого следующего действия |
 | PLAN_READY | AWAITING_APPROVAL | план содержит исполнимый шаг или требует подтверждения владельца |
 | PLAN_READY | READY | только если локальная policy заранее разрешает все шаги без human approval |
+| PLAN_READY / AWAITING_APPROVAL / BLOCKED | PLANNING | явный запрос новой версии плана; прежнее одобрение очищается |
 | AWAITING_APPROVAL | READY | owner подтверждает конкретные `planId` и `planSha256`; Trust approval для trusted mutation по-прежнему требуется отдельно |
 | AWAITING_APPROVAL | CANCELED | owner отменил задачу до dispatch |
 | READY | RUNNING | adapter доступен, refs разрешены, зависимости шага удовлетворены, dispatch intent durable, команда идемпотентна |
@@ -47,7 +48,7 @@ Step lifecycle: `PENDING → READY → DISPATCHING → RUNNING → VERIFYING →
 - `verificationOutcome`: `PASS`, `FAIL`, `BLOCKED`, `INCONCLUSIVE`, `NOT_AVAILABLE` — только данные из trusted observer для соответствующего runId. Для mock/integration-only пути — `NOT_AVAILABLE`.
 - `taskOutcome`: `PASS`, `FAIL`, `BLOCKED`, `INCONCLUSIVE`, `CANCELED`, `PARTIAL`.
 
-TaskOutcome `PASS` разрешён только если каждый обязательный step завершён и имеет trusted `verificationOutcome=PASS`, runId и валидные evidence refs. Любой обязательный неразрешённый/неподтверждённый шаг исключает PASS. `COMPLETED` допустим с `FAIL` или `INCONCLUSIVE`, если жизненный цикл завершён и причина видна.
+TaskOutcome `PASS` разрешён только если каждый обязательный step завершён и имеет trusted `verificationOutcome=PASS`, runId и evidence refs, связанные с тем же run. При сохранении TaskResult проверяет эти поля и соответствие обязательным шагам текущего плана, а fail-closed `verifyTaskPass` заново проверяет их через trusted observer/evidence chain. Булево `trustedVerification` и непустые идентификаторы сами по себе не являются доказательством; без настроенного проверяющего PASS отклоняется. Любой обязательный неразрешённый/неподтверждённый шаг исключает PASS. `COMPLETED` допустим с `FAIL` или `PARTIAL`, если жизненный цикл завершён и причина видна.
 
 ## Запуск и защита от повторного исполнения
 
@@ -68,7 +69,7 @@ TaskOutcome `PASS` разрешён только если каждый обяз�
 
 ## Восстановление
 
-`recover()` проверяет каждый journal, план и активный шаг:
+`recover()` проверяет каждый journal, план и активный шаг отдельно для каждого Task. Повреждённая hash-chain попадает в `integrityBlocked` и не прерывает recovery остальных; повреждённый журнал не переписывается. План текущей версии проверяется до объявления Task восстановленным:
 
 - недействительная/прерванная hash-chain → Task `BLOCKED`, ручное вмешательство;
 - `PLANNING` без валидного сохранённого ответа → новая попытка только с новым request ID и лимитом, исходный task текст остаётся неизменным;

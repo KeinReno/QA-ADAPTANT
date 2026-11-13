@@ -19,7 +19,7 @@ type ProviderAvailability =
 type PlannerContext = {
   allowedActionTypes: readonly string[];   // capability catalog, not grants
   environmentRefs: readonly string[];     // opaque refs; provider cannot resolve them
-  approvedScenarioRefs: readonly string[];// ids only; not scenario contents unless explicitly supplied
+  approvedScenarioRefs: readonly string[];// host-resolved refs; never copied from arbitrary Task contextRefs
   constraints: readonly string[];
 };
 
@@ -40,15 +40,18 @@ type PlanDraft = {
   steps: Array<{
     stepId: string;
     description: string;
-    actionType: string;                  // allowlisted enum
+    actionType: 'trusted-scenario'|'clarification'|'observation';
     prerequisites: string[];
-    adapterHint: string|null;            // hint; registry resolves/validates actual adapter
-    executionRef: string|null;           // must be a supplied catalog ref
+    adapterId: string|null;              // exact registered adapter id
+    executionRef: string|null;           // exact host-registered catalog ref
     requiredCapabilities: string[];      // proposals; never authority
-    mutating: boolean;                   // conservative hint; validator may only raise risk
+    mutating: boolean;                   // host raises risk for trusted-scenario steps
+    required: boolean;
     validationRules: Array<{ ruleId: string; requirementId: string }>;
   }>;
-  riskNotes: string[];
+  estimatedRisk: 'LOW'|'MEDIUM'|'HIGH'|'UNKNOWN';
+  approvalRequirements: Array<'OWNER_PLAN_APPROVAL'|'TRUST_APPROVAL'>; // advisory only
+  validationRules: Array<{ ruleId: string; requirementId: string }>;
 };
 
 type PlannerResult = {
@@ -60,7 +63,7 @@ type PlannerResult = {
 };
 ```
 
-Provider API: `availability(): Promise<ProviderAvailability>` and `plan(request): Promise<PlannerResult>`. Provider errors are typed (`PROVIDER_UNAVAILABLE`, `RATE_LIMITED`, `TIMEOUT`, `INVALID_RESPONSE`, `OUTPUT_LIMIT`, `CANCELED`) and must not include credentials, full prompts, or response bodies in public error messages. Retry is bounded/configurable and uses a new request ID; never silently retries execution.
+Provider API: `availability(): Promise<ProviderAvailability>` and `plan(request, signal): Promise<Uint8Array>` containing JSON-serialized `PlannerResult`. A transport provider must stream through `readBoundedPlannerBytes()` so response size is capped before parsing or buffering the complete body; the host independently enforces the byte limit before JSON parsing. Provider errors are typed (`PROVIDER_UNAVAILABLE`, `RATE_LIMITED`, `TIMEOUT`, `INVALID_RESPONSE`, `OUTPUT_LIMIT`, `CANCELED`) and must not include credentials, full prompts, or response bodies in public error messages. The host enforces time and signals cancellation to the provider. Retry is bounded/configurable and uses a new request ID; never silently retries execution.
 
 ## Проверка ответа
 
@@ -73,7 +76,8 @@ Local validator (not model) enforces:
 5. `actionType`, `adapterHint`, `executionRef` and `requiredCapabilities` are intersected with host-configured registries. Model cannot add a registry entry, capability grant, credential, environment, owner, approval, risk waiver or validation PASS.
 6. `mutating=true` is treated as requiring mutation controls. If false but action type/adapter says mutating or classification is unknown, validator raises it to mutating or rejects the plan; model cannot downgrade policy risk.
 7. Any step needing an unsupported operation or mapping to multiple requirements without a supported trusted Scenario returns a non-executable plan with `BLOCKED` reason. The plan may be displayed as a draft, never started.
-8. No shell, JavaScript, arbitrary URL, raw selector, Browser Worker protocol, internal Control function name, or free-form API path is accepted as executable data.
+8. Owner/Trust approval requirements are derived by host policy. Provider-supplied `approvalRequirements` are suggestions only and cannot remove required approvals; a mutating/trusted action always requires owner plan approval and separate Trust approval.
+9. No shell, JavaScript, arbitrary URL, raw selector, Browser Worker protocol, internal Control function name, or free-form API path is accepted as executable data.
 
 `ExecutionPlan` stores the validated output, `taskId`, immutable version, provider provenance (`MODEL`/`MOCK`), schema version, creation time and validation findings. Replanning creates a new version; existing owner approvals expire on plan digest mismatch.
 
