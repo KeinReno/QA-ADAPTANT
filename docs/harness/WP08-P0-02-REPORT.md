@@ -160,5 +160,5 @@ attestationVerifiedReads({ trust, record, standPublicKey, headers?, timeoutMs?, 
 - База: `07c21c4`.
 - Код пакета: `dadd13667e3e8813e459d0104c51d0852246321e` (стенд + библиотека),
   `89f1d38e51400ed7616d66f5f17171afc373faca` (доверенный Browser Worker + регрессии),
-  `<sha-контракта R-A>` (контракт `attestationVerifiedReads` для Verification Worker: readResult + bytes).
+  `f1cd8d903061fd4ed89c5d4c2892a7d29cba2af7` (контракт `attestationVerifiedReads` для Verification Worker: readResult + bytes).
 - HEAD ветки `fix/wp08-p0-02-stand-channel`: коммит с этим отчётом (см. `git rev-parse HEAD` при сдаче).
