@@ -1,0 +1,45 @@
+{
+  "attack": "N04",
+  "title": "Согласованная замена всех трёх файлов после легитимного прогона",
+  "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+  "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+  "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+  "boundaryReached": "loadTrustRoot отверг подмену",
+  "verdict": null,
+  "reasonCode": "TRUST_ROOT_KEY_SUBSTITUTION",
+  "observer": null,
+  "observerError": {
+    "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+    "message": "Публичные ключи не совпадают с закреплёнными"
+  },
+  "mutations": {
+    "victim": 1,
+    "victimBefore": 1,
+    "rogue": 0
+  },
+  "falseTrustedPass": false,
+  "notes": "Базовое ожидание (1a510a5): ложный trusted PASS (R1). Исправление обязано отвергать подмену независимо от момента.",
+  "details": {
+    "rootTakeover": false,
+    "loadError": {
+      "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+      "message": "Публичные ключи не совпадают с закреплёнными"
+    },
+    "legitRunBefore": {
+      "verdict": "PASS",
+      "reasonCode": "NONE"
+    },
+    "legitObserverBefore": {
+      "trusted": true,
+      "passed": true,
+      "verdict": "PASS",
+      "reasonCode": null,
+      "anchorId": "anchor-e4f808ae-7f5c-4c22-b565-ec9751f7b394"
+    },
+    "legitObserverAfter": {
+      "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+      "message": "Публичные ключи не совпадают с закреплёнными"
+    }
+  },
+  "outcome": "NO_TRUSTED_PASS"
+}

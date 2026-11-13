@@ -15,14 +15,18 @@ try {
   const legitObserverBefore = legit.observer || null;
   const mutationsBefore = v.stand.mutationCount;
   substitute(v, a);
-  const taken = loadTrustRoot(v.trustRoot);
-  const rootTakeover = taken.owner.keyId === a.created.ownerKeyId && taken['anchor-signer'].keyId === a.created.anchorKeyId;
+  // Проба загрузки обёрнута для фиксации отказа продукта на исправленной ревизии;
+  // атакующие шаги (подмена + попытка доверенного прогона) не изменены.
+  let taken = null;
+  let loadError = null;
+  try { taken = loadTrustRoot(v.trustRoot); } catch (error) { loadError = err(error); }
+  const rootTakeover = Boolean(taken && taken.owner.keyId === a.created.ownerKeyId && taken['anchor-signer'].keyId === a.created.anchorKeyId);
   const rogueStand = await w.stand();
   const forged = await runTrusted({
-    root: v.root, trustRoot: v.trustRoot, signTrust: taken, commitApprovalTo: v.trustRoot,
+    root: v.root, trustRoot: v.trustRoot, signTrust: taken || a.trust, commitApprovalTo: v.trustRoot,
     ownerKey: a.ownerKey, ownerKeyId: a.created.ownerKeyId, issuer: a.owner, subject: a.operator,
     issuerId: 'attacker-owner', subjectId: 'attacker-operator', stand: rogueStand, anchorKeyPath: a.anchorKeyPath,
-    registerRecord: true, recordTrust: taken
+    registerRecord: true, recordTrust: taken || a.trust
   }).catch(error => ({ error: err(error) }));
   const legitAfter = await observe({ root: v.root, trustRoot: v.trustRoot, runId: legit.runId });
   report('N04', 'Согласованная замена всех трёх файлов после легитимного прогона', {
@@ -31,7 +35,7 @@ try {
     observer: forged.observer || null, observerError: forged.observerError || forged.error || null,
     mutations: { victim: v.stand.mutationCount, victimBefore: mutationsBefore, rogue: rogueStand.mutationCount },
     falseTrustedPass: forged.observer?.trusted === true && forged.observer?.passed === true && forged.observer?.verdict === 'PASS',
-    details: { rootTakeover, legitRunBefore: legit.result || legit.error || null, legitObserverBefore, legitObserverAfter: legitAfter.observer || legitAfter.observerError || null },
+    details: { rootTakeover, loadError, legitRunBefore: legit.result || legit.error || null, legitObserverBefore, legitObserverAfter: legitAfter.observer || legitAfter.observerError || null },
     notes: 'Базовое ожидание (1a510a5): ложный trusted PASS (R1). Исправление обязано отвергать подмену независимо от момента.'
   });
 } catch (error) {

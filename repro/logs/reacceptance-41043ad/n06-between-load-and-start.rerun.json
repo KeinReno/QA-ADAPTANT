@@ -1,0 +1,31 @@
+{
+  "attack": "N06",
+  "title": "Подмена между загрузкой корня и началом прогона",
+  "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+  "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+  "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+  "boundaryReached": "публичный вход отверг подменённый корень",
+  "verdict": null,
+  "reasonCode": "TRUST_ROOT_KEY_SUBSTITUTION",
+  "observer": null,
+  "observerError": {
+    "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+    "message": "Публичные ключи не совпадают с закреплёнными"
+  },
+  "mutations": {
+    "victim": 0,
+    "rogue": 0
+  },
+  "falseTrustedPass": false,
+  "notes": "In-memory снимок не подвержен перезаписи файлов, но каждый публичный вход (startTrusted/observeTrusted/reconcileTrusted) вызывает loadTrustRoot заново — момент подмены не ограничен «до старта».",
+  "details": {
+    "snapshotVerifiesVictim": "victim-operator",
+    "snapshotRejectsAttacker": "APPROVAL_SIGNATURE_INVALID",
+    "reloadTakeover": false,
+    "reloadError": {
+      "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+      "message": "Публичные ключи не совпадают с закреплёнными"
+    }
+  },
+  "outcome": "NO_TRUSTED_PASS"
+}

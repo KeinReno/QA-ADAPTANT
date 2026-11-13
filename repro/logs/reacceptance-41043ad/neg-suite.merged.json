@@ -1,0 +1,639 @@
+{
+  "suite": "WP08-QWEN-F1-NEG",
+  "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+  "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+  "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+  "summary": {
+    "total": 13,
+    "attacksReachedTrustedPass": [
+      "N10"
+    ],
+    "noTrustedPass": [
+      "N01",
+      "N02",
+      "N03",
+      "N04",
+      "N05",
+      "N06",
+      "N07",
+      "N08",
+      "N09",
+      "N11",
+      "N12"
+    ],
+    "infraErrors": [],
+    "positiveControl": {
+      "legitPass": true,
+      "reconcileIdempotent": true,
+      "repeatedMutation": false
+    }
+  },
+  "results": [
+    {
+      "attack": "N01",
+      "title": "Замена только owner.pub",
+      "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+      "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "boundaryReached": "loadTrustRoot: TRUST_STORE_UNAVAILABLE",
+      "verdict": null,
+      "reasonCode": "TRUST_STORE_UNAVAILABLE",
+      "observer": null,
+      "observerError": {
+        "code": "TRUST_STORE_UNAVAILABLE",
+        "message": "Корень доверия не завершён"
+      },
+      "mutations": {
+        "victim": 1,
+        "victimBefore": 1,
+        "rogue": 0
+      },
+      "falseTrustedPass": false,
+      "notes": "Одиночная замена owner.pub рассогласует ready.json (keyId) — ожидается TRUST_STORE_UNAVAILABLE.",
+      "details": {
+        "loadError": {
+          "code": "TRUST_STORE_UNAVAILABLE",
+          "message": "Корень доверия не завершён"
+        },
+        "legitRunBefore": {
+          "verdict": "PASS",
+          "reasonCode": "NONE"
+        },
+        "legitObserverAfter": {
+          "code": "TRUST_STORE_UNAVAILABLE",
+          "message": "Корень доверия не завершён"
+        }
+      },
+      "outcome": "NO_TRUSTED_PASS"
+    },
+    {
+      "attack": "N02",
+      "title": "Замена только anchor.pub",
+      "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+      "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "boundaryReached": "loadTrustRoot: TRUST_STORE_UNAVAILABLE",
+      "verdict": null,
+      "reasonCode": "TRUST_STORE_UNAVAILABLE",
+      "observer": null,
+      "observerError": {
+        "code": "TRUST_STORE_UNAVAILABLE",
+        "message": "Корень доверия не завершён"
+      },
+      "mutations": {
+        "victim": 1,
+        "victimBefore": 1,
+        "rogue": 0
+      },
+      "falseTrustedPass": false,
+      "notes": "Одиночная замена anchor.pub рассогласует ready.json (anchorKeyId) — ожидается TRUST_STORE_UNAVAILABLE.",
+      "details": {
+        "loadError": {
+          "code": "TRUST_STORE_UNAVAILABLE",
+          "message": "Корень доверия не завершён"
+        },
+        "legitRunBefore": {
+          "verdict": "PASS",
+          "reasonCode": "NONE"
+        },
+        "legitObserverAfter": {
+          "code": "TRUST_STORE_UNAVAILABLE",
+          "message": "Корень доверия не завершён"
+        }
+      },
+      "outcome": "NO_TRUSTED_PASS"
+    },
+    {
+      "attack": "N03",
+      "title": "Замена только ready.json",
+      "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+      "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "boundaryReached": "loadTrustRoot: TRUST_STORE_UNAVAILABLE",
+      "verdict": null,
+      "reasonCode": "TRUST_STORE_UNAVAILABLE",
+      "observer": null,
+      "observerError": {
+        "code": "TRUST_STORE_UNAVAILABLE",
+        "message": "Корень доверия не завершён"
+      },
+      "mutations": {
+        "victim": 1,
+        "victimBefore": 1,
+        "rogue": 0
+      },
+      "falseTrustedPass": false,
+      "notes": "ready.json с чужими keyId рассогласуется с оригинальными pub-файлами — ожидается TRUST_STORE_UNAVAILABLE.",
+      "details": {
+        "loadError": {
+          "code": "TRUST_STORE_UNAVAILABLE",
+          "message": "Корень доверия не завершён"
+        },
+        "legitRunBefore": {
+          "verdict": "PASS",
+          "reasonCode": "NONE"
+        },
+        "legitObserverAfter": {
+          "code": "TRUST_STORE_UNAVAILABLE",
+          "message": "Корень доверия не завершён"
+        }
+      },
+      "outcome": "NO_TRUSTED_PASS"
+    },
+    {
+      "attack": "N04",
+      "title": "Согласованная замена всех трёх файлов после легитимного прогона",
+      "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+      "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "boundaryReached": "loadTrustRoot отверг подмену",
+      "verdict": null,
+      "reasonCode": "TRUST_ROOT_KEY_SUBSTITUTION",
+      "observer": null,
+      "observerError": {
+        "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+        "message": "Публичные ключи не совпадают с закреплёнными"
+      },
+      "mutations": {
+        "victim": 1,
+        "victimBefore": 1,
+        "rogue": 0
+      },
+      "falseTrustedPass": false,
+      "notes": "Базовое ожидание (1a510a5): ложный trusted PASS (R1). Исправление обязано отвергать подмену независимо от момента.",
+      "details": {
+        "rootTakeover": false,
+        "loadError": {
+          "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+          "message": "Публичные ключи не совпадают с закреплёнными"
+        },
+        "legitRunBefore": {
+          "verdict": "PASS",
+          "reasonCode": "NONE"
+        },
+        "legitObserverBefore": {
+          "trusted": true,
+          "passed": true,
+          "verdict": "PASS",
+          "reasonCode": null,
+          "anchorId": "anchor-e4f808ae-7f5c-4c22-b565-ec9751f7b394"
+        },
+        "legitObserverAfter": {
+          "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+          "message": "Публичные ключи не совпадают с закреплёнными"
+        }
+      },
+      "outcome": "NO_TRUSTED_PASS"
+    },
+    {
+      "attack": "N05",
+      "title": "Подмена до первой загрузки корня",
+      "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+      "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "boundaryReached": "первый loadTrustRoot отверг подмену",
+      "verdict": null,
+      "reasonCode": "TRUST_ROOT_KEY_SUBSTITUTION",
+      "observer": null,
+      "observerError": {
+        "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+        "message": "Публичные ключи не совпадают с закреплёнными"
+      },
+      "mutations": {
+        "victim": 0,
+        "rogue": 0
+      },
+      "falseTrustedPass": false,
+      "notes": "WP-00 04-THREAT-MODEL.md:18 принимает подмену до старта как остаток; исправление F1 должно закрыть и этот момент либо явно оставить принятый остаток с решением владельца.",
+      "details": {
+        "firstLoadTakeover": false,
+        "firstLoadError": {
+          "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+          "message": "Публичные ключи не совпадают с закреплёнными"
+        },
+        "victimPrincipalRejected": "TRUST_ROOT_KEY_SUBSTITUTION",
+        "victimRecordRejected": "TRUST_ROOT_KEY_SUBSTITUTION"
+      },
+      "outcome": "NO_TRUSTED_PASS"
+    },
+    {
+      "attack": "N06",
+      "title": "Подмена между загрузкой корня и началом прогона",
+      "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+      "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "boundaryReached": "публичный вход отверг подменённый корень",
+      "verdict": null,
+      "reasonCode": "TRUST_ROOT_KEY_SUBSTITUTION",
+      "observer": null,
+      "observerError": {
+        "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+        "message": "Публичные ключи не совпадают с закреплёнными"
+      },
+      "mutations": {
+        "victim": 0,
+        "rogue": 0
+      },
+      "falseTrustedPass": false,
+      "notes": "In-memory снимок не подвержен перезаписи файлов, но каждый публичный вход (startTrusted/observeTrusted/reconcileTrusted) вызывает loadTrustRoot заново — момент подмены не ограничен «до старта».",
+      "details": {
+        "snapshotVerifiesVictim": "victim-operator",
+        "snapshotRejectsAttacker": "APPROVAL_SIGNATURE_INVALID",
+        "reloadTakeover": false,
+        "reloadError": {
+          "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+          "message": "Публичные ключи не совпадают с закреплёнными"
+        }
+      },
+      "outcome": "NO_TRUSTED_PASS"
+    },
+    {
+      "attack": "N07",
+      "title": "Подмена корня во время Recovery",
+      "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+      "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "boundaryReached": "reconcileTrusted после согласованной подмены трёх файлов",
+      "verdict": "PASS",
+      "reasonCode": "NONE",
+      "observer": null,
+      "observerError": {
+        "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+        "message": "Публичные ключи не совпадают с закреплёнными"
+      },
+      "mutations": {
+        "victim": 2,
+        "victimBefore": 2,
+        "rogue": 0,
+        "repeatedMutation": false
+      },
+      "falseTrustedPass": false,
+      "notes": "Recovery не должен принимать чужой корень и не должен повторять мутацию. На базовом SHA подмена ломает и легитимное восстановление (хранимый approval больше не верифицируется) — фиксируется фактическое поведение.",
+      "details": {
+        "runA": {
+          "result": {
+            "verdict": "INCONCLUSIVE",
+            "reasonCode": "RESULT_UNCONFIRMED"
+          },
+          "observerBefore": {
+            "trusted": true,
+            "passed": false,
+            "verdict": "INCONCLUSIVE",
+            "reasonCode": "RESULT_UNCONFIRMED",
+            "anchorId": null
+          }
+        },
+        "runB": {
+          "result": {
+            "verdict": "PASS",
+            "reasonCode": "NONE"
+          },
+          "observerBefore": {
+            "trusted": true,
+            "passed": true,
+            "verdict": "PASS",
+            "reasonCode": null,
+            "anchorId": "anchor-6105a6da-b197-42f9-906c-71f55323f706"
+          }
+        },
+        "reconcileAAttacker": {
+          "label": "A: незавершённый прогон, документы атакующего",
+          "error": {
+            "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+            "message": "Публичные ключи не совпадают с закреплёнными"
+          }
+        },
+        "reconcileAVictim": {
+          "label": "A: незавершённый прогон, документы жертвы",
+          "error": {
+            "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+            "message": "Публичные ключи не совпадают с закреплёнными"
+          }
+        },
+        "reconcileBAttacker": {
+          "label": "B: завершённый PASS, документы атакующего",
+          "error": {
+            "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+            "message": "Публичные ключи не совпадают с закреплёнными"
+          }
+        },
+        "observeAAfter": {
+          "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+          "message": "Публичные ключи не совпадают с закреплёнными"
+        },
+        "observeBAfter": {
+          "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+          "message": "Публичные ключи не совпадают с закреплёнными"
+        }
+      },
+      "outcome": "NO_TRUSTED_PASS"
+    },
+    {
+      "attack": "N08",
+      "title": "Подложный approval от чужого owner (корень не повреждён)",
+      "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+      "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "boundaryReached": "commitApproval: APPROVAL_SIGNATURE_INVALID",
+      "verdict": "BLOCKED",
+      "reasonCode": "AUTH_UNAVAILABLE",
+      "observer": {
+        "trusted": false,
+        "passed": false,
+        "verdict": null,
+        "reasonCode": "INTEGRITY_ERROR",
+        "anchorId": null
+      },
+      "observerError": null,
+      "mutations": {
+        "victim": 0,
+        "rogue": 0
+      },
+      "falseTrustedPass": false,
+      "notes": "Подпись чужого owner не проходит под неповреждённым корнем; закрепление чужого approval также отвергается.",
+      "details": {
+        "commitRejected": "APPROVAL_SIGNATURE_INVALID",
+        "startError": null,
+        "approvalKeyId": "349dc1a9eb9ebe1d28af7de299ae95a21a1f46fc7708954ef4569170d578cf10",
+        "rootOwnerKeyId": "5b470a37326886f1e812666ff359960980ef00596444d5d361c6c6149150e6c9"
+      },
+      "outcome": "NO_TRUSTED_PASS"
+    },
+    {
+      "attack": "N09",
+      "title": "Поддельный Anchor от чужого signer (корень не повреждён)",
+      "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+      "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "boundaryReached": "observeTrustedVerdict: проверка подписи заявления анкера ключом корня",
+      "verdict": "PASS",
+      "reasonCode": "ANCHOR_SIGNATURE_INVALID",
+      "observer": {
+        "trusted": false,
+        "passed": false,
+        "verdict": null,
+        "reasonCode": "ANCHOR_SIGNATURE_INVALID",
+        "anchorId": "anchor-f12ad040-fcb0-4242-89ea-03f6eb90778c"
+      },
+      "observerError": null,
+      "mutations": {
+        "victim": 1,
+        "rogue": 0
+      },
+      "falseTrustedPass": false,
+      "notes": "Анкер, подписанный чужим ключом, не должен приниматься наблюдателем; второй анкер не создаётся.",
+      "details": {
+        "anchorId": "anchor-f12ad040-fcb0-4242-89ea-03f6eb90778c",
+        "originalKeyId": "8d4dee3804a6cfd7ae1455d5a33c8368d3cc103148e44cfaf13568d773cc3d8b",
+        "forgedKeyId": "739567acda262ca44828ec45219c57a41f734ce2e8f36d0d683c3c866fbd0ffe",
+        "anchorCountBefore": 1,
+        "anchorCountAfter": 1,
+        "legitObserverBefore": {
+          "trusted": true,
+          "passed": true,
+          "verdict": "PASS",
+          "reasonCode": null,
+          "anchorId": "anchor-f12ad040-fcb0-4242-89ea-03f6eb90778c"
+        }
+      },
+      "outcome": "NO_TRUSTED_PASS"
+    },
+    {
+      "attack": "N10",
+      "title": "Подмена конфигурации ожидаемых ключей",
+      "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+      "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "boundaryReached": "trustRoot-аргумент указал на корень атакующего (файлы жертвы не перезаписывались)",
+      "verdict": "PASS",
+      "reasonCode": "NONE",
+      "observer": {
+        "trusted": true,
+        "passed": true,
+        "verdict": "PASS",
+        "reasonCode": null,
+        "anchorId": "anchor-c50bbdd6-d109-4840-8a9a-4a65588045a0"
+      },
+      "observerError": null,
+      "mutations": {
+        "victim": 0,
+        "rogue": 1
+      },
+      "falseTrustedPass": true,
+      "notes": "Продукт читает только QA_ADAPTANT_FIXTURE_TOKEN и QA_ADAPTANT_DEBUG; ожидаемые keyId из аргументов/env не принимаются. Вектор (в) — указатель на чужой корень в конфигурации/аргументах: закрепление обязано проверять идентичность корня, а не только файлы.",
+      "details": {
+        "extraApiArgs": {
+          "result": {
+            "verdict": "BLOCKED",
+            "reasonCode": "CONTRACT_INVALID"
+          },
+          "observer": {
+            "trusted": false,
+            "passed": false,
+            "verdict": null,
+            "reasonCode": "INTEGRITY_ERROR",
+            "anchorId": null
+          },
+          "reachedTrustedPass": false
+        },
+        "envVars": {
+          "names": [
+            "QA_ADAPTANT_EXPECTED_OWNER_KEY_ID",
+            "QA_ADAPTANT_OWNER_KEY_ID",
+            "QA_ADAPTANT_EXPECTED_ANCHOR_KEY_ID",
+            "QA_ADAPTANT_TRUST_ROOT"
+          ],
+          "result": {
+            "verdict": "BLOCKED",
+            "reasonCode": "CONTRACT_INVALID"
+          },
+          "observer": {
+            "trusted": false,
+            "passed": false,
+            "verdict": null,
+            "reasonCode": "INTEGRITY_ERROR",
+            "anchorId": null
+          },
+          "reachedTrustedPass": false
+        },
+        "trustRootPointer": {
+          "result": {
+            "verdict": "PASS",
+            "reasonCode": "NONE"
+          },
+          "observer": {
+            "trusted": true,
+            "passed": true,
+            "verdict": "PASS",
+            "reasonCode": null,
+            "anchorId": "anchor-c50bbdd6-d109-4840-8a9a-4a65588045a0"
+          },
+          "reachedTrustedPass": true
+        }
+      },
+      "outcome": "ATTACK_REACHED_TRUSTED_PASS"
+    },
+    {
+      "attack": "N11",
+      "title": "Несанкционированная ротация ключей",
+      "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+      "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "boundaryReached": "перезапись обнаружена/отвергнута",
+      "verdict": null,
+      "reasonCode": "TRUST_ROOT_KEY_SUBSTITUTION",
+      "observer": null,
+      "observerError": {
+        "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+        "message": "Публичные ключи не совпадают с закреплёнными"
+      },
+      "mutations": {
+        "victim": 0,
+        "victimBefore": 0,
+        "rogue": 0
+      },
+      "falseTrustedPass": false,
+      "notes": "Штатный createTrustRoot не перезаписывает существующие ключи (flag wx). Ротация перезаписью файлов — та же атака R1; право ротации должно принадлежать только владельцу через защищённый механизм.",
+      "details": {
+        "recreateRejected": "TRUST_STORE_UNAVAILABLE",
+        "partialRecreateRejected": "TRUST_STORE_UNAVAILABLE",
+        "newOwnerKeyId": "c660fef00befef3ecf040e277d42284b4e82ab8a2474f5464ae90f138b2cf590",
+        "originalOwnerKeyId": "29ab617faf7c67726c41378b33657acb06c3b555736c9c6b68d6df9fa518008d"
+      },
+      "outcome": "NO_TRUSTED_PASS"
+    },
+    {
+      "attack": "N12",
+      "title": "Повреждение или отсутствие закрепления ключей",
+      "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+      "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "boundaryReached": "loadTrustRoot на повреждённом корне (три подрежима)",
+      "verdict": "PASS",
+      "reasonCode": "NONE",
+      "observer": {
+        "trusted": true,
+        "passed": true,
+        "verdict": "PASS",
+        "reasonCode": null,
+        "anchorId": "anchor-cc2cbf2e-ffd1-46e9-8793-9c31676af38f"
+      },
+      "observerError": null,
+      "mutations": {
+        "victim": 1,
+        "victimBefore": 1,
+        "rogue": 0
+      },
+      "falseTrustedPass": false,
+      "notes": "Повреждение корня обязано давать fail-closed, а не PASS. DoS-эффект: легитимный прогон ненаблюдаем до восстановления файлов — отдельное замечание, не ложный PASS.",
+      "details": {
+        "readyMissing": {
+          "label": "ready.json удалён",
+          "loadError": {
+            "code": "TRUST_STORE_UNAVAILABLE",
+            "message": "Корень доверия не читается"
+          },
+          "observer": null,
+          "observerError": {
+            "code": "TRUST_STORE_UNAVAILABLE",
+            "message": "Корень доверия не читается"
+          },
+          "forgedError": {
+            "code": "TRUST_STORE_UNAVAILABLE",
+            "message": "Корень доверия не читается"
+          },
+          "forgedObserver": null,
+          "rogueMutations": 0,
+          "trustedPass": false
+        },
+        "ownerCorrupt": {
+          "label": "owner.pub повреждён",
+          "loadError": {
+            "code": "TRUST_STORE_UNAVAILABLE",
+            "message": "Корень доверия не читается"
+          },
+          "observer": null,
+          "observerError": {
+            "code": "TRUST_STORE_UNAVAILABLE",
+            "message": "Корень доверия не читается"
+          },
+          "forgedError": {
+            "code": "TRUST_STORE_UNAVAILABLE",
+            "message": "Корень доверия не читается"
+          },
+          "forgedObserver": null,
+          "rogueMutations": 0,
+          "trustedPass": false
+        },
+        "anchorMissing": {
+          "label": "anchor.pub удалён",
+          "loadError": {
+            "code": "TRUST_STORE_UNAVAILABLE",
+            "message": "Корень доверия не читается"
+          },
+          "observer": null,
+          "observerError": {
+            "code": "TRUST_STORE_UNAVAILABLE",
+            "message": "Корень доверия не читается"
+          },
+          "forgedError": {
+            "code": "TRUST_STORE_UNAVAILABLE",
+            "message": "Корень доверия не читается"
+          },
+          "forgedObserver": null,
+          "rogueMutations": 0,
+          "trustedPass": false
+        },
+        "legitObserverAfterRestore": {
+          "trusted": true,
+          "passed": true,
+          "verdict": "PASS",
+          "reasonCode": null,
+          "anchorId": "anchor-cc2cbf2e-ffd1-46e9-8793-9c31676af38f"
+        }
+      },
+      "outcome": "NO_TRUSTED_PASS"
+    },
+    {
+      "attack": "P01",
+      "title": "Положительный контроль: легитимный владелец, обоснованный PASS",
+      "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+      "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "boundaryReached": "полный доверенный маршрут: approval → мутация → Verification → анкер → observer",
+      "verdict": "PASS",
+      "reasonCode": "NONE",
+      "observer": {
+        "trusted": true,
+        "passed": true,
+        "verdict": "PASS",
+        "reasonCode": null,
+        "anchorId": "anchor-45bef6c9-ebc3-4db4-a556-1f2c613cf028"
+      },
+      "observerError": null,
+      "mutations": {
+        "victim": 1,
+        "afterRun": 1,
+        "repeatedMutation": false
+      },
+      "falseTrustedPass": false,
+      "notes": "PASS легитимен: observer trusted+passed, мутация одна, reconcile не повторяет мутацию. Поле falseTrustedPass=false по смыслу проверки (это не атака).",
+      "details": {
+        "positiveControl": true,
+        "legitPass": true,
+        "principalVerifies": "victim-operator",
+        "runResult": {
+          "verdict": "PASS",
+          "reasonCode": "NONE"
+        },
+        "reconcile": {
+          "verdict": "PASS",
+          "reasonCode": "NONE"
+        },
+        "reconcileIdempotent": true
+      },
+      "outcome": "NO_TRUSTED_PASS"
+    }
+  ],
+  "note": "N04–N06: повторный прогон с охранным try/catch вокруг пробы loadTrustRoot (фиксация отказа продукта); атакующая логика не изменена. Исходный прогон сохранён в neg-suite.json."
+}

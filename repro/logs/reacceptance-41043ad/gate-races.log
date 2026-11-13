@@ -1,0 +1,15 @@
+
+> kaiden-qa-adaptant@0.1.0 test:races
+> node scripts/run-tests.mjs races
+
+✔ WP-A: второй START во время preflight не публикует вердикт и не портит журнал (8857.5507ms)
+✔ append-only evidence выдерживает 1, 2 и 6 читателей файла (8324.6694ms)
+✔ активный прогон выдерживает 1, 2 и 6 процессов OBSERVE (10752.524ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 32216.0384

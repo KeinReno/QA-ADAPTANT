@@ -1,0 +1,15 @@
+{
+  "repro": "R1",
+  "sha": "1a510a5d5929534d400dc965f58c78cf468bc270",
+  "steps": {
+    "originalRoot": {
+      "ownerKeyId": "3535c60b1fc7f2cbcf66f43697778cb1ae0b41f7eda1928b9d8ebae3a3dc4cf4",
+      "anchorKeyId": "e01e31dabb1c3e6d32c40cef4b502376678b834d55f6c02cbbbf99b8b95e0564"
+    },
+    "originalPrincipalVerifies": "victim-operator"
+  },
+  "error": {
+    "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+    "message": "Публичные ключи не совпадают с закреплёнными"
+  }
+}

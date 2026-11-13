@@ -1,0 +1,840 @@
+{
+  "tool": "WP08-QWEN-FINAL-MATRIX",
+  "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+  "productBranch": "fix/wp08-trust-root-hardening",
+  "baselineSha": "1a510a5d5929534d400dc965f58c78cf468bc270",
+  "auditBranch": "audit/wp08-qwen-independent-core",
+  "checkWorktreeHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+  "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+  "generatedAt": "2026-11-13T22:58:32.155Z",
+  "node": "v24.16.0",
+  "threatModel": "Исходная A2 (docs/harness/WP08-REMEDIATION-ARCHITECTURE.md:36), без сужений; сужение DeepSeek не принято",
+  "verdict": "REJECT",
+  "verdictReason": "R5, R7, R8 воспроизводят ложный trusted PASS в исходной A2; QWEN-F1 не устранён по существу, закрыт только первоначальный демонстрационный сценарий",
+  "r1": {
+    "repro": "repro/r1-trustroot-substitution.mjs",
+    "unchanged": true,
+    "blockedBy": "TRUST_ROOT_KEY_SUBSTITUTION",
+    "falseTrustedPass": false,
+    "log": "repro/logs/reacceptance-41043ad/r1.log"
+  },
+  "mainMatrix": {
+    "suite": "WP08-QWEN-F1-NEG",
+    "summary": {
+      "total": 13,
+      "attacksReachedTrustedPass": [
+        "N10"
+      ],
+      "noTrustedPass": [
+        "N01",
+        "N02",
+        "N03",
+        "N04",
+        "N05",
+        "N06",
+        "N07",
+        "N08",
+        "N09",
+        "N11",
+        "N12"
+      ],
+      "infraErrors": [],
+      "positiveControl": {
+        "legitPass": true,
+        "reconcileIdempotent": true,
+        "repeatedMutation": false
+      }
+    },
+    "results": [
+      {
+        "attack": "N01",
+        "title": "Замена только owner.pub",
+        "outcome": "NO_TRUSTED_PASS",
+        "boundaryReached": "loadTrustRoot: TRUST_STORE_UNAVAILABLE",
+        "falseTrustedPass": false,
+        "verdict": null,
+        "reasonCode": "TRUST_STORE_UNAVAILABLE",
+        "observer": null,
+        "observerError": {
+          "code": "TRUST_STORE_UNAVAILABLE",
+          "message": "Корень доверия не завершён"
+        },
+        "mutations": {
+          "victim": 1,
+          "victimBefore": 1,
+          "rogue": 0
+        }
+      },
+      {
+        "attack": "N02",
+        "title": "Замена только anchor.pub",
+        "outcome": "NO_TRUSTED_PASS",
+        "boundaryReached": "loadTrustRoot: TRUST_STORE_UNAVAILABLE",
+        "falseTrustedPass": false,
+        "verdict": null,
+        "reasonCode": "TRUST_STORE_UNAVAILABLE",
+        "observer": null,
+        "observerError": {
+          "code": "TRUST_STORE_UNAVAILABLE",
+          "message": "Корень доверия не завершён"
+        },
+        "mutations": {
+          "victim": 1,
+          "victimBefore": 1,
+          "rogue": 0
+        }
+      },
+      {
+        "attack": "N03",
+        "title": "Замена только ready.json",
+        "outcome": "NO_TRUSTED_PASS",
+        "boundaryReached": "loadTrustRoot: TRUST_STORE_UNAVAILABLE",
+        "falseTrustedPass": false,
+        "verdict": null,
+        "reasonCode": "TRUST_STORE_UNAVAILABLE",
+        "observer": null,
+        "observerError": {
+          "code": "TRUST_STORE_UNAVAILABLE",
+          "message": "Корень доверия не завершён"
+        },
+        "mutations": {
+          "victim": 1,
+          "victimBefore": 1,
+          "rogue": 0
+        }
+      },
+      {
+        "attack": "N04",
+        "title": "Согласованная замена всех трёх файлов после легитимного прогона",
+        "outcome": "NO_TRUSTED_PASS",
+        "boundaryReached": "loadTrustRoot отверг подмену",
+        "falseTrustedPass": false,
+        "verdict": null,
+        "reasonCode": "TRUST_ROOT_KEY_SUBSTITUTION",
+        "observer": null,
+        "observerError": {
+          "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+          "message": "Публичные ключи не совпадают с закреплёнными"
+        },
+        "mutations": {
+          "victim": 1,
+          "victimBefore": 1,
+          "rogue": 0
+        }
+      },
+      {
+        "attack": "N05",
+        "title": "Подмена до первой загрузки корня",
+        "outcome": "NO_TRUSTED_PASS",
+        "boundaryReached": "первый loadTrustRoot отверг подмену",
+        "falseTrustedPass": false,
+        "verdict": null,
+        "reasonCode": "TRUST_ROOT_KEY_SUBSTITUTION",
+        "observer": null,
+        "observerError": {
+          "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+          "message": "Публичные ключи не совпадают с закреплёнными"
+        },
+        "mutations": {
+          "victim": 0,
+          "rogue": 0
+        }
+      },
+      {
+        "attack": "N06",
+        "title": "Подмена между загрузкой корня и началом прогона",
+        "outcome": "NO_TRUSTED_PASS",
+        "boundaryReached": "публичный вход отверг подменённый корень",
+        "falseTrustedPass": false,
+        "verdict": null,
+        "reasonCode": "TRUST_ROOT_KEY_SUBSTITUTION",
+        "observer": null,
+        "observerError": {
+          "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+          "message": "Публичные ключи не совпадают с закреплёнными"
+        },
+        "mutations": {
+          "victim": 0,
+          "rogue": 0
+        }
+      },
+      {
+        "attack": "N07",
+        "title": "Подмена корня во время Recovery",
+        "outcome": "NO_TRUSTED_PASS",
+        "boundaryReached": "reconcileTrusted после согласованной подмены трёх файлов",
+        "falseTrustedPass": false,
+        "verdict": "PASS",
+        "reasonCode": "NONE",
+        "observer": null,
+        "observerError": {
+          "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+          "message": "Публичные ключи не совпадают с закреплёнными"
+        },
+        "mutations": {
+          "victim": 2,
+          "victimBefore": 2,
+          "rogue": 0,
+          "repeatedMutation": false
+        }
+      },
+      {
+        "attack": "N08",
+        "title": "Подложный approval от чужого owner (корень не повреждён)",
+        "outcome": "NO_TRUSTED_PASS",
+        "boundaryReached": "commitApproval: APPROVAL_SIGNATURE_INVALID",
+        "falseTrustedPass": false,
+        "verdict": "BLOCKED",
+        "reasonCode": "AUTH_UNAVAILABLE",
+        "observer": {
+          "trusted": false,
+          "passed": false,
+          "verdict": null,
+          "reasonCode": "INTEGRITY_ERROR",
+          "anchorId": null
+        },
+        "observerError": null,
+        "mutations": {
+          "victim": 0,
+          "rogue": 0
+        }
+      },
+      {
+        "attack": "N09",
+        "title": "Поддельный Anchor от чужого signer (корень не повреждён)",
+        "outcome": "NO_TRUSTED_PASS",
+        "boundaryReached": "observeTrustedVerdict: проверка подписи заявления анкера ключом корня",
+        "falseTrustedPass": false,
+        "verdict": "PASS",
+        "reasonCode": "ANCHOR_SIGNATURE_INVALID",
+        "observer": {
+          "trusted": false,
+          "passed": false,
+          "verdict": null,
+          "reasonCode": "ANCHOR_SIGNATURE_INVALID",
+          "anchorId": "anchor-f12ad040-fcb0-4242-89ea-03f6eb90778c"
+        },
+        "observerError": null,
+        "mutations": {
+          "victim": 1,
+          "rogue": 0
+        }
+      },
+      {
+        "attack": "N10",
+        "title": "Подмена конфигурации ожидаемых ключей",
+        "outcome": "ATTACK_REACHED_TRUSTED_PASS",
+        "boundaryReached": "trustRoot-аргумент указал на корень атакующего (файлы жертвы не перезаписывались)",
+        "falseTrustedPass": true,
+        "verdict": "PASS",
+        "reasonCode": "NONE",
+        "observer": {
+          "trusted": true,
+          "passed": true,
+          "verdict": "PASS",
+          "reasonCode": null,
+          "anchorId": "anchor-c50bbdd6-d109-4840-8a9a-4a65588045a0"
+        },
+        "observerError": null,
+        "mutations": {
+          "victim": 0,
+          "rogue": 1
+        }
+      },
+      {
+        "attack": "N11",
+        "title": "Несанкционированная ротация ключей",
+        "outcome": "NO_TRUSTED_PASS",
+        "boundaryReached": "перезапись обнаружена/отвергнута",
+        "falseTrustedPass": false,
+        "verdict": null,
+        "reasonCode": "TRUST_ROOT_KEY_SUBSTITUTION",
+        "observer": null,
+        "observerError": {
+          "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+          "message": "Публичные ключи не совпадают с закреплёнными"
+        },
+        "mutations": {
+          "victim": 0,
+          "victimBefore": 0,
+          "rogue": 0
+        }
+      },
+      {
+        "attack": "N12",
+        "title": "Повреждение или отсутствие закрепления ключей",
+        "outcome": "NO_TRUSTED_PASS",
+        "boundaryReached": "loadTrustRoot на повреждённом корне (три подрежима)",
+        "falseTrustedPass": false,
+        "verdict": "PASS",
+        "reasonCode": "NONE",
+        "observer": {
+          "trusted": true,
+          "passed": true,
+          "verdict": "PASS",
+          "reasonCode": null,
+          "anchorId": "anchor-cc2cbf2e-ffd1-46e9-8793-9c31676af38f"
+        },
+        "observerError": null,
+        "mutations": {
+          "victim": 1,
+          "victimBefore": 1,
+          "rogue": 0
+        }
+      },
+      {
+        "attack": "P01",
+        "title": "Положительный контроль: легитимный владелец, обоснованный PASS",
+        "outcome": "NO_TRUSTED_PASS",
+        "boundaryReached": "полный доверенный маршрут: approval → мутация → Verification → анкер → observer",
+        "falseTrustedPass": false,
+        "verdict": "PASS",
+        "reasonCode": "NONE",
+        "observer": {
+          "trusted": true,
+          "passed": true,
+          "verdict": "PASS",
+          "reasonCode": null,
+          "anchorId": "anchor-45bef6c9-ebc3-4db4-a556-1f2c613cf028"
+        },
+        "observerError": null,
+        "mutations": {
+          "victim": 1,
+          "afterRun": 1,
+          "repeatedMutation": false
+        }
+      }
+    ],
+    "note": "N04–N06: повторный прогон с охранным try/catch вокруг пробы loadTrustRoot (фиксация отказа продукта); атакующая логика не изменена. Исходный прогон сохранён в neg-suite.json."
+  },
+  "reacceptance": {
+    "suite": "WP08-QWEN-F1-REACCEPTANCE",
+    "summary": {
+      "total": 4,
+      "reachedTrustedPass": [
+        "R5",
+        "R7",
+        "R8"
+      ],
+      "noTrustedPass": [
+        "R6"
+      ],
+      "infraErrors": []
+    },
+    "results": [
+      {
+        "attack": "R5",
+        "title": "DPAPI Same-SID: изготовление закрепления для подменённого корня",
+        "outcome": "ATTACK_REACHED_TRUSTED_PASS",
+        "boundaryReached": "FORGED_PIN_ACCEPTED",
+        "falseTrustedPass": true,
+        "verdict": "PASS",
+        "reasonCode": "NONE",
+        "observer": {
+          "trusted": true,
+          "passed": true,
+          "verdict": "PASS",
+          "reasonCode": null,
+          "anchorId": "anchor-fa43c1fc-dd30-4c9d-aba5-58c609f9677f"
+        },
+        "observerError": null,
+        "mutations": {
+          "rogue": 1,
+          "victim": 0
+        },
+        "details": {
+          "parentSid": "S-1-5-21-2930155806-1638716168-1907470493-1002",
+          "child": {
+            "childPid": 17492,
+            "sid": "S-1-5-21-2930155806-1638716168-1907470493-1002",
+            "forgedPinWritten": true
+          },
+          "sameSid": true,
+          "victimPrivateKeysTouched": false,
+          "forgedPinAccepted": true,
+          "substitutedRoot": {
+            "ownerKeyId": "9eda4a42e522ec5ea57f5110b2f16d807f4ab5a99513697bdc867e64b44036f3",
+            "anchorKeyId": "8e1ddf7770265f3736e5414d74f38e9f1d045875328796da5821967ee21a31c1"
+          },
+          "loadError": null,
+          "run": {
+            "runId": "neg-46a3634a",
+            "approvalId": "approval-f8601a52",
+            "approval": {
+              "approvalId": "approval-f8601a52",
+              "issuerPrincipalId": "attacker-owner",
+              "subjectPrincipalId": "attacker-operator",
+              "operationId": "local-create-record",
+              "operationVersion": "1.0.0",
+              "scenarioContentSha256": "69e3b5136b17dc3bb745fbb49157de7c68d57934703942978a54fe04056a5bbe",
+              "operationSha256": "3d654fd2fb42dceffa86f796cc52ecf9750a2ddf31a5d85954382f353ec5afe8",
+              "approvedInputsHash": "343b08f0fc4cf47c94e07afbf84fa80b8b0b1ec10f7554e1f83dc0b8272f9433",
+              "fixtureId": "fixture-neg-46a3634a",
+              "targetEnvironmentId": "e2feee06-8dd8-4ab3-8dbb-d2a85cec1d54",
+              "environmentGeneration": 1,
+              "targetResource": {
+                "method": "POST",
+                "path": "/records"
+              },
+              "allowedEffects": [
+                {
+                  "id": "title-saved",
+                  "field": "title",
+                  "equals": "Проверка neg-46a3634a"
+                },
+                {
+                  "id": "executor-saved",
+                  "field": "executorId",
+                  "equals": "operator-local"
+                },
+                {
+                  "id": "comment-saved",
+                  "field": "comment",
+                  "equals": "Комментарий neg-46a3634a"
+                }
+              ],
+              "issuedAt": "2026-11-13T22:36:38.413Z",
+              "expiresAt": "2026-11-13T22:46:38.413Z",
+              "approvalNonce": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+              "keyId": "9eda4a42e522ec5ea57f5110b2f16d807f4ab5a99513697bdc867e64b44036f3",
+              "schemaVersion": "0.2.0",
+              "domain": "approval",
+              "signature": "b65a59acbdb114332d560ca202087afd99c70d56b3b60a01264e0d5ae1cb441f05e179e4e0d4e8f8b7deae781e187713458be9f584bf9d1163f1efd047799f0e",
+              "signatureAlgorithm": "Ed25519"
+            },
+            "result": {
+              "verdict": "PASS",
+              "reasonCode": "NONE"
+            },
+            "observer": {
+              "trusted": true,
+              "passed": true,
+              "verdict": "PASS",
+              "reasonCode": null,
+              "anchorId": "anchor-fa43c1fc-dd30-4c9d-aba5-58c609f9677f"
+            }
+          }
+        }
+      },
+      {
+        "attack": "R6",
+        "title": "Кэш закреплений: подмена с восстановлением mtimeMs и размеров",
+        "outcome": "NO_TRUSTED_PASS",
+        "boundaryReached": "PIN_CACHE_BYPASS_METADATA",
+        "falseTrustedPass": false,
+        "verdict": "INCONCLUSIVE",
+        "reasonCode": "EVIDENCE_MISSING",
+        "observer": {
+          "trusted": true,
+          "passed": false,
+          "verdict": "INCONCLUSIVE",
+          "reasonCode": "EVIDENCE_MISSING",
+          "anchorId": null
+        },
+        "observerError": null,
+        "mutations": {
+          "rogue": 1,
+          "victim": 0
+        },
+        "details": {
+          "normalizedMtimeSec": 1794609568,
+          "before": [
+            {
+              "name": "trust-pin.json",
+              "mtimeMs": 1794609568000,
+              "size": 1035
+            },
+            {
+              "name": "owner.pub",
+              "mtimeMs": 1794609568000,
+              "size": 211
+            },
+            {
+              "name": "anchor.pub",
+              "mtimeMs": 1794609568000,
+              "size": 219
+            },
+            {
+              "name": "ready.json",
+              "mtimeMs": 1794609568000,
+              "size": 215
+            }
+          ],
+          "afterSub": [
+            {
+              "name": "trust-pin.json",
+              "mtimeMs": 1794609568000,
+              "size": 1035
+            },
+            {
+              "name": "owner.pub",
+              "mtimeMs": 1794609565506.9795,
+              "size": 211
+            },
+            {
+              "name": "anchor.pub",
+              "mtimeMs": 1794609566322.4905,
+              "size": 219
+            },
+            {
+              "name": "ready.json",
+              "mtimeMs": 1794609566861.335,
+              "size": 215
+            }
+          ],
+          "restored": [
+            {
+              "name": "trust-pin.json",
+              "mtimeMs": 1794609568000,
+              "size": 1035
+            },
+            {
+              "name": "owner.pub",
+              "mtimeMs": 1794609568000,
+              "size": 211
+            },
+            {
+              "name": "anchor.pub",
+              "mtimeMs": 1794609568000,
+              "size": 219
+            },
+            {
+              "name": "ready.json",
+              "mtimeMs": 1794609568000,
+              "size": 215
+            }
+          ],
+          "sizesPreserved": true,
+          "metadataRestored": true,
+          "warmLoad": {
+            "accepted": true,
+            "ownerKeyId": "09c960387b2a5dc6e5912aed727ae01314e562dd8e01888ae8800fdf6ffde430",
+            "matchesAttacker": true
+          },
+          "coldCacheControl": {
+            "coldCache": true,
+            "accepted": false,
+            "error": {
+              "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+              "message": "Публичные ключи не совпадают с закреплёнными"
+            }
+          },
+          "run": {
+            "runId": "neg-52b14313",
+            "approvalId": "approval-e9ba7bc9",
+            "approval": {
+              "approvalId": "approval-e9ba7bc9",
+              "issuerPrincipalId": "attacker-owner",
+              "subjectPrincipalId": "attacker-operator",
+              "operationId": "local-create-record",
+              "operationVersion": "1.0.0",
+              "scenarioContentSha256": "3b555b9c512a1b3d80eca6bd49509c828d6e740d1df486cc13725addf9dbd532",
+              "operationSha256": "1e0061b82f4ac5d16adbcf71abc6c6f062253f379cff66f036c473575c8f43ed",
+              "approvedInputsHash": "e0ade626d0880bf226ee8dbda1484956078ae784de7762b47c4fbb342af9fc5a",
+              "fixtureId": "fixture-neg-52b14313",
+              "targetEnvironmentId": "34ba97b6-67ac-4df0-b693-9e2ba4993b3a",
+              "environmentGeneration": 1,
+              "targetResource": {
+                "method": "POST",
+                "path": "/records"
+              },
+              "allowedEffects": [
+                {
+                  "id": "title-saved",
+                  "field": "title",
+                  "equals": "Проверка neg-52b14313"
+                },
+                {
+                  "id": "executor-saved",
+                  "field": "executorId",
+                  "equals": "operator-local"
+                },
+                {
+                  "id": "comment-saved",
+                  "field": "comment",
+                  "equals": "Комментарий neg-52b14313"
+                }
+              ],
+              "issuedAt": "2026-11-13T22:39:29.089Z",
+              "expiresAt": "2026-11-13T22:49:29.089Z",
+              "approvalNonce": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+              "keyId": "09c960387b2a5dc6e5912aed727ae01314e562dd8e01888ae8800fdf6ffde430",
+              "schemaVersion": "0.2.0",
+              "domain": "approval",
+              "signature": "12ea22a05d4af748d797f4cd0ccf05bbe9af7672aa61f759ecc3ca86aab0c84d458287941010e13e6a3ef8d2eec0bf1c92e378af8987253a2c0ee61445fc6804",
+              "signatureAlgorithm": "Ed25519"
+            },
+            "result": {
+              "verdict": "INCONCLUSIVE",
+              "reasonCode": "EVIDENCE_MISSING"
+            },
+            "observer": {
+              "trusted": true,
+              "passed": false,
+              "verdict": "INCONCLUSIVE",
+              "reasonCode": "EVIDENCE_MISSING",
+              "anchorId": null
+            }
+          }
+        }
+      },
+      {
+        "attack": "R7",
+        "title": "Конфигурация: доверенный прогон под полностью новым корнем атакующего",
+        "outcome": "ATTACK_REACHED_TRUSTED_PASS",
+        "boundaryReached": "CONFIG_TRUSTROOT_POINTER",
+        "falseTrustedPass": true,
+        "verdict": "PASS",
+        "reasonCode": "NONE",
+        "observer": {
+          "trusted": true,
+          "passed": true,
+          "verdict": "PASS",
+          "reasonCode": null,
+          "anchorId": "anchor-5d39a698-58fe-48b0-9965-5d1df8232412"
+        },
+        "observerError": null,
+        "mutations": {
+          "rogue": 1,
+          "victim": 0
+        },
+        "details": {
+          "victimRootUntouched": true,
+          "victimRootFiles": [
+            "anchor.pub",
+            "environments\\26b677d7-10ba-4f08-9582-25a5b9a3e52d\\1.json",
+            "owner.pub",
+            "ready.json",
+            "trust-pin.json"
+          ],
+          "attackerRoot": {
+            "ownerKeyId": "f10aee03806afc35c3a6beaba6d63858357d1f98956a0931f52910d606308d22",
+            "anchorKeyId": "568cc2036408026262c66914506ee668a9ca7600998c2143f2aa98f6560dc49a",
+            "pinnedBy": "createTrustRoot (штатная процедура)"
+          },
+          "run": {
+            "runId": "neg-16cdbbcc",
+            "approvalId": "approval-a6a1b39d",
+            "approval": {
+              "approvalId": "approval-a6a1b39d",
+              "issuerPrincipalId": "attacker-owner",
+              "subjectPrincipalId": "attacker-operator",
+              "operationId": "local-create-record",
+              "operationVersion": "1.0.0",
+              "scenarioContentSha256": "97fa63121827b04f4bfc5a9f47f474fa3bbe072a11bd7a0f575806a9fddd7fa9",
+              "operationSha256": "49df59e98b6956336cebc2f3edae9fe671c5b9a017736cfc90f3ff737f1556c6",
+              "approvedInputsHash": "68a10da333a9592a080382b61348e9444ef9a149734c79a6cfa5987fa447230e",
+              "fixtureId": "fixture-neg-16cdbbcc",
+              "targetEnvironmentId": "7fe146ee-60ae-4403-beb1-58a8a81a95af",
+              "environmentGeneration": 1,
+              "targetResource": {
+                "method": "POST",
+                "path": "/records"
+              },
+              "allowedEffects": [
+                {
+                  "id": "title-saved",
+                  "field": "title",
+                  "equals": "Проверка neg-16cdbbcc"
+                },
+                {
+                  "id": "executor-saved",
+                  "field": "executorId",
+                  "equals": "operator-local"
+                },
+                {
+                  "id": "comment-saved",
+                  "field": "comment",
+                  "equals": "Комментарий neg-16cdbbcc"
+                }
+              ],
+              "issuedAt": "2026-11-13T22:39:43.574Z",
+              "expiresAt": "2026-11-13T22:49:43.574Z",
+              "approvalNonce": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+              "keyId": "f10aee03806afc35c3a6beaba6d63858357d1f98956a0931f52910d606308d22",
+              "schemaVersion": "0.2.0",
+              "domain": "approval",
+              "signature": "cfd7ca8220796bcf1d29f91f2ccab379a2edfa3b16dfd21705821345523650a06b469d066f31b89a28daec0851f1b6ad61124291bd192ddba9da200ac10f3a0e",
+              "signatureAlgorithm": "Ed25519"
+            },
+            "result": {
+              "verdict": "PASS",
+              "reasonCode": "NONE"
+            },
+            "observer": {
+              "trusted": true,
+              "passed": true,
+              "verdict": "PASS",
+              "reasonCode": null,
+              "anchorId": "anchor-5d39a698-58fe-48b0-9965-5d1df8232412"
+            }
+          }
+        }
+      },
+      {
+        "attack": "R8",
+        "title": "Перезакрепление: владение owner.key против возможностей того же SID",
+        "outcome": "ATTACK_REACHED_TRUSTED_PASS",
+        "boundaryReached": "RESEAL_ACCEPTED_ATTACKER_SECRETS",
+        "falseTrustedPass": true,
+        "verdict": "PASS",
+        "reasonCode": "NONE",
+        "observer": {
+          "trusted": true,
+          "passed": true,
+          "verdict": "PASS",
+          "reasonCode": null,
+          "anchorId": "anchor-c806ce14-6479-46c6-ad95-b083c2f90ca7"
+        },
+        "observerError": null,
+        "mutations": {
+          "rogue": 1,
+          "victim": 0
+        },
+        "details": {
+          "resealWithAttackerSecretsAfterSubstitution": {
+            "accepted": true,
+            "ownerKeyId": "dcd7739245bb0755821f0176073c538fe5657ee04b80bfc1a128629373fed148",
+            "anchorKeyId": "0d62f9e2db32eecc39ee30114634cafd74651dad6aa677d7bc9ed4deec652017"
+          },
+          "loadAfterSubstitution": {
+            "accepted": true,
+            "ownerKeyId": "dcd7739245bb0755821f0176073c538fe5657ee04b80bfc1a128629373fed148",
+            "matchesAttacker": true
+          },
+          "run": {
+            "runId": "neg-8a60c562",
+            "approvalId": "approval-4df9717d",
+            "approval": {
+              "approvalId": "approval-4df9717d",
+              "issuerPrincipalId": "attacker-owner",
+              "subjectPrincipalId": "attacker-operator",
+              "operationId": "local-create-record",
+              "operationVersion": "1.0.0",
+              "scenarioContentSha256": "ae5c4bb4c96f1b89b83e5c263649abf6f4873b921b8af4c5a3d439860852496e",
+              "operationSha256": "628389edaf17411c04748780f6cb45a251ade7ab0e07ae1de4090f81c1b80e30",
+              "approvedInputsHash": "6963149b49f1f8af76030624c0dd7f7369704afa614d0c0305f1a47ac309c0fd",
+              "fixtureId": "fixture-neg-8a60c562",
+              "targetEnvironmentId": "e2c2c788-d2dd-4f67-9a98-27b89eab9ccd",
+              "environmentGeneration": 1,
+              "targetResource": {
+                "method": "POST",
+                "path": "/records"
+              },
+              "allowedEffects": [
+                {
+                  "id": "title-saved",
+                  "field": "title",
+                  "equals": "Проверка neg-8a60c562"
+                },
+                {
+                  "id": "executor-saved",
+                  "field": "executorId",
+                  "equals": "operator-local"
+                },
+                {
+                  "id": "comment-saved",
+                  "field": "comment",
+                  "equals": "Комментарий neg-8a60c562"
+                }
+              ],
+              "issuedAt": "2026-11-13T22:37:15.507Z",
+              "expiresAt": "2026-11-13T22:47:15.507Z",
+              "approvalNonce": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+              "keyId": "dcd7739245bb0755821f0176073c538fe5657ee04b80bfc1a128629373fed148",
+              "schemaVersion": "0.2.0",
+              "domain": "approval",
+              "signature": "611cc74f2763fbbed628db22572b971a9afd0da2d0ef445382199d729d15df6d5086ef310174251d2243b848f159ebc5a0a5995d70e8d844ab5d4c7cb63fc90b",
+              "signatureAlgorithm": "Ed25519"
+            },
+            "result": {
+              "verdict": "PASS",
+              "reasonCode": "NONE"
+            },
+            "observer": {
+              "trusted": true,
+              "passed": true,
+              "verdict": "PASS",
+              "reasonCode": null,
+              "anchorId": "anchor-c806ce14-6479-46c6-ad95-b083c2f90ca7"
+            }
+          },
+          "sameSidDpapiProbe": {
+            "childPid": 36380,
+            "unwrapped": true,
+            "keyId": "c0c227e82449d4e15f2458f12827665e32b6abeb028585d58178a138946d954c",
+            "reseal": {
+              "accepted": true,
+              "ownerKeyId": "c0c227e82449d4e15f2458f12827665e32b6abeb028585d58178a138946d954c",
+              "anchorKeyId": "02a3d37554e3f57b8471ba8a9a42f3d19de7eff98b52e5f20a3c7a0c1a3ec2bc"
+            }
+          },
+          "probeClassification": "ВНЕ исходной A2: раскрытие DPAPI-обёртки ключа жертвы явно исключено моделью («не извлекает ключи через DPAPI»). Зонд показывает, что защита reseal опирается на то же допущение, а не на отдельную границу.",
+          "victimPrivateKeysTouchedByAttack": false
+        }
+      }
+    ],
+    "note": "R6/R7: повторный прогон после исправления харнесса (нормализация mtime до целых секунд; рекурсивный снимок файлов). Атакующая логика R5/R8 не менялась."
+  },
+  "gates": {
+    "npmTest": {
+      "tests": 312,
+      "pass": 312,
+      "fail": 0,
+      "skipped": 0,
+      "exitCode": 0,
+      "log": "repro/logs/reacceptance-41043ad/gate-npm-test.log",
+      "cancelled": 0
+    },
+    "races": {
+      "tests": 3,
+      "pass": 3,
+      "fail": 0,
+      "skipped": 0,
+      "exitCode": 0,
+      "log": "repro/logs/reacceptance-41043ad/gate-races.log",
+      "cancelled": 0
+    },
+    "attacksW2": {
+      "total": 25,
+      "pass": 25,
+      "fail": 0,
+      "invalid": 0,
+      "inconclusive": 0,
+      "verdict": "PASS",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "targetDirty": true,
+      "targetDirtyReason": "незатреканый аудиторский repro/; продуктовое дерево чистое",
+      "log": "repro/logs/reacceptance-41043ad/gate-attacks.log"
+    },
+    "rdMatrix": {
+      "status": "UNVERIFIABLE",
+      "reason": "Инструмент WP08-REAUDIT-MATRIX и 15 сценариев отсутствуют в опубликованном дереве 41043ad; docs/gates/rd-matrix.json создан на ревизии 0fcb9bc976adb690d391f3717b0cb7e578044c7d в рабочем worktree DeepSeek"
+    }
+  },
+  "findings": {
+    "F1": "NOT_FIXED_REJECT",
+    "F1a": "NEW_P3_CACHE_METADATA",
+    "F2": "DISPOSITION_CONFIRMED",
+    "F3": "DEFERRED_P1",
+    "F4": "OPEN_P2_ISOLATION",
+    "F5": "DOCUMENTED",
+    "F6": "AWAITS_OWNER",
+    "F7": "DISPOSITION_REFUTED"
+  },
+  "positiveControl": {
+    "legitPass": true,
+    "reconcileIdempotent": true,
+    "repeatedMutation": false
+  },
+  "evidence": {
+    "repros": "repro/reacceptance/",
+    "logs": "repro/logs/reacceptance-41043ad/",
+    "documents": [
+      "WP08-QWEN-REACCEPTANCE.md",
+      "WP08-QWEN-F1-RETEST.md",
+      "WP08-QWEN-FINDINGS-STATUS.md",
+      "WP08-QWEN-FINAL-MATRIX.json"
+    ]
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "attack": "R7",
+  "title": "Конфигурация: доверенный прогон под полностью новым корнем атакующего",
+  "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+  "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+  "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+  "boundaryReached": "CONFIG_TRUSTROOT_POINTER",
+  "verdict": "PASS",
+  "reasonCode": "NONE",
+  "observer": {
+    "trusted": true,
+    "passed": true,
+    "verdict": "PASS",
+    "reasonCode": null,
+    "anchorId": "anchor-5d39a698-58fe-48b0-9965-5d1df8232412"
+  },
+  "observerError": null,
+  "mutations": {
+    "rogue": 1,
+    "victim": 0
+  },
+  "falseTrustedPass": true,
+  "notes": "Закрепление самореферентно: каждый корень подтверждает сам себя. Идентичность разрешённого trustRoot должна быть закреплена ВНЕ корня (конфигурация владельца/политика запуска), иначе указатель на чужой корень с валидным pin принимается. Ложный trusted PASS публикуется в хранилище жертвы.",
+  "details": {
+    "victimRootUntouched": true,
+    "victimRootFiles": [
+      "anchor.pub",
+      "environments\\26b677d7-10ba-4f08-9582-25a5b9a3e52d\\1.json",
+      "owner.pub",
+      "ready.json",
+      "trust-pin.json"
+    ],
+    "attackerRoot": {
+      "ownerKeyId": "f10aee03806afc35c3a6beaba6d63858357d1f98956a0931f52910d606308d22",
+      "anchorKeyId": "568cc2036408026262c66914506ee668a9ca7600998c2143f2aa98f6560dc49a",
+      "pinnedBy": "createTrustRoot (штатная процедура)"
+    },
+    "run": {
+      "runId": "neg-16cdbbcc",
+      "approvalId": "approval-a6a1b39d",
+      "approval": {
+        "approvalId": "approval-a6a1b39d",
+        "issuerPrincipalId": "attacker-owner",
+        "subjectPrincipalId": "attacker-operator",
+        "operationId": "local-create-record",
+        "operationVersion": "1.0.0",
+        "scenarioContentSha256": "97fa63121827b04f4bfc5a9f47f474fa3bbe072a11bd7a0f575806a9fddd7fa9",
+        "operationSha256": "49df59e98b6956336cebc2f3edae9fe671c5b9a017736cfc90f3ff737f1556c6",
+        "approvedInputsHash": "68a10da333a9592a080382b61348e9444ef9a149734c79a6cfa5987fa447230e",
+        "fixtureId": "fixture-neg-16cdbbcc",
+        "targetEnvironmentId": "7fe146ee-60ae-4403-beb1-58a8a81a95af",
+        "environmentGeneration": 1,
+        "targetResource": {
+          "method": "POST",
+          "path": "/records"
+        },
+        "allowedEffects": [
+          {
+            "id": "title-saved",
+            "field": "title",
+            "equals": "Проверка neg-16cdbbcc"
+          },
+          {
+            "id": "executor-saved",
+            "field": "executorId",
+            "equals": "operator-local"
+          },
+          {
+            "id": "comment-saved",
+            "field": "comment",
+            "equals": "Комментарий neg-16cdbbcc"
+          }
+        ],
+        "issuedAt": "2026-11-13T22:39:43.574Z",
+        "expiresAt": "2026-11-13T22:49:43.574Z",
+        "approvalNonce": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "keyId": "f10aee03806afc35c3a6beaba6d63858357d1f98956a0931f52910d606308d22",
+        "schemaVersion": "0.2.0",
+        "domain": "approval",
+        "signature": "cfd7ca8220796bcf1d29f91f2ccab379a2edfa3b16dfd21705821345523650a06b469d066f31b89a28daec0851f1b6ad61124291bd192ddba9da200ac10f3a0e",
+        "signatureAlgorithm": "Ed25519"
+      },
+      "result": {
+        "verdict": "PASS",
+        "reasonCode": "NONE"
+      },
+      "observer": {
+        "trusted": true,
+        "passed": true,
+        "verdict": "PASS",
+        "reasonCode": null,
+        "anchorId": "anchor-5d39a698-58fe-48b0-9965-5d1df8232412"
+      }
+    }
+  },
+  "outcome": "ATTACK_REACHED_TRUSTED_PASS"
+}

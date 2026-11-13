@@ -1,0 +1,166 @@
+{
+  "attack": "R6",
+  "title": "Кэш закреплений: подмена с восстановлением mtimeMs и размеров",
+  "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+  "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+  "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+  "boundaryReached": "PIN_CACHE_BYPASS_METADATA",
+  "verdict": "INCONCLUSIVE",
+  "reasonCode": "EVIDENCE_MISSING",
+  "observer": {
+    "trusted": true,
+    "passed": false,
+    "verdict": "INCONCLUSIVE",
+    "reasonCode": "EVIDENCE_MISSING",
+    "anchorId": null
+  },
+  "observerError": null,
+  "mutations": {
+    "rogue": 1,
+    "victim": 0
+  },
+  "falseTrustedPass": false,
+  "notes": "Сигнатура кэша — mtimeMs:size без хеширования содержимого. Обход в процессе с прогретым кэшем фиксируется отдельно от полного прогона: дочерние процессы начинают с холодным кэшем.",
+  "details": {
+    "normalizedMtimeSec": 1794609568,
+    "before": [
+      {
+        "name": "trust-pin.json",
+        "mtimeMs": 1794609568000,
+        "size": 1035
+      },
+      {
+        "name": "owner.pub",
+        "mtimeMs": 1794609568000,
+        "size": 211
+      },
+      {
+        "name": "anchor.pub",
+        "mtimeMs": 1794609568000,
+        "size": 219
+      },
+      {
+        "name": "ready.json",
+        "mtimeMs": 1794609568000,
+        "size": 215
+      }
+    ],
+    "afterSub": [
+      {
+        "name": "trust-pin.json",
+        "mtimeMs": 1794609568000,
+        "size": 1035
+      },
+      {
+        "name": "owner.pub",
+        "mtimeMs": 1794609565506.9795,
+        "size": 211
+      },
+      {
+        "name": "anchor.pub",
+        "mtimeMs": 1794609566322.4905,
+        "size": 219
+      },
+      {
+        "name": "ready.json",
+        "mtimeMs": 1794609566861.335,
+        "size": 215
+      }
+    ],
+    "restored": [
+      {
+        "name": "trust-pin.json",
+        "mtimeMs": 1794609568000,
+        "size": 1035
+      },
+      {
+        "name": "owner.pub",
+        "mtimeMs": 1794609568000,
+        "size": 211
+      },
+      {
+        "name": "anchor.pub",
+        "mtimeMs": 1794609568000,
+        "size": 219
+      },
+      {
+        "name": "ready.json",
+        "mtimeMs": 1794609568000,
+        "size": 215
+      }
+    ],
+    "sizesPreserved": true,
+    "metadataRestored": true,
+    "warmLoad": {
+      "accepted": true,
+      "ownerKeyId": "09c960387b2a5dc6e5912aed727ae01314e562dd8e01888ae8800fdf6ffde430",
+      "matchesAttacker": true
+    },
+    "coldCacheControl": {
+      "coldCache": true,
+      "accepted": false,
+      "error": {
+        "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+        "message": "Публичные ключи не совпадают с закреплёнными"
+      }
+    },
+    "run": {
+      "runId": "neg-52b14313",
+      "approvalId": "approval-e9ba7bc9",
+      "approval": {
+        "approvalId": "approval-e9ba7bc9",
+        "issuerPrincipalId": "attacker-owner",
+        "subjectPrincipalId": "attacker-operator",
+        "operationId": "local-create-record",
+        "operationVersion": "1.0.0",
+        "scenarioContentSha256": "3b555b9c512a1b3d80eca6bd49509c828d6e740d1df486cc13725addf9dbd532",
+        "operationSha256": "1e0061b82f4ac5d16adbcf71abc6c6f062253f379cff66f036c473575c8f43ed",
+        "approvedInputsHash": "e0ade626d0880bf226ee8dbda1484956078ae784de7762b47c4fbb342af9fc5a",
+        "fixtureId": "fixture-neg-52b14313",
+        "targetEnvironmentId": "34ba97b6-67ac-4df0-b693-9e2ba4993b3a",
+        "environmentGeneration": 1,
+        "targetResource": {
+          "method": "POST",
+          "path": "/records"
+        },
+        "allowedEffects": [
+          {
+            "id": "title-saved",
+            "field": "title",
+            "equals": "Проверка neg-52b14313"
+          },
+          {
+            "id": "executor-saved",
+            "field": "executorId",
+            "equals": "operator-local"
+          },
+          {
+            "id": "comment-saved",
+            "field": "comment",
+            "equals": "Комментарий neg-52b14313"
+          }
+        ],
+        "issuedAt": "2026-11-13T22:39:29.089Z",
+        "expiresAt": "2026-11-13T22:49:29.089Z",
+        "approvalNonce": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "keyId": "09c960387b2a5dc6e5912aed727ae01314e562dd8e01888ae8800fdf6ffde430",
+        "schemaVersion": "0.2.0",
+        "domain": "approval",
+        "signature": "12ea22a05d4af748d797f4cd0ccf05bbe9af7672aa61f759ecc3ca86aab0c84d458287941010e13e6a3ef8d2eec0bf1c92e378af8987253a2c0ee61445fc6804",
+        "signatureAlgorithm": "Ed25519"
+      },
+      "result": {
+        "verdict": "INCONCLUSIVE",
+        "reasonCode": "EVIDENCE_MISSING"
+      },
+      "observer": {
+        "trusted": true,
+        "passed": false,
+        "verdict": "INCONCLUSIVE",
+        "reasonCode": "EVIDENCE_MISSING",
+        "anchorId": null
+      }
+    }
+  },
+  "outcome": "NO_TRUSTED_PASS"
+}

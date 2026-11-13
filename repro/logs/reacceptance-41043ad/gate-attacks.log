@@ -1,0 +1,270 @@
+
+> kaiden-qa-adaptant@0.1.0 test:attacks
+> node tests/redteam/run-all-w2.mjs --target=.
+
+{
+  "tool": "REDTEAM-W2-ALL",
+  "target": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-3600a24bdde84e09",
+  "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+  "pinnedSnapshot": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-3600a24bdde84e09",
+  "targetDirty": true,
+  "artifactsDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148",
+  "total": 25,
+  "pass": 25,
+  "fail": 0,
+  "invalid": 0,
+  "inconclusive": 0,
+  "verdict": "PASS",
+  "results": [
+    {
+      "script": "rt2-attack-ack-without-consumption.mjs",
+      "ms": 18315,
+      "exitCode": 0,
+      "id": "WP06-ACK",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-attack-ack-without-consumption.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-attack-env-substitution.mjs",
+      "ms": 10778,
+      "exitCode": 0,
+      "id": "GAP-02",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-attack-env-substitution.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-attack-false-pass.mjs",
+      "ms": 30873,
+      "exitCode": 0,
+      "id": "GAP-01",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-attack-false-pass.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-attack-foreign-sid.mjs",
+      "ms": 8481,
+      "exitCode": 0,
+      "id": "WP06-SID",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-attack-foreign-sid.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-attack-second-post.mjs",
+      "ms": 15117,
+      "exitCode": 0,
+      "id": "WP06-2POST",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-attack-second-post.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-attack-secret-before-allow.mjs",
+      "ms": 16306,
+      "exitCode": 0,
+      "id": "WP06-SECRET",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-attack-secret-before-allow.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-b01-registry.mjs",
+      "ms": 8475,
+      "exitCode": 0,
+      "id": "B-01",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-b01-registry.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-b03-effects-mismatch.mjs",
+      "ms": 8640,
+      "exitCode": 0,
+      "id": "B-03",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-b03-effects-mismatch.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-b04-fixture-mismatch.mjs",
+      "ms": 8405,
+      "exitCode": 0,
+      "id": "B-04",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-b04-fixture-mismatch.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-b05-http-200-existing.mjs",
+      "ms": 11467,
+      "exitCode": 0,
+      "id": "B-05",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-b05-http-200-existing.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-e02-unknown-environment.mjs",
+      "ms": 8674,
+      "exitCode": 0,
+      "id": "E-02",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-e02-unknown-environment.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-e03-generation-change.mjs",
+      "ms": 8562,
+      "exitCode": 0,
+      "id": "E-03",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-e03-generation-change.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-e04-credential-ref.mjs",
+      "ms": 8460,
+      "exitCode": 0,
+      "id": "E-04",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-e04-credential-ref.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-e05-registry-unreadable.mjs",
+      "ms": 8416,
+      "exitCode": 0,
+      "id": "E-05",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-e05-registry-unreadable.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-e06-dev-environment.mjs",
+      "ms": 8546,
+      "exitCode": 0,
+      "id": "E-06",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-e06-dev-environment.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-l03-crash-after-consumption.mjs",
+      "ms": 23383,
+      "exitCode": 0,
+      "id": "L-03",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-l03-crash-after-consumption.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-l06-used-approval.mjs",
+      "ms": 13812,
+      "exitCode": 0,
+      "id": "L-06",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-l06-used-approval.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-l08-old-start-rejects-trust.mjs",
+      "ms": 2734,
+      "exitCode": 0,
+      "id": "L-08",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-l08-old-start-rejects-trust.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-r01-guard-lock.mjs",
+      "ms": 18156,
+      "exitCode": 0,
+      "id": "R-01",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-r01-guard-lock.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-r02-keygen-run-dir.mjs",
+      "ms": 4920,
+      "exitCode": 0,
+      "id": "R-02",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-r02-keygen-run-dir.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-v03-signer-unavailable.mjs",
+      "ms": 3334,
+      "exitCode": 0,
+      "id": "V-03",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-v03-signer-unavailable.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-v04-two-anchors.mjs",
+      "ms": 14563,
+      "exitCode": 0,
+      "id": "V-04",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-v04-two-anchors.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-v07-anchor-before-verdict.mjs",
+      "ms": 17063,
+      "exitCode": 0,
+      "id": "V-07",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-v07-anchor-before-verdict.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-v08-owner-as-anchor.mjs",
+      "ms": 13096,
+      "exitCode": 0,
+      "id": "V-08",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-v08-owner-as-anchor.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    },
+    {
+      "script": "rt2-v09-budget-race.mjs",
+      "ms": 3202,
+      "exitCode": 0,
+      "id": "V-09",
+      "verdict": "PASS",
+      "artifact": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-redteam-w2-artifacts-1794610250045-51148\\rt2-v09-budget-race.json",
+      "targetHead": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "failedChecks": []
+    }
+  ]
+}

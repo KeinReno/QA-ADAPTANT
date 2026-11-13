@@ -8,18 +8,24 @@ try {
   const v = await victimWorld(w, { load: false });
   const a = await attackerWorld(w);
   substitute(v, a);
-  const firstLoad = loadTrustRoot(v.trustRoot);
-  const firstLoadTakeover = firstLoad.owner.keyId === a.created.ownerKeyId && firstLoad['anchor-signer'].keyId === a.created.anchorKeyId;
+  // Проба первой загрузки обёрнута для фиксации отказа продукта на исправленной ревизии;
+  // атакующие шаги (подмена до первой загрузки + попытка доверенного прогона) не изменены.
+  let firstLoad = null;
+  let firstLoadError = null;
+  try { firstLoad = loadTrustRoot(v.trustRoot); } catch (error) { firstLoadError = err(error); }
+  const firstLoadTakeover = Boolean(firstLoad && firstLoad.owner.keyId === a.created.ownerKeyId && firstLoad['anchor-signer'].keyId === a.created.anchorKeyId);
   let victimPrincipalRejected = null;
-  try { verifyTrustedDocument(firstLoad, v.operator); victimPrincipalRejected = false; } catch (error) { victimPrincipalRejected = error.code; }
+  if (firstLoad) { try { verifyTrustedDocument(firstLoad, v.operator); victimPrincipalRejected = false; } catch (error) { victimPrincipalRejected = error.code; } }
+  else victimPrincipalRejected = firstLoadError?.code || null;
   let victimRecordRejected = null;
-  try { commitEnvironmentRecord(firstLoad, v.trustRoot, environmentRecordFor(v.ownerKey, v.stand)); victimRecordRejected = false; } catch (error) { victimRecordRejected = error.code; }
+  if (firstLoad) { try { commitEnvironmentRecord(firstLoad, v.trustRoot, environmentRecordFor(v.ownerKey, v.stand)); victimRecordRejected = false; } catch (error) { victimRecordRejected = error.code; } }
+  else victimRecordRejected = firstLoadError?.code || null;
   const rogueStand = await w.stand();
   const forged = await runTrusted({
-    root: v.root, trustRoot: v.trustRoot, signTrust: firstLoad, commitApprovalTo: v.trustRoot,
+    root: v.root, trustRoot: v.trustRoot, signTrust: firstLoad || a.trust, commitApprovalTo: v.trustRoot,
     ownerKey: a.ownerKey, ownerKeyId: a.created.ownerKeyId, issuer: a.owner, subject: a.operator,
     issuerId: 'attacker-owner', subjectId: 'attacker-operator', stand: rogueStand, anchorKeyPath: a.anchorKeyPath,
-    registerRecord: true, recordTrust: firstLoad
+    registerRecord: true, recordTrust: firstLoad || a.trust
   }).catch(error => ({ error: err(error) }));
   report('N05', 'Подмена до первой загрузки корня', {
     boundaryReached: firstLoadTakeover ? 'первый loadTrustRoot вернул ключи атакующего' : 'первый loadTrustRoot отверг подмену',
@@ -27,7 +33,7 @@ try {
     observer: forged.observer || null, observerError: forged.observerError || forged.error || null,
     mutations: { victim: v.stand.mutationCount, rogue: rogueStand.mutationCount },
     falseTrustedPass: forged.observer?.trusted === true && forged.observer?.passed === true && forged.observer?.verdict === 'PASS',
-    details: { firstLoadTakeover, victimPrincipalRejected, victimRecordRejected },
+    details: { firstLoadTakeover, firstLoadError, victimPrincipalRejected, victimRecordRejected },
     notes: 'WP-00 04-THREAT-MODEL.md:18 принимает подмену до старта как остаток; исправление F1 должно закрыть и этот момент либо явно оставить принятый остаток с решением владельца.'
   });
 } catch (error) {

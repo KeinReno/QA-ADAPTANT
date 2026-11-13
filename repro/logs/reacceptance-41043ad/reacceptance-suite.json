@@ -1,0 +1,407 @@
+{
+  "suite": "WP08-QWEN-F1-REACCEPTANCE",
+  "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+  "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+  "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+  "summary": {
+    "total": 4,
+    "reachedTrustedPass": [
+      "R5",
+      "R8"
+    ],
+    "noTrustedPass": [
+      "R6"
+    ],
+    "infraErrors": [
+      "R7"
+    ]
+  },
+  "results": [
+    {
+      "attack": "R5",
+      "title": "DPAPI Same-SID: изготовление закрепления для подменённого корня",
+      "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+      "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "boundaryReached": "FORGED_PIN_ACCEPTED",
+      "verdict": "PASS",
+      "reasonCode": "NONE",
+      "observer": {
+        "trusted": true,
+        "passed": true,
+        "verdict": "PASS",
+        "reasonCode": null,
+        "anchorId": "anchor-fa43c1fc-dd30-4c9d-aba5-58c609f9677f"
+      },
+      "observerError": null,
+      "mutations": {
+        "rogue": 1,
+        "victim": 0
+      },
+      "falseTrustedPass": true,
+      "notes": "Создание нового DPAPI-конверта своим процессом того же SID — внутри исходной A2 (извлечение ключей жертвы не выполняется). Если falseTrustedPass=true, закрепление не является границей против исходной A2.",
+      "details": {
+        "parentSid": "S-1-5-21-2930155806-1638716168-1907470493-1002",
+        "child": {
+          "childPid": 17492,
+          "sid": "S-1-5-21-2930155806-1638716168-1907470493-1002",
+          "forgedPinWritten": true
+        },
+        "sameSid": true,
+        "victimPrivateKeysTouched": false,
+        "forgedPinAccepted": true,
+        "substitutedRoot": {
+          "ownerKeyId": "9eda4a42e522ec5ea57f5110b2f16d807f4ab5a99513697bdc867e64b44036f3",
+          "anchorKeyId": "8e1ddf7770265f3736e5414d74f38e9f1d045875328796da5821967ee21a31c1"
+        },
+        "loadError": null,
+        "run": {
+          "runId": "neg-46a3634a",
+          "approvalId": "approval-f8601a52",
+          "approval": {
+            "approvalId": "approval-f8601a52",
+            "issuerPrincipalId": "attacker-owner",
+            "subjectPrincipalId": "attacker-operator",
+            "operationId": "local-create-record",
+            "operationVersion": "1.0.0",
+            "scenarioContentSha256": "69e3b5136b17dc3bb745fbb49157de7c68d57934703942978a54fe04056a5bbe",
+            "operationSha256": "3d654fd2fb42dceffa86f796cc52ecf9750a2ddf31a5d85954382f353ec5afe8",
+            "approvedInputsHash": "343b08f0fc4cf47c94e07afbf84fa80b8b0b1ec10f7554e1f83dc0b8272f9433",
+            "fixtureId": "fixture-neg-46a3634a",
+            "targetEnvironmentId": "e2feee06-8dd8-4ab3-8dbb-d2a85cec1d54",
+            "environmentGeneration": 1,
+            "targetResource": {
+              "method": "POST",
+              "path": "/records"
+            },
+            "allowedEffects": [
+              {
+                "id": "title-saved",
+                "field": "title",
+                "equals": "Проверка neg-46a3634a"
+              },
+              {
+                "id": "executor-saved",
+                "field": "executorId",
+                "equals": "operator-local"
+              },
+              {
+                "id": "comment-saved",
+                "field": "comment",
+                "equals": "Комментарий neg-46a3634a"
+              }
+            ],
+            "issuedAt": "2026-11-13T22:36:38.413Z",
+            "expiresAt": "2026-11-13T22:46:38.413Z",
+            "approvalNonce": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "keyId": "9eda4a42e522ec5ea57f5110b2f16d807f4ab5a99513697bdc867e64b44036f3",
+            "schemaVersion": "0.2.0",
+            "domain": "approval",
+            "signature": "b65a59acbdb114332d560ca202087afd99c70d56b3b60a01264e0d5ae1cb441f05e179e4e0d4e8f8b7deae781e187713458be9f584bf9d1163f1efd047799f0e",
+            "signatureAlgorithm": "Ed25519"
+          },
+          "result": {
+            "verdict": "PASS",
+            "reasonCode": "NONE"
+          },
+          "observer": {
+            "trusted": true,
+            "passed": true,
+            "verdict": "PASS",
+            "reasonCode": null,
+            "anchorId": "anchor-fa43c1fc-dd30-4c9d-aba5-58c609f9677f"
+          }
+        }
+      },
+      "outcome": "ATTACK_REACHED_TRUSTED_PASS"
+    },
+    {
+      "attack": "R6",
+      "title": "Кэш закреплений: подмена с восстановлением mtimeMs и размеров",
+      "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+      "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "boundaryReached": "CACHE_HELD",
+      "verdict": null,
+      "reasonCode": null,
+      "observer": null,
+      "observerError": {
+        "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+        "message": "Публичные ключи не совпадают с закреплёнными"
+      },
+      "mutations": {
+        "rogue": 0,
+        "victim": 0
+      },
+      "falseTrustedPass": false,
+      "notes": "Сигнатура кэша — mtimeMs:size без хеширования содержимого. Обход в процессе с прогретым кэшем фиксируется отдельно от полного прогона: дочерние процессы начинают с холодным кэшем.",
+      "details": {
+        "before": [
+          {
+            "name": "trust-pin.json",
+            "mtimeMs": 1794609412229.6616,
+            "size": 1035
+          },
+          {
+            "name": "owner.pub",
+            "mtimeMs": 1794609410899.8218,
+            "size": 211
+          },
+          {
+            "name": "anchor.pub",
+            "mtimeMs": 1794609411560.568,
+            "size": 219
+          },
+          {
+            "name": "ready.json",
+            "mtimeMs": 1794609411924.1953,
+            "size": 215
+          }
+        ],
+        "afterSub": [
+          {
+            "name": "trust-pin.json",
+            "mtimeMs": 1794609412229.6616,
+            "size": 1035
+          },
+          {
+            "name": "owner.pub",
+            "mtimeMs": 1794609413828.1533,
+            "size": 211
+          },
+          {
+            "name": "anchor.pub",
+            "mtimeMs": 1794609414640.2034,
+            "size": 219
+          },
+          {
+            "name": "ready.json",
+            "mtimeMs": 1794609415113.4763,
+            "size": 215
+          }
+        ],
+        "restored": [
+          {
+            "name": "trust-pin.json",
+            "mtimeMs": 1794609412229.6616,
+            "size": 1035
+          },
+          {
+            "name": "owner.pub",
+            "mtimeMs": 1794609410899.8225,
+            "size": 211
+          },
+          {
+            "name": "anchor.pub",
+            "mtimeMs": 1794609411560.568,
+            "size": 219
+          },
+          {
+            "name": "ready.json",
+            "mtimeMs": 1794609411924.1953,
+            "size": 215
+          }
+        ],
+        "sizesPreserved": true,
+        "metadataRestored": false,
+        "warmLoad": {
+          "accepted": false,
+          "error": {
+            "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+            "message": "Публичные ключи не совпадают с закреплёнными"
+          }
+        },
+        "coldCacheControl": {
+          "coldCache": true,
+          "accepted": false,
+          "error": {
+            "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+            "message": "Публичные ключи не совпадают с закреплёнными"
+          }
+        },
+        "run": {
+          "runId": "neg-5160fc62",
+          "approvalId": "approval-b0bf7b81",
+          "approval": {
+            "approvalId": "approval-b0bf7b81",
+            "issuerPrincipalId": "attacker-owner",
+            "subjectPrincipalId": "attacker-operator",
+            "operationId": "local-create-record",
+            "operationVersion": "1.0.0",
+            "scenarioContentSha256": "33950d6b031684532c12d184d5a8ea34a03e70c031e74748a437dc40ea9b929b",
+            "operationSha256": "9811e73ee9b13a053031e22893a56366ef3dd951e6963e3c9c241e7f27a7bf43",
+            "approvedInputsHash": "cde454dd07ba431f4f417b81d5db3f71c8651ddcac1d2eda85550c84ebddc949",
+            "fixtureId": "fixture-neg-5160fc62",
+            "targetEnvironmentId": "eb6fd7a1-d48d-49cd-951d-23d2c33bb0e4",
+            "environmentGeneration": 1,
+            "targetResource": {
+              "method": "POST",
+              "path": "/records"
+            },
+            "allowedEffects": [
+              {
+                "id": "title-saved",
+                "field": "title",
+                "equals": "Проверка neg-5160fc62"
+              },
+              {
+                "id": "executor-saved",
+                "field": "executorId",
+                "equals": "operator-local"
+              },
+              {
+                "id": "comment-saved",
+                "field": "comment",
+                "equals": "Комментарий neg-5160fc62"
+              }
+            ],
+            "issuedAt": "2026-11-13T22:36:57.527Z",
+            "expiresAt": "2026-11-13T22:46:57.527Z",
+            "approvalNonce": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "keyId": "f1cc450a9fab3392c56d9ab12e39ccbe534d1a2d16dba73010ee84f762f137ed",
+            "schemaVersion": "0.2.0",
+            "domain": "approval",
+            "signature": "04b1f3067953876b8c72a4227cf56848b2999ff9fe40b7e32a349a65e97ed477421e8a6af336fa9e29f43127de3367d444e3fd8b20246f03064c35a8ce147008",
+            "signatureAlgorithm": "Ed25519"
+          },
+          "error": {
+            "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+            "message": "Публичные ключи не совпадают с закреплёнными"
+          },
+          "observerError": {
+            "code": "TRUST_ROOT_KEY_SUBSTITUTION",
+            "message": "Публичные ключи не совпадают с закреплёнными"
+          }
+        }
+      },
+      "outcome": "NO_TRUSTED_PASS"
+    },
+    {
+      "attack": "R7",
+      "title": "Конфигурация: доверенный прогон под полностью новым корнем атакующего",
+      "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+      "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "boundaryReached": null,
+      "verdict": null,
+      "reasonCode": null,
+      "observer": null,
+      "observerError": null,
+      "mutations": null,
+      "falseTrustedPass": false,
+      "notes": null,
+      "details": null,
+      "outcome": "INFRA_ERROR",
+      "infraError": {
+        "code": "EISDIR",
+        "message": "EISDIR: illegal operation on a directory, read"
+      }
+    },
+    {
+      "attack": "R8",
+      "title": "Перезакрепление: владение owner.key против возможностей того же SID",
+      "head": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "productTree": "36fd5401146afa91e602a7be1d9d461c71b5c7c5:a1cdf84e77b6b61f7d8ec26b29189657e6320691:9d6c4b866d85d460df0ca02d005ce3ba240cd731",
+      "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05",
+      "boundaryReached": "RESEAL_ACCEPTED_ATTACKER_SECRETS",
+      "verdict": "PASS",
+      "reasonCode": "NONE",
+      "observer": {
+        "trusted": true,
+        "passed": true,
+        "verdict": "PASS",
+        "reasonCode": null,
+        "anchorId": "anchor-c806ce14-6479-46c6-ad95-b083c2f90ca7"
+      },
+      "observerError": null,
+      "mutations": {
+        "rogue": 1,
+        "victim": 0
+      },
+      "falseTrustedPass": true,
+      "notes": "Часть A — чистая A2: запись файлов + свой процесс. resealTrustRootPin сравнивает ключ из secretsDir с owner.pub ИЗ ТОГО ЖЕ подменённого корня; обе стороны подконтрольны атакующему, поэтому «санкционированная ротация» принимает чужие ключи без извлечения ключей жертвы. Часть B — зонд вне A2 (DPAPI-раскрытие тем же SID).",
+      "details": {
+        "resealWithAttackerSecretsAfterSubstitution": {
+          "accepted": true,
+          "ownerKeyId": "dcd7739245bb0755821f0176073c538fe5657ee04b80bfc1a128629373fed148",
+          "anchorKeyId": "0d62f9e2db32eecc39ee30114634cafd74651dad6aa677d7bc9ed4deec652017"
+        },
+        "loadAfterSubstitution": {
+          "accepted": true,
+          "ownerKeyId": "dcd7739245bb0755821f0176073c538fe5657ee04b80bfc1a128629373fed148",
+          "matchesAttacker": true
+        },
+        "run": {
+          "runId": "neg-8a60c562",
+          "approvalId": "approval-4df9717d",
+          "approval": {
+            "approvalId": "approval-4df9717d",
+            "issuerPrincipalId": "attacker-owner",
+            "subjectPrincipalId": "attacker-operator",
+            "operationId": "local-create-record",
+            "operationVersion": "1.0.0",
+            "scenarioContentSha256": "ae5c4bb4c96f1b89b83e5c263649abf6f4873b921b8af4c5a3d439860852496e",
+            "operationSha256": "628389edaf17411c04748780f6cb45a251ade7ab0e07ae1de4090f81c1b80e30",
+            "approvedInputsHash": "6963149b49f1f8af76030624c0dd7f7369704afa614d0c0305f1a47ac309c0fd",
+            "fixtureId": "fixture-neg-8a60c562",
+            "targetEnvironmentId": "e2c2c788-d2dd-4f67-9a98-27b89eab9ccd",
+            "environmentGeneration": 1,
+            "targetResource": {
+              "method": "POST",
+              "path": "/records"
+            },
+            "allowedEffects": [
+              {
+                "id": "title-saved",
+                "field": "title",
+                "equals": "Проверка neg-8a60c562"
+              },
+              {
+                "id": "executor-saved",
+                "field": "executorId",
+                "equals": "operator-local"
+              },
+              {
+                "id": "comment-saved",
+                "field": "comment",
+                "equals": "Комментарий neg-8a60c562"
+              }
+            ],
+            "issuedAt": "2026-11-13T22:37:15.507Z",
+            "expiresAt": "2026-11-13T22:47:15.507Z",
+            "approvalNonce": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "keyId": "dcd7739245bb0755821f0176073c538fe5657ee04b80bfc1a128629373fed148",
+            "schemaVersion": "0.2.0",
+            "domain": "approval",
+            "signature": "611cc74f2763fbbed628db22572b971a9afd0da2d0ef445382199d729d15df6d5086ef310174251d2243b848f159ebc5a0a5995d70e8d844ab5d4c7cb63fc90b",
+            "signatureAlgorithm": "Ed25519"
+          },
+          "result": {
+            "verdict": "PASS",
+            "reasonCode": "NONE"
+          },
+          "observer": {
+            "trusted": true,
+            "passed": true,
+            "verdict": "PASS",
+            "reasonCode": null,
+            "anchorId": "anchor-c806ce14-6479-46c6-ad95-b083c2f90ca7"
+          }
+        },
+        "sameSidDpapiProbe": {
+          "childPid": 36380,
+          "unwrapped": true,
+          "keyId": "c0c227e82449d4e15f2458f12827665e32b6abeb028585d58178a138946d954c",
+          "reseal": {
+            "accepted": true,
+            "ownerKeyId": "c0c227e82449d4e15f2458f12827665e32b6abeb028585d58178a138946d954c",
+            "anchorKeyId": "02a3d37554e3f57b8471ba8a9a42f3d19de7eff98b52e5f20a3c7a0c1a3ec2bc"
+          }
+        },
+        "probeClassification": "ВНЕ исходной A2: раскрытие DPAPI-обёртки ключа жертвы явно исключено моделью («не извлекает ключи через DPAPI»). Зонд показывает, что защита reseal опирается на то же допущение, а не на отдельную границу.",
+        "victimPrivateKeysTouchedByAttack": false
+      },
+      "outcome": "ATTACK_REACHED_TRUSTED_PASS"
+    }
+  ]
+}

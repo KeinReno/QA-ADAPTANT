@@ -12,7 +12,10 @@ try {
   substitute(v, a);
   let snapshotRejectsAttacker = null;
   try { verifyTrustedDocument(v.trust, a.operator); snapshotRejectsAttacker = false; } catch (error) { snapshotRejectsAttacker = error.code; }
-  const reloadTakeover = loadTrustRoot(v.trustRoot).owner.keyId === a.created.ownerKeyId;
+  // Проба повторной загрузки обёрнута для фиксации отказа продукта; атакующие шаги не изменены.
+  let reloadTakeover = false;
+  let reloadError = null;
+  try { reloadTakeover = loadTrustRoot(v.trustRoot).owner.keyId === a.created.ownerKeyId; } catch (error) { reloadError = err(error); }
   const rogueStand = await w.stand();
   const forged = await runTrusted({
     root: v.root, trustRoot: v.trustRoot, signTrust: a.trust, commitApprovalTo: v.trustRoot,
@@ -26,7 +29,7 @@ try {
     observer: forged.observer || null, observerError: forged.observerError || forged.error || null,
     mutations: { victim: v.stand.mutationCount, rogue: rogueStand.mutationCount },
     falseTrustedPass: forged.observer?.trusted === true && forged.observer?.passed === true && forged.observer?.verdict === 'PASS',
-    details: { snapshotVerifiesVictim, snapshotRejectsAttacker, reloadTakeover },
+    details: { snapshotVerifiesVictim, snapshotRejectsAttacker, reloadTakeover, reloadError },
     notes: 'In-memory снимок не подвержен перезаписи файлов, но каждый публичный вход (startTrusted/observeTrusted/reconcileTrusted) вызывает loadTrustRoot заново — момент подмены не ограничен «до старта».'
   });
 } catch (error) {
