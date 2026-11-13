@@ -16,6 +16,10 @@ import { commitEnvironmentRecord, signEnvironmentRecord } from '../packages/trus
 import { serveLocalFixture } from '../adapters/local/server.mjs';
 import { currentUserSid } from '../packages/trust/windows-sid.mjs';
 import { createTrustContext, startTrusted } from '../apps/control/trusted.mjs';
+import { reconcile, run } from '../apps/control/run.mjs';
+import {
+  buildTerminalChoice, publishBudgetInconclusiveOutcome, publishCandidate, publishTerminalChoice, publishTerminalVerdict
+} from '../packages/trust/anchor.mjs';
 
 const KEYGEN = path.resolve('packages/trust/keygen.mjs');
 
@@ -294,6 +298,56 @@ test('P2-02: startTrusted без документа approval доходит до
     assert.equal(result.verdict.reasonCode, 'EVIDENCE_MISSING');
     assert.equal(w.stand.mutationCount, 1, 'мутация выполнена ровно один раз');
     assert.equal(fs.existsSync(path.join(w.trustRoot, 'consumption', w.approvalId + '.json')), true);
+  } finally {
+    await w.stand.close();
+    w.cleanup();
+  }
+});
+// P2-04: ошибка trust.publish не должна порождать терминальный verdict без terminal-choice.
+test('P2-04: ошибка publish оставляет PUBLICATION_PENDING и повторный reconcile завершает публикацию', { timeout: 120000 }, async () => {
+  const w = await e04World('p2-publication', 'local:fixture-token');
+  const store = new RunStore(w.store.root);
+  try {
+    const refusing = {
+      preflight: async () => ({ allow: true }),
+      dispatch: async () => ({ allow: true }),
+      beforeRequestAck: async () => ({ allow: true }),
+      publish: async () => { throw Object.assign(new Error('публикация отклонена тестом'), { code: 'ANCHOR_CONFLICT' }); }
+    };
+    await assert.rejects(
+      () => run(w.run.bundle, { root: w.store.root, fixtureToken: w.stand.authToken, trust: refusing }),
+      error => error.code === 'ANCHOR_CONFLICT'
+    );
+    const runDir = store.runPath(w.run.runId);
+    const before = store.readEvidence(runDir);
+    assert.equal(w.stand.mutationCount, 1, 'мутация была ровно одна');
+    assert.equal(before.filter(item => item.envelope.kind === 'verdict').length, 0, 'verdict без terminal-choice не пишется');
+    assert.equal(fs.existsSync(path.join(runDir, 'trust', 'terminal-choice.json')), false);
+    const events = store.readEvents(runDir);
+    assert.equal(events.some(event => event.state === 'PUBLICATION_PENDING'), true, 'состояние зафиксировано как PUBLICATION_PENDING');
+    // Оператор устранил причину: повторный reconcile дочитывает durable evidence и публикует терминальный результат.
+    const recovering = {
+      preflight: async () => ({ allow: true }),
+      dispatch: async () => ({ allow: true }),
+      beforeRequestAck: async () => ({ allow: true }),
+      async publish({ store: s, runDir: dir, frozen, verdict }) {
+        publishCandidate(dir, verdict);
+        if (verdict.verdict === 'PASS') {
+          publishBudgetInconclusiveOutcome({ runDir: dir, frozen });
+        } else {
+          publishTerminalChoice(dir, buildTerminalChoice({
+            outcome: verdict.verdict === 'FAIL' ? 'fail-without-anchor' : 'inconclusive-without-anchor',
+            candidateSha256: digest(verdict)
+          }));
+        }
+        return publishTerminalVerdict({ store: s, runDir: dir, frozen });
+      }
+    };
+    const result = await reconcile({ root: w.store.root, runId: w.run.runId, fixtureToken: w.stand.authToken, trust: recovering });
+    assert.equal(result.verdict.verdict !== 'PASS', true, 'без подписанта PASS не публикуется');
+    assert.equal(store.readEvidence(runDir).filter(item => item.envelope.kind === 'verdict').length, 1);
+    assert.equal(fs.existsSync(path.join(runDir, 'trust', 'terminal-choice.json')), true);
+    assert.equal(w.stand.mutationCount, 1, 'второго POST нет');
   } finally {
     await w.stand.close();
     w.cleanup();

@@ -390,6 +390,15 @@ export async function run(bundle, options = {}) {
     cancellations.delete(runId);
     if (!runDir) throw error;
     if (process.env.QA_ADAPTANT_DEBUG === '1') console.error(error);
+    if (trust && error && error.trustedPublication) {
+      // P2-04: состояние остаётся PUBLICATION_PENDING, терминальный verdict без terminal-choice не пишется.
+      // Повторный reconcile дочитывает durable candidate/choice и завершает публикацию.
+      const code = typeof error.code === 'string' ? error.code : 'CONTRACT_INVALID';
+      try {
+        store.appendEvent(runDir, { type: 'STATE', state: 'PUBLICATION_PENDING', reasonCode: code, message: String(error.message || '').slice(0, 200) });
+      } catch { /* журнал может быть недоступен: ошибка публикации важнее */ }
+      throw error;
+    }
     const frozen = verifyFrozenBundle(store, runDir);
     const evidence = store.readEvidence(runDir);
     const possiblyMutated = evidence.some(r => r.envelope.kind === 'mutation-intent');
@@ -467,7 +476,15 @@ async function verifyAndPersist(store, runDir, { fault = null, browserUncertain 
   }
   const verdict = validateVerdictCoverage(result.verdict, frozen.operation, result.reads);
   if (verdict.runId !== frozen.manifest.runId || verdict.manifestSha256 !== frozen.manifestSha256) throw fail('INTEGRITY_ERROR', 'Verifier вернул другой run/manifest');
-  if (trust) return await trust.publish({ store, runDir, frozen, verdict });
+  if (trust) {
+    try {
+      return await trust.publish({ store, runDir, frozen, verdict });
+    } catch (error) {
+      // P2-04: ошибка публикации доверенного прогона не должна превращаться в verdict без terminal-choice.
+      if (error && typeof error === 'object') error.trustedPublication = true;
+      throw error;
+    }
+  }
   const finalEvidence = store.appendEvidence(runDir, {
     runId: frozen.manifest.runId,
     manifestSha256: frozen.manifestSha256,
