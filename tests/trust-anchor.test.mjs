@@ -12,6 +12,8 @@ import { RunStore } from '../packages/core/store.mjs';
 import { verifyFrozenBundle } from '../packages/core/bundle.mjs';
 import { localBundle, localFixtureContract } from '../adapters/local/bundle.mjs';
 import { createTrustRoot, loadTrustRoot, signTrustedDocument, unwrapPrivateKey } from '../packages/trust/identity.mjs';
+import { commitEnvironmentRecord, signEnvironmentRecord } from '../packages/trust/environment.mjs';
+import { serveLocalFixture } from '../adapters/local/server.mjs';
 import { consumeDispatch, signApproval } from '../packages/trust/approval.mjs';
 import {
   DEFAULT_ANCHOR_BUDGET_MS, INCONCLUSIVE_MESSAGE, anchorWithinBudget, buildBudgetInconclusiveChoice, buildCandidate,
@@ -19,7 +21,8 @@ import {
   observeTrustedVerdict, publicationState, publishBudgetInconclusiveOutcome, publishCandidate, publishCandidateBody,
   publishTerminalChoice, publishTerminalVerdict, readCandidate, readCandidateBody, readTerminalChoice, verifyAnchorStatement
 } from '../packages/trust/anchor.mjs';
-import { connectAnchorSigner, startAnchorSigner } from '../packages/trust/anchor-signer.mjs';
+import { connectAnchorSigner, spawnAnchorSigner, startAnchorSigner } from '../packages/trust/anchor-signer.mjs';
+import { verifyWithTrustedWorker } from '../apps/control/trusted.mjs';
 
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-anchor-'));
 const secretsDir = path.join(work, 'secrets');
@@ -28,10 +31,26 @@ const created = await createTrustRoot({ secretsDir, trustRoot });
 const trust = loadTrustRoot(trustRoot);
 const ownerKey = await unwrapPrivateKey(path.join(secretsDir, 'owner.key'));
 const store = new RunStore(path.join(work, 'store'));
-const signer = startAnchorSigner({ trustRoot, secretsDir });
-await signer.ready;
-const client = connectAnchorSigner(signer.pipePath);
-after(async () => { await client.close(); await signer.close(); });
+// Реальный локальный стенд R-B: ответы /records подписаны ключом стенда, доверенный
+// Worker принимает только валидную подпись. Запись среды закрепляется в trust root.
+const stand = await serveLocalFixture({ generation: 1 });
+const environmentId = stand.environmentId;
+const fingerprint = stand.fingerprint;
+const standBaseUrl = stand.baseUrl;
+await commitEnvironmentRecord(trust, trustRoot, signEnvironmentRecord(ownerKey, {
+  environmentId, generation: stand.generation, kind: 'local-stand', status: 'active',
+  origin: stand.baseUrl, standKeyId: stand.standKeyId, credentialRef: 'local:fixture-token'
+}));
+// Подписант — дочерний процесс Control (тестовый harness) с приватным fork IPC.
+const signer = spawnAnchorSigner({ trustRoot, anchorKeyPath: path.join(secretsDir, 'anchor.key') });
+const client = signer;
+const openWorkers = [];
+after(async () => {
+  for (const worker of openWorkers) { try { await worker.close(); } catch { /* уже закрыт */ } }
+  await signer.close();
+  await stand.close();
+  fs.rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+});
 
 const issuedAt = new Date(Date.now() - 60000).toISOString();
 const expiresAt = new Date(Date.now() + 10 * 60000).toISOString();
@@ -52,7 +71,7 @@ const nextId = prefix => prefix + '-' + String(++counter).padStart(4, '0');
 
 function makeRun(tag) {
   const runId = nextId('run-' + tag);
-  const descriptor = { environmentId: 'local-stand', baseUrl: 'http://127.0.0.1:9/', fingerprint: 'fp-local', fixtureId: 'fixture-' + runId };
+  const descriptor = { environmentId, baseUrl: standBaseUrl, fingerprint, fixtureId: 'fixture-' + runId };
   const fixture = localFixtureContract(descriptor, runId);
   const bundle = localBundle({ ...descriptor, fixtureId: fixture.fixtureId }, { runId });
   bundle.fixture = fixture;
@@ -62,13 +81,21 @@ function makeRun(tag) {
   return { runId, runDir, frozen, bundle, fixture };
 }
 
-function appendChain(run) {
+async function appendChain(run) {
   const { runId, runDir, frozen } = run;
   const operation = frozen.operation;
   const fixture = frozen.fixture;
   const mutationStep = 'create';
   const verifyStep = frozen.scenario.nodes.at(-1).id;
   const requestId = nextId('req');
+  // Реальная мутация на стенде: независимое чтение Worker должно подтвердить фактические поля.
+  const response = await fetch(new URL('/records', stand.baseUrl), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + stand.authToken },
+    body: JSON.stringify({ ...operation.inputs, fixtureId: fixture.fixtureId })
+  });
+  if (response.status !== 201) throw new Error('POST на локальный стенд не удался: ' + response.status);
+  const posted = await response.json();
   const intent = store.appendEvidence(runDir, {
     runId, manifestSha256: frozen.manifestSha256, fixtureId: fixture.fixtureId, stepId: mutationStep,
     producer: 'control', kind: 'mutation-intent',
@@ -81,8 +108,8 @@ function appendChain(run) {
     artifact: { requestId, intentId: runId + ':' + mutationStep, operationId: operation.id, method: 'POST', path: '/records', fixtureId: fixture.fixtureId, fields: { ...operation.inputs, fixtureId: fixture.fixtureId } },
     parentEvidenceIds: [intent.evidenceId]
   });
-  const entity = { kind: 'local-record', id: nextId('record') };
-  const response = store.appendEvidence(runDir, {
+  const entity = { kind: operation.entityKind, id: posted.id };
+  const responseEvidence = store.appendEvidence(runDir, {
     runId, manifestSha256: frozen.manifestSha256, fixtureId: fixture.fixtureId, stepId: mutationStep,
     producer: 'browser', kind: 'response', requestId, entity,
     artifact: { requestId, intentId: runId + ':' + mutationStep, operationId: operation.id, fixtureId: fixture.fixtureId, status: 201, entity },
@@ -90,11 +117,11 @@ function appendChain(run) {
   });
   const read = store.appendEvidence(runDir, {
     runId, manifestSha256: frozen.manifestSha256, fixtureId: fixture.fixtureId, stepId: verifyStep,
-    producer: 'verification', kind: 'independent-read', requestId, entity, checkIds: ['title-saved'],
+    producer: 'verification', kind: 'independent-read', requestId, entity, checkIds: operation.effects.map(effect => effect.id),
     artifact: { method: 'GET', path: '/records', fixtureId: fixture.fixtureId, entity, fields: { ...operation.inputs, fixtureId: fixture.fixtureId }, environmentFingerprint: frozen.manifest.environment.fingerprint, requestId, httpStatus: 200, observedAt: new Date().toISOString() },
-    parentEvidenceIds: [response.evidenceId]
+    parentEvidenceIds: [responseEvidence.evidenceId]
   });
-  return { intent, request, response, read };
+  return { intent, request, response: responseEvidence, read };
 }
 
 function unknownChecks(frozen) {
@@ -157,14 +184,17 @@ function consume(approval, frozen, runId, expectedOverrides = {}) {
   });
 }
 
-function trustedRun(tag) {
+async function trustedRun(tag) {
   const run = makeRun(tag);
-  const chain = appendChain(run);
-  const candidate = passCandidate(run.frozen, chain.read.evidenceId);
-  const published = publishCandidate(run.runDir, candidate);
+  const chain = await appendChain(run);
   const { approvalId, approval } = makeApproval(run.frozen);
   consume(approval, run.frozen, run.runId);
-  return { ...run, chain, candidate, candidateSha256: published.candidateSha256, approvalId, approval, anchorIds: [] };
+  // Кандидат PASS и аттестацию выдаёт только доверенный Verification Worker.
+  const worker = await verifyWithTrustedWorker({ runDir: run.runDir, frozen: run.frozen, trustRoot, approvalId, fixtureToken: stand.authToken, standPublicKey: stand.standPublicKey });
+  openWorkers.push(worker);
+  const candidate = worker.payload.verdict;
+  const published = publishCandidate(run.runDir, candidate);
+  return { ...run, chain, candidate, candidateSha256: published.candidateSha256, approvalId, approval, anchorIds: [], worker };
 }
 
 function anchorIdFor(env, suffix) {
@@ -175,7 +205,8 @@ function anchorIdFor(env, suffix) {
 
 async function signFor(env, suffix) {
   const anchorId = anchorIdFor(env, suffix);
-  const statement = await client.sign({ runDir: env.runDir, approvalId: env.approvalId, anchorId });
+  await client.registerVerificationKey(env.runId, env.worker.verificationPublicKey, env.worker.verificationPid);
+  const statement = await client.sign({ runDir: env.runDir, approvalId: env.approvalId, anchorId, attestation: env.worker.payload.attestation });
   return { anchorId, statement };
 }
 
@@ -199,25 +230,8 @@ function anchorFile(anchorId) {
   return path.join(trustRoot, 'anchors', anchorId + '.json');
 }
 
-function rawSignerRequest(request) {
-  return new Promise((resolve, reject) => {
-    const socket = net.connect(signer.pipePath);
-    let buffer = '';
-    socket.setEncoding('utf8');
-    socket.on('connect', () => socket.write(JSON.stringify(request) + '\n'));
-    socket.on('data', chunk => {
-      buffer += chunk;
-      const index = buffer.indexOf('\n');
-      if (index === -1) return;
-      socket.destroy();
-      try { resolve(JSON.parse(buffer.slice(0, index))); } catch (error) { reject(error); }
-    });
-    socket.on('error', reject);
-  });
-}
-
-test('candidate — ровно объект VerdictPolicy 0.1, durable через CREATE_NEW и body под хешем', () => {
-  const env = trustedRun('candidate');
+test('candidate — ровно объект VerdictPolicy 0.1, durable через CREATE_NEW и body под хешем', async () => {
+  const env = await trustedRun('candidate');
   assert.deepEqual(Object.keys(env.candidate).sort(), candidateKeys.slice().sort());
   assert.equal(Object.hasOwn(env.candidate, 'anchorId'), false);
   assert.equal(Object.hasOwn(env.candidate, 'approvalId'), false);
@@ -242,10 +256,10 @@ test('candidate — ровно объект VerdictPolicy 0.1, durable чере�
   assert.equal(readTerminalChoice(env.runDir), null);
 });
 
-test('collecting → candidate-ready: без выбора исхода verdict не пишется', () => {
+test('collecting → candidate-ready: без выбора исхода verdict не пишется', async () => {
   const run = makeRun('collecting');
   assert.equal(stateOf({ runDir: run.runDir, frozen: run.frozen }), 'collecting');
-  const chain = appendChain(run);
+  const chain = await appendChain(run);
   const candidate = passCandidate(run.frozen, chain.read.evidenceId);
   publishCandidate(run.runDir, candidate);
   const env = { ...run, candidateSha256: digest(candidate) };
@@ -260,7 +274,7 @@ test('collecting → candidate-ready: без выбора исхода verdict �
 });
 
 test('доверенный PASS: полная связка approval/consumption/снапшоты/цепочка/candidate', async () => {
-  const env = trustedRun('trusted-pass');
+  const env = await trustedRun('trusted-pass');
   const { anchorId, statement } = await signFor(env, 'trusted');
   const body = verifyAnchorStatement(trust, statement);
   assert.equal(body.domain, 'anchor-statement');
@@ -308,49 +322,72 @@ test('доверенный PASS: полная связка approval/consumption/
 
 test('V-10: подложный PASS без связки approval/consumption получает ANCHOR_BINDING_REJECTED', async () => {
   const run = makeRun('fake-pass');
-  const chain = appendChain(run);
+  const chain = await appendChain(run);
   const candidate = passCandidate(run.frozen, chain.read.evidenceId);
   publishCandidate(run.runDir, candidate);
   const fakeAnchor = nextId('anchor-fake');
-  await assert.rejects(client.sign({ runDir: run.runDir, approvalId: 'approval-does-not-exist', anchorId: fakeAnchor }), error => error.code === 'ANCHOR_BINDING_REJECTED');
+  await assert.rejects(client.sign({ runDir: run.runDir, approvalId: 'approval-does-not-exist', anchorId: fakeAnchor, attestation: {} }), error => error.code === 'ANCHOR_BINDING_REJECTED');
   assert.equal(fs.existsSync(anchorFile(fakeAnchor)), false);
   const mismatched = makeRun('fake-inputs');
-  const chainB = appendChain(mismatched);
+  const chainB = await appendChain(mismatched);
   publishCandidate(mismatched.runDir, passCandidate(mismatched.frozen, chainB.read.evidenceId));
   const { approval } = makeApproval(mismatched.frozen, { approvedInputsHash: digest({ forged: true }) });
   consume(approval, mismatched.frozen, mismatched.runId, { inputs: { forged: true } });
   const fakeAnchorB = nextId('anchor-fake');
-  await assert.rejects(client.sign({ runDir: mismatched.runDir, approvalId: approval.approvalId, anchorId: fakeAnchorB }), error => error.code === 'ANCHOR_BINDING_REJECTED');
+  await assert.rejects(client.sign({ runDir: mismatched.runDir, approvalId: approval.approvalId, anchorId: fakeAnchorB, attestation: {} }), error => error.code === 'ANCHOR_BINDING_REJECTED');
   assert.equal(fs.existsSync(anchorFile(fakeAnchorB)), false);
   const otherRun = makeRun('fake-consumption');
-  const chainC = appendChain(otherRun);
+  const chainC = await appendChain(otherRun);
   publishCandidate(otherRun.runDir, passCandidate(otherRun.frozen, chainC.read.evidenceId));
   const approvalC = makeApproval(otherRun.frozen);
   consume(approvalC.approval, otherRun.frozen, nextId('run-other'));
   const fakeAnchorC = nextId('anchor-fake');
-  await assert.rejects(client.sign({ runDir: otherRun.runDir, approvalId: approvalC.approvalId, anchorId: fakeAnchorC }), error => error.code === 'ANCHOR_BINDING_REJECTED');
+  await assert.rejects(client.sign({ runDir: otherRun.runDir, approvalId: approvalC.approvalId, anchorId: fakeAnchorC, attestation: {} }), error => error.code === 'ANCHOR_BINDING_REJECTED');
   assert.equal(fs.existsSync(anchorFile(fakeAnchorC)), false);
 });
 
 test('хеш candidate от вызывающего не принимается: протокол отвергает поле, подписант читает файл сам', async () => {
-  const env = trustedRun('caller-hash');
+  const env = await trustedRun('caller-hash');
   const anchorId = nextId('anchor-caller');
-  const response = await rawSignerRequest({ type: 'sign', runDir: env.runDir, approvalId: env.approvalId, anchorId, candidateSha256: 'ab'.repeat(32) });
-  assert.equal(response.ok, false);
-  assert.equal(response.code, 'CONTRACT_INVALID');
+  assert.throws(() => client.sign({ runDir: env.runDir, approvalId: env.approvalId, anchorId, candidateSha256: 'ab'.repeat(32), attestation: env.worker.payload.attestation }), error => error.code === 'CONTRACT_INVALID');
   assert.equal(fs.existsSync(anchorFile(anchorId)), false);
-  assert.throws(() => client.sign({ runDir: env.runDir, approvalId: env.approvalId, anchorId, candidateSha256: 'ab'.repeat(32) }), error => error.code === 'CONTRACT_INVALID');
-  assert.equal(fs.existsSync(anchorFile(anchorId)), false);
-  // raw-запрос без служебного id допустим: id не является обязательным полем протокола.
-  const noId = await rawSignerRequest({ type: 'sign', runDir: env.runDir, approvalId: env.approvalId, anchorId });
-  assert.equal(noId.ok, true);
-  const body = verifyAnchorStatement(trust, noId.statement);
-  assert.equal(body.candidateSha256, env.candidateSha256);
-  assert.equal(body.anchorId, anchorId);
+  await client.registerVerificationKey(env.runId, env.worker.verificationPublicKey, env.worker.verificationPid);
+  // Сырой кадр протокола по legacy named pipe: служебный id не обязателен, field candidateSha256 отвергается.
+  const legacy = startAnchorSigner({ trustRoot, secretsDir });
+  await legacy.ready;
+  const legacyClient = connectAnchorSigner(legacy.pipePath);
+  try {
+    await legacyClient.registerVerificationKey(env.runId, env.worker.verificationPublicKey, env.worker.verificationPid);
+    const socketRequest = request => new Promise((resolve, reject) => {
+      const socket = net.connect(legacy.pipePath);
+      let buffer = '';
+      socket.setEncoding('utf8');
+      socket.on('connect', () => socket.write(JSON.stringify(request) + '\n'));
+      socket.on('data', chunk => {
+        buffer += chunk;
+        const index = buffer.indexOf('\n');
+        if (index === -1) return;
+        socket.destroy();
+        try { resolve(JSON.parse(buffer.slice(0, index))); } catch (error) { reject(error); }
+      });
+      socket.on('error', reject);
+    });
+    const rejected = await socketRequest({ type: 'sign', runDir: env.runDir, approvalId: env.approvalId, anchorId, candidateSha256: 'ab'.repeat(32), attestation: env.worker.payload.attestation });
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.code, 'CONTRACT_INVALID');
+    const noId = await socketRequest({ type: 'sign', runDir: env.runDir, approvalId: env.approvalId, anchorId, attestation: env.worker.payload.attestation });
+    assert.equal(noId.ok, true);
+    const body = verifyAnchorStatement(trust, noId.statement);
+    assert.equal(body.candidateSha256, env.candidateSha256);
+    assert.equal(body.anchorId, anchorId);
+  } finally {
+    await legacyClient.close();
+    await legacy.close();
+  }
 });
 
 test('V-08: ключ owner не создаёт годный анкер', async () => {
-  const env = trustedRun('owner-key');
+  const env = await trustedRun('owner-key');
   const { statement } = await signFor(env, 'owner');
   const { signature, signatureAlgorithm, ...body } = statement;
   const forged = signTrustedDocument(ownerKey, { ...body, keyId: created.ownerKeyId });
@@ -360,16 +397,16 @@ test('V-08: ключ owner не создаёт годный анкер', async (
 });
 
 test('V-04/V-05: второе отличное заявление на runId — ANCHOR_CONFLICT, повтор тех же байт идемпотентен', async () => {
-  const env = trustedRun('anchor-twice');
+  const env = await trustedRun('anchor-twice');
   const first = await signFor(env, 'first');
-  await assert.rejects(client.sign({ runDir: env.runDir, approvalId: env.approvalId, anchorId: nextId('anchor-second') }), error => error.code === 'ANCHOR_CONFLICT');
-  const again = await client.sign({ runDir: env.runDir, approvalId: env.approvalId, anchorId: first.anchorId });
+  await assert.rejects(client.sign({ runDir: env.runDir, approvalId: env.approvalId, anchorId: nextId('anchor-second'), attestation: env.worker.payload.attestation }), error => error.code === 'ANCHOR_CONFLICT');
+  const again = await client.sign({ runDir: env.runDir, approvalId: env.approvalId, anchorId: first.anchorId, attestation: env.worker.payload.attestation });
   assert.deepEqual(again, first.statement);
   assert.equal(fs.existsSync(anchorFile(first.anchorId)), true);
 });
 
 test('V-07/V-11: выбор anchor переживает падение до verdict; бюджет заново не разыгрывается', async () => {
-  const env = trustedRun('crash-after-anchor');
+  const env = await trustedRun('crash-after-anchor');
   const { anchorId } = await signFor(env, 'crash');
   publishAnchorChoice(env, anchorId);
   assert.equal(stateOf(env), 'anchor-held');
@@ -385,7 +422,7 @@ test('V-07/V-11: выбор anchor переживает падение до verd
 });
 
 test('V-12: частично записанный terminal-choice блокирует PASS и не заменяется', async () => {
-  const env = trustedRun('torn-choice');
+  const env = await trustedRun('torn-choice');
   const { anchorId } = await signFor(env, 'torn');
   const choiceFile = path.join(env.runDir, 'trust', 'terminal-choice.json');
   fs.writeFileSync(choiceFile, '{"schemaVersion":"0.2.0","domain":"terminal-choice"');
@@ -400,11 +437,11 @@ test('V-12: частично записанный terminal-choice блокиру
   assert.equal(observed.passed, false);
   assert.equal(observed.state, 'inconsistent');
   assert.equal(stateOf(env), 'inconsistent');
-  await assert.rejects(client.sign({ runDir: env.runDir, approvalId: env.approvalId, anchorId: nextId('anchor-after-torn') }), error => error.code === 'ANCHOR_BINDING_REJECTED');
+  await assert.rejects(client.sign({ runDir: env.runDir, approvalId: env.approvalId, anchorId: nextId('anchor-after-torn'), attestation: env.worker.payload.attestation }), error => error.code === 'ANCHOR_BINDING_REJECTED');
 });
 
-test('D-01: исход anchor без подписанного анкера не пишет PASS', () => {
-  const env = trustedRun('d01-anchor-missing');
+test('D-01: исход anchor без подписанного анкера не пишет PASS', async () => {
+  const env = await trustedRun('d01-anchor-missing');
   const anchorId = nextId('anchor-never-signed');
   publishTerminalChoice(env.runDir, buildTerminalChoice({ outcome: 'anchor', candidateSha256: env.candidateSha256, anchorId }));
   assert.throws(() => publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot }), error => error.code === 'ANCHOR_MISSING');
@@ -419,7 +456,7 @@ test('D-01: исход anchor без подписанного анкера не 
 });
 
 test('D-01: удалённый анкер не превращает повторную публикацию в PASS', async () => {
-  const env = trustedRun('d01-anchor-removed');
+  const env = await trustedRun('d01-anchor-removed');
   const { anchorId } = await signFor(env, 'removed');
   publishAnchorChoice(env, anchorId);
   const published = publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot });
@@ -436,7 +473,7 @@ test('D-01: удалённый анкер не превращает повтор
 });
 
 test('D-01: подмена outcome в ветке существующего verdict не возвращает PASS', async () => {
-  const env = trustedRun('d01-outcome-swap');
+  const env = await trustedRun('d01-outcome-swap');
   const { anchorId } = await signFor(env, 'swap');
   publishAnchorChoice(env, anchorId);
   publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot });
@@ -448,7 +485,7 @@ test('D-01: подмена outcome в ветке существующего verd
 });
 
 test('два одновременных publishTerminalChoice: один CREATE_NEW, второй читает первый выбор', async () => {
-  const env = trustedRun('choice-race');
+  const env = await trustedRun('choice-race');
   const choices = [
     buildTerminalChoice({ outcome: 'anchor', candidateSha256: env.candidateSha256, anchorId: nextId('anchor-race-a') }),
     buildTerminalChoice({ outcome: 'anchor', candidateSha256: env.candidateSha256, anchorId: nextId('anchor-race-b') })
@@ -488,7 +525,7 @@ test('два одновременных publishTerminalChoice: один CREATE_N
 });
 
 test('подмена candidate после анкера не даёт PASS и не перезаписывается', async () => {
-  const env = trustedRun('candidate-tamper');
+  const env = await trustedRun('candidate-tamper');
   const { anchorId } = await signFor(env, 'tamper');
   publishAnchorChoice(env, anchorId);
   const candidateFile = path.join(env.runDir, 'trust', 'candidate.json');
@@ -502,11 +539,11 @@ test('подмена candidate после анкера не даёт PASS и н�
   assert.throws(() => publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot }), error => ['INTEGRITY_ERROR', 'EVIDENCE_MISSING', 'ANCHOR_CONFLICT'].includes(error.code));
   assert.equal(verdictItems(env.runDir).length, 0);
   assert.equal(fs.readFileSync(candidateFile).equals(kept), false);
-  await assert.rejects(client.sign({ runDir: env.runDir, approvalId: env.approvalId, anchorId: nextId('anchor-after-candidate') }), error => error.code === 'ANCHOR_BINDING_REJECTED' || error.code === 'ANCHOR_CONFLICT');
+  await assert.rejects(client.sign({ runDir: env.runDir, approvalId: env.approvalId, anchorId: nextId('anchor-after-candidate'), attestation: env.worker.payload.attestation }), error => error.code === 'ANCHOR_BINDING_REJECTED' || error.code === 'ANCHOR_CONFLICT');
 });
 
 test('подмена evidence chain ломает терминальный PASS', async () => {
-  const env = trustedRun('chain-tamper');
+  const env = await trustedRun('chain-tamper');
   const { anchorId } = await signFor(env, 'chain');
   publishAnchorChoice(env, anchorId);
   publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot });
@@ -522,7 +559,7 @@ test('подмена evidence chain ломает терминальный PASS',
 });
 
 test('подмена финального verdict после публикации не показывается как PASS', async () => {
-  const env = trustedRun('verdict-tamper');
+  const env = await trustedRun('verdict-tamper');
   const { anchorId } = await signFor(env, 'verdict');
   publishAnchorChoice(env, anchorId);
   publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot });
@@ -537,9 +574,9 @@ test('подмена финального verdict после публикаци�
 });
 
 test('чужой runId: candidate и анкер не переносятся между прогонами', async () => {
-  const first = trustedRun('run-a');
+  const first = await trustedRun('run-a');
   const second = makeRun('run-b');
-  appendChain(second);
+  await appendChain(second);
   assert.throws(() => publishCandidate(second.runDir, first.candidate), error => error.code === 'CONTRACT_INVALID');
   const { anchorId, statement } = await signFor(first, 'foreign');
   publishAnchorChoice(first, anchorId);
@@ -558,7 +595,7 @@ test('чужой runId: candidate и анкер не переносятся ме
 });
 
 test('V-09: гонка бюджета и позднего анкера — один INCONCLUSIVE, анкер ANCHOR_UNLINKED', async () => {
-  const env = trustedRun('budget-race');
+  const env = await trustedRun('budget-race');
   const profileFile = path.join(trustRoot, 'profile.json');
   fs.writeFileSync(profileFile, JSON.stringify({ schemaVersion: '0.2.0', domain: 'trust-profile', anchorBudgetMs: 120 }) + '\n');
   try {
@@ -569,11 +606,12 @@ test('V-09: гонка бюджета и позднего анкера — од�
     const latePromise = new Promise((resolve, reject) => { resolveLate = resolve; rejectLate = reject; });
     const delayed = {
       sign(request) {
-        setTimeout(() => { client.sign(request).then(resolveLate, rejectLate); }, 250);
+        setTimeout(() => { client.sign({ ...request, attestation: env.worker.payload.attestation }).then(resolveLate, rejectLate); }, 250);
         return latePromise;
       }
     };
-    const outcome = await anchorWithinBudget({ signer: delayed, trustRoot, runDir: env.runDir, approvalId: env.approvalId, anchorId, budgetMs: 1 });
+    await client.registerVerificationKey(env.runId, env.worker.verificationPublicKey, env.worker.verificationPid);
+    const outcome = await anchorWithinBudget({ signer: delayed, trustRoot, runDir: env.runDir, approvalId: env.approvalId, anchorId, attestation: env.worker.payload.attestation, budgetMs: 1 });
     assert.equal(outcome.ok, false);
     assert.equal(outcome.code, 'ANCHOR_TIMEOUT');
     assert.equal(outcome.budgetMs, 120);
@@ -626,9 +664,9 @@ test('бюджет анкера: по умолчанию 5000, диапазон 
   assert.equal(loadAnchorBudgetMs(budgetTrust), 60000);
 });
 
-test('fail-without-anchor публикует один бизнес-FAIL без анкера', () => {
+test('fail-without-anchor публикует один бизнес-FAIL без анкера', async () => {
   const run = makeRun('business-fail');
-  const chain = appendChain(run);
+  const chain = await appendChain(run);
   const candidate = businessCandidate(run.frozen, chain.read.evidenceId, 'FAIL', 'BUSINESS_INVARIANT_VIOLATED');
   const published = publishCandidate(run.runDir, candidate);
   const env = { ...run, candidateSha256: published.candidateSha256 };
@@ -645,9 +683,9 @@ test('fail-without-anchor публикует один бизнес-FAIL без �
   assert.equal(observed.anchorStatus, 'ANCHOR_MISSING');
 });
 
-test('inconclusive-without-anchor публикует ровно байты бизнес-INCONCLUSIVE', () => {
+test('inconclusive-without-anchor публикует ровно байты бизнес-INCONCLUSIVE', async () => {
   const run = makeRun('business-inconclusive');
-  const chain = appendChain(run);
+  const chain = await appendChain(run);
   const candidate = businessCandidate(run.frozen, chain.read.evidenceId, 'INCONCLUSIVE', 'WORKER_LOST');
   const published = publishCandidate(run.runDir, candidate);
   const env = { ...run, candidateSha256: published.candidateSha256 };
@@ -664,7 +702,7 @@ test('inconclusive-without-anchor публикует ровно байты би�
 });
 
 test('второй терминальный verdict запрещён; повторный RECONCILE читает первый', async () => {
-  const env = trustedRun('second-verdict');
+  const env = await trustedRun('second-verdict');
   const { anchorId } = await signFor(env, 'second');
   publishAnchorChoice(env, anchorId);
   publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot });
