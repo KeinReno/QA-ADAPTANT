@@ -5,8 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { caseMain, makeWorld, check, checkNoMutation, trustedContext, runWithContext, writeTrustProfile, sleep, connectSigner, evidenceOf } from './_w2.mjs';
 
-await caseMain({ id: 'V-09', title: 'Гонка бюджета и уже созданного анкера PASS', async body({ modules, cleanup }) {
-  const checks = [];
+await caseMain({ id: 'V-09', title: 'Гонка бюджета и уже созданного анкера PASS', async body({ modules, cleanup, checks }) {
   const world = await makeWorld(modules);
   cleanup(world.cleanup);
   writeTrustProfile(world.trustRoot, 1500);

@@ -213,40 +213,52 @@ const checks = {
 };
 
 // Строки, реализованные отдельными воспроизводимыми скриптами tests/redteam/rt2-*.mjs.
-// Каркас вызывает скрипт с --target=<проверяемая ветка>, парсит JSON-вердикт и exit code.
+// F-WP08-05: PASS строки выдаётся ТОЛЬКО по строко-специфичной проверке этого сценария,
+// а не по общему вердикту скрипта. Один скрипт может обслуживать несколько строк (алиасинг):
+// у каждой строки свой набор обязательных check-name, которые должны быть ok=true.
 const SCRIPT_CASES = {
-  'B-01': 'rt2-b01-registry.mjs',
-  'B-03': 'rt2-b03-effects-mismatch.mjs',
-  'B-04': 'rt2-b04-fixture-mismatch.mjs',
-  'B-05': 'rt2-b05-http-200-existing.mjs',
-  'E-01': 'rt2-attack-env-substitution.mjs',
-  'E-02': 'rt2-e02-unknown-environment.mjs',
-  'E-03': 'rt2-e03-generation-change.mjs',
-  'E-05': 'rt2-e05-registry-unreadable.mjs',
-  'E-06': 'rt2-e06-dev-environment.mjs',
-  'E-07': 'rt2-attack-env-substitution.mjs',
-  'V-01': 'rt2-attack-false-pass.mjs',
-  'V-02': 'rt2-attack-false-pass.mjs',
-  'V-03': 'rt2-v03-signer-unavailable.mjs',
-  'V-04': 'rt2-v04-two-anchors.mjs',
-  'V-07': 'rt2-v07-anchor-before-verdict.mjs',
-  'V-08': 'rt2-v08-owner-as-anchor.mjs',
-  'V-09': 'rt2-v09-budget-race.mjs',
-  'V-11': 'rt2-v07-anchor-before-verdict.mjs',
-  'L-03': 'rt2-l03-crash-after-consumption.mjs',
-  'L-06': 'rt2-l06-used-approval.mjs',
-  'L-08': 'rt2-l08-old-start-rejects-trust.mjs'
+  'B-01': { script: 'rt2-b01-registry.mjs', checks: ['доверенный вход отказал BLOCKED CONTRACT_INVALID'] },
+  'B-03': { script: 'rt2-b03-effects-mismatch.mjs', checks: ['доверенный вход отказал BLOCKED CONTRACT_INVALID'] },
+  'B-04': { script: 'rt2-b04-fixture-mismatch.mjs', checks: ['доверенный вход отказал BLOCKED CONTRACT_INVALID/AUTH_UNAVAILABLE'] },
+  'B-05': { script: 'rt2-b05-http-200-existing.mjs', checks: ['доверенный прогон не даёт PASS на HTTP 200'] },
+  // E-01/E-07 обслуживаются одним скриптом, но подтверждаются разными проверками.
+  'E-01': { script: 'rt2-attack-env-substitution.mjs', checks: ['(A) зеркало получило запрос аттестации, но не POST'] },
+  'E-07': { script: 'rt2-attack-env-substitution.mjs', checks: ['(B) сервер без ключа не получил POST'] },
+  'E-02': { script: 'rt2-e02-unknown-environment.mjs', checks: ['доверенный вход отказал BLOCKED ENVIRONMENT_CHANGED/CONTRACT_INVALID'] },
+  'E-03': { script: 'rt2-e03-generation-change.mjs', checks: ['доверенный вход отказал BLOCKED ENVIRONMENT_CHANGED'] },
+  'E-04': { script: 'rt2-e04-credential-ref.mjs', checks: ['секрет не выдан: reasonCode среда/credentialRef'] },
+  'E-05': { script: 'rt2-e05-registry-unreadable.mjs', checks: ['фактический код отказа зафиксирован'] },
+  'E-06': { script: 'rt2-e06-dev-environment.mjs', checks: ['доверенный вход отказал BLOCKED ENVIRONMENT_CHANGED/CONTRACT_INVALID'] },
+  // V-01/V-02 обслуживаются одним скриптом, ожидания разделены по строкам.
+  'V-01': { script: 'rt2-attack-false-pass.mjs', checks: ['(V-01) подменённый терминальный коммит не даёт PASS при старом анкере'] },
+  'V-02': { script: 'rt2-attack-false-pass.mjs', checks: ['(V-02) подменённый verdict после публикации не даёт PASS'] },
+  'V-03': { script: 'rt2-v03-signer-unavailable.mjs', checks: ['выбран исход budget-inconclusive'] },
+  'V-04': { script: 'rt2-v04-two-anchors.mjs', checks: ['второе заявление для runId отвергнуто ANCHOR_CONFLICT'] },
+  'V-07': { script: 'rt2-v07-anchor-before-verdict.mjs', checks: ['дописан ровно один verdict'] },
+  // V-11: падение процесса должно происходить ПОСЛЕ записи terminal-choice. Сценарий
+  // rt2-v07 падает до выбора исхода и создаёт его вручную, поэтому строку подтвердить нечем.
+  'V-11': { script: 'rt2-v07-anchor-before-verdict.mjs', unverifiable: 'нет сценария, где terminal-choice записан до падения процесса' },
+  'V-08': { script: 'rt2-v08-owner-as-anchor.mjs', checks: ['owner-подпись анкера отвергнута ANCHOR_SIGNATURE_INVALID'] },
+  'V-09': { script: 'rt2-v09-budget-race.mjs', checks: ['выбран один исход budget-inconclusive'] },
+  'L-03': { script: 'rt2-l03-crash-after-consumption.mjs', checks: ['расход связан с runId'] },
+  'L-06': { script: 'rt2-l06-used-approval.mjs', checks: ['первый доверенный прогон PASS'] },
+  'L-08': { script: 'rt2-l08-old-start-rejects-trust.mjs', checks: ['start() с аргументом'] }
 };
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
 
-function runScriptCase(relative) {
-  const script = path.join(here, relative);
+function runScriptCase(id) {
+  const spec = SCRIPT_CASES[id];
+  const script = path.join(here, spec.script);
   const child = spawnSync(process.execPath, [script, '--target=' + ROOT, '--pinned', '--sha=' + revision], { encoding: 'utf8', windowsHide: true, timeout: 180000 });
   let parsed = null;
   try { const start = (child.stdout || '').indexOf('{'); parsed = start === -1 ? null : JSON.parse(child.stdout.slice(start)); } catch { parsed = null; }
-  if (!parsed) return { status: 'FAIL', evidence: { exit: child.status, stderr: String(child.stderr || '').slice(0, 400) } };
-  const status = parsed.verdict === 'PASS' ? 'PASS' : parsed.verdict === 'INCONCLUSIVE' ? 'UNVERIFIABLE' : 'FAIL';
-  return { status, evidence: { script: relative, target: parsed.target || null, checks: parsed.checks } };
+  if (!parsed) return { status: 'FAIL', reason: 'нераспознанный JSON-вердикт скрипта', evidence: { exit: child.status, stderr: String(child.stderr || '').slice(0, 400) } };
+  const checks = Array.isArray(parsed.checks) ? parsed.checks : [];
+  const missing = (spec.checks || []).filter(fragment => !checks.some(check => check.ok === true && String(check.name || '').includes(fragment)));
+  if (parsed.verdict === 'INCONCLUSIVE') return { status: 'UNVERIFIABLE', reason: 'скрипт-проверка вернул INCONCLUSIVE', evidence: { script: spec.script } };
+  if (parsed.verdict !== 'PASS') return { status: 'FAIL', reason: 'сценарий не прошёл: ' + (checks.filter(check => !check.ok).map(check => check.name).join('; ') || parsed.verdict), evidence: { script: spec.script, checks } };
+  if (missing.length) return { status: 'FAIL', reason: 'строко-специфичная проверка не подтверждена: ' + missing.join('; '), evidence: { script: spec.script, expectedChecks: spec.checks, confirmed: spec.checks.filter(f => !missing.includes(f)) } };
+  return { status: 'PASS', reason: null, evidence: { script: spec.script, target: parsed.target || null, confirmedChecks: spec.checks } };
 }
 
 // Таблица матрицы: needs — обязательные файлы/экспорты на проверяемой ревизии.
@@ -305,11 +317,15 @@ for (const [id, subject, needs] of CASES) {
     status = 'UNVERIFIABLE';
     reason = 'на ревизии отсутствуют: ' + missing.join(', ');
     evidence = { missing };
+  } else if (SCRIPT_CASES[id]?.unverifiable) {
+    status = 'UNVERIFIABLE';
+    reason = SCRIPT_CASES[id].unverifiable;
+    evidence = { script: SCRIPT_CASES[id].script };
   } else if (SCRIPT_CASES[id]) {
     try {
-      const result = runScriptCase(SCRIPT_CASES[id]);
+      const result = runScriptCase(id);
       status = result.status; evidence = result.evidence;
-      if (status === 'UNVERIFIABLE') reason = 'скрипт-проверка вернул INCONCLUSIVE (ветка менялась или проверка не завершилась)';
+      if (result.reason) reason = result.reason;
     } catch (error) {
       status = 'FAIL'; evidence = { message: String(error.message || error) };
     }

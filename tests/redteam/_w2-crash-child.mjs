@@ -27,7 +27,9 @@ const signer = {
 };
 const context = trusted.createTrustContext({
   trust, trustRoot: request.trustRoot, approvalId: request.approvalId, approval, issuer, subject,
-  sid: request.sid, standPublicKey: request.standPublicKey, signer
+  sid: request.sid, standPublicKey: request.standPublicKey, signer,
+  // E-04: секрет выдаётся только по credentialRef подписанной записи среды.
+  credentials: request.credentials || null, fixtureToken: request.fixtureToken || null
 });
 try {
   const result = await runModule.start(bundle, { root: request.root, trust: context, fixtureToken: request.fixtureToken });

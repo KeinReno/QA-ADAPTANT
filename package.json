@@ -8,6 +8,7 @@
     "test": "node scripts/run-tests.mjs gate",
     "test:parallel": "node scripts/run-tests.mjs parallel",
     "test:races": "node scripts/run-tests.mjs races",
+    "test:attacks": "node tests/redteam/run-all.mjs && node tests/redteam/run-all-w2.mjs",
     "schemas": "node packages/contracts/export.mjs",
     "demo": "node scripts/demo-local.mjs"
   },

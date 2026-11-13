@@ -25,6 +25,7 @@ await caseMain({ id: 'V-04', title: 'Два заявления анкера на
     targetDir: target.dir, trustRoot: world.trustRoot, approvalId: approval.approvalId,
     issuerFile, subjectFile, sid: world.sid, standPublicKey: world.stand.standPublicKey,
     pipePath: world.signer.pipePath, root: world.root, fixtureToken: world.stand.authToken,
+    credentials: world.record ? { [world.record.credentialRef]: world.stand.authToken } : {},
     bundleFile, anchorFile, errorFile, resultFile
   }));
   const childScript = path.join(path.dirname(fileURLToPath(import.meta.url)), '_w2-crash-child.mjs');
