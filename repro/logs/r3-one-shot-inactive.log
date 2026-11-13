@@ -1,0 +1,25 @@
+{
+  "repro": "R3",
+  "sha": "1a510a5d5929534d400dc965f58c78cf468bc270",
+  "withoutRunId": {
+    "first": 201,
+    "second": 201,
+    "mutationCount": 2
+  },
+  "withRunId": {
+    "first": 201,
+    "second": 403,
+    "secondError": "token_revoked",
+    "mutationCount": 1
+  },
+  "workerSendsRunIdHeader": false,
+  "workerHeaders": [
+    "authorization",
+    "idempotency-key",
+    "method",
+    "path",
+    "body"
+  ],
+  "oneShotInactiveOnTrustedPath": true
+}
+EXIT=0

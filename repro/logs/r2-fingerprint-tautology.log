@@ -1,0 +1,24 @@
+{
+  "repro": "R2",
+  "sha": "1a510a5d5929534d400dc965f58c78cf468bc270",
+  "verdict": "PASS",
+  "reasonCode": "NONE",
+  "manifestFingerprint": "445cea94f68043fac612a7264ef999087795ac17c4d49debb1db88f1d4f6fa4f",
+  "standFingerprintAfter": "445cea94f68043fac612a7264ef999087795ac17c4d49debb1db88f1d4f6fa4f-changed",
+  "fingerprintDrift": true,
+  "postIndex": 5,
+  "environmentReadsAfterPost": 0,
+  "requestLog": [
+    "POST /attest",
+    "GET /environment",
+    "POST /attest",
+    "POST /attest",
+    "POST /attest",
+    "POST /records",
+    "POST /attest",
+    "GET /records",
+    "POST /attest"
+  ],
+  "tautologyConfirmed": true
+}
+EXIT=0

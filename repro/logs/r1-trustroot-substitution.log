@@ -1,0 +1,34 @@
+{
+  "repro": "R1",
+  "sha": "1a510a5d5929534d400dc965f58c78cf468bc270",
+  "steps": {
+    "originalRoot": {
+      "ownerKeyId": "2da5e37bf72485ae5a13affb696f29f8bf05f4f24332862e395c26a12e9bdcca",
+      "anchorKeyId": "911e0df6ecf3d1400b5d9cf981df30f3bb3bb7d52e2e882314c3aad4d955e2bc"
+    },
+    "originalPrincipalVerifies": "victim-operator",
+    "substitutedRoot": {
+      "ownerKeyId": "f7e77f49c844ff0326b7837e2656bad1dc717ec18d06009e892aa108e3c1379c",
+      "anchorKeyId": "bd5d494a01c3a651a9508352e0d4b40aa5e93cdd8be44dcea7bbb9b71a0a5fa2"
+    },
+    "rootTakeover": true,
+    "victimPrincipalRejected": "APPROVAL_SIGNATURE_INVALID",
+    "attackerPrincipalVerifies": "attacker-operator",
+    "forgedRun": {
+      "verdict": "PASS",
+      "reasonCode": "NONE",
+      "runId": "r1-forged-8e0e8abe"
+    },
+    "observed": {
+      "trusted": true,
+      "passed": true,
+      "verdict": "PASS",
+      "anchorId": "anchor-3e8f4475-125d-49ba-b0e4-be142255a098"
+    },
+    "rogueStandMutations": 1,
+    "victimStandMutations": 0
+  },
+  "falseTrustedPass": true,
+  "classification": "Принимаемый остаточный риск WP-00 (04-THREAT-MODEL.md:18); в перечне остаточных рисков A1–A3 явно не перечислен. Для Dev/ЦИЗ недопустимо."
+}
+EXIT=0

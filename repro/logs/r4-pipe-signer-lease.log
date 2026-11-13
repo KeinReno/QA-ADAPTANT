@@ -1,0 +1,15 @@
+{
+  "repro": "R4",
+  "sha": "1a510a5d5929534d400dc965f58c78cf468bc270",
+  "pipePath": "\\\\.\\pipe\\qa-adaptant-anchor-53fd7c358c78df07",
+  "foreignKeyRegistration": {
+    "accepted": true,
+    "keyId": "67d51a5354bbaebac5deebdd8ff95ff8d5d766cb1e061340d71a14377e104088"
+  },
+  "signWithoutLease": {
+    "rejected": true,
+    "code": "ANCHOR_BINDING_REJECTED",
+    "message": "INCOMPLETE_RUN: снимок scenario недоступен"
+  },
+  "leaseNotRequiredInPipeMode": true
+}
