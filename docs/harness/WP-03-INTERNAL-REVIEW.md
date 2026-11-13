@@ -213,3 +213,67 @@ attestation.error во всех фазах), D-5 (проекция ENVIRONMENT_R
 - Этот отчёт добавлен отдельным коммитом в ветку ревьюера feat/adaptant-02-wp04-environment
   (worktree wp04) и не является продуктивным кодом WP-03.
 - Точный HEAD ветки wp04 после коммита отчёта передан Lead в сообщении.
+
+## 9. Повторная проверка (fix round)
+
+Проверяемая ревизия: ветка feat/adaptant-02-wp03-policy, HEAD 0731f8fab621ee470eb13eae25a96a40db829532
+(исправления 104ae7c9b4dc05233a45dc7708b4af0232cc3d1c, отчёт 0731f8f). Сверка байтов с integration:
+packages/trust/policy.mjs = 0de011406dd08a507bf2b4c5c75009ae62318280,
+tests/trust-policy.test.mjs = 1f3dd31943d0341bc0904406f8c19bcc01420e17; в wp03 и integration совпадают.
+Чтение — только просмотр; продуктовый код не изменялся; wp03 и integration worktree после прогонов чистые.
+
+### 9.1. Метод повторной проверки
+
+1. Прочитан полный diff 0099653..104ae7c по policy.mjs и tests/trust-policy.test.mjs; прочитан
+   docs/changes/007-environment-revocation-and-read.md (решение Lead по D-2) и обновлённый WP-03-REPORT.md.
+2. Независимо прогон tests/trust-policy.test.mjs: в wp03 (на 0731f8f) и в integration (те же blob).
+3. Повторены ровно те же адверсариальные пробы, что в первой проверке (52 проверки, скрипт во временном
+   каталоге вне репозитория, импорт policy.mjs из integration): D-1…D-5 плюс регрессия счастливых путей,
+   INDETERMINATE, отказов, мусорных facts, детерминизма и чистоты.
+4. Отдельно проверено, что исправления не ослабили прежние запреты: dispatch без approval/среды/аттестации,
+   kind=dev, смена поколения, отмена, уже записанный intent — по-прежнему DENY.
+
+### 9.2. Фактические результаты
+
+| Команда | Факт |
+|---|---|
+| node --test --test-concurrency=1 --test-timeout=45000 tests/trust-policy.test.mjs (wp03, HEAD 0731f8f) | 106 tests / 106 pass / 0 fail, exit 0, ~0.29 s |
+| то же в integration worktree (blob 0de0114/1f3dd31) | 106 tests / 106 pass / 0 fail, exit 0, ~0.40 s |
+| git status --porcelain (wp03, integration; до/после) | пусто; worktree не изменены |
+| собственные адверсариальные пробы | pass=52, fail=0, exit 0 |
+| статическая проверка чистоты | импорты только node:crypto (randomUUID) и ../core/canonical.mjs; запрещённых токенов (fs/net/http/child_process/подпись/ключи/consumeDispatch) нет |
+
+### 9.3. Закрытие дефектов (проверено фактически, не по заявлению)
+
+| ID | Что проверено повторно | Фактический результат |
+|---|---|---|
+| D-1 | bad SID + roles=['verifier']; null SID + bad role; bad SID + owner+runner; отзыв Principal раньше SID; валидный SID + bad role | DENY CALLER_UNAUTHENTICATED (3 комбинации); DENY PRINCIPAL_REVOKED; DENY ROLE_DENIED при верном SID — порядок §5.3 восстановлен, старый порядок «principal раньше SID» сохранён. ЗАКРЫТ |
+| D-2 | observe/reconcile/publish × status revoked/disabled и environment.error=ENVIRONMENT_REVOKED; dispatch revoked | DENY ENVIRONMENT_REVOKED во всех случаях; решение Lead зафиксировано docs/changes/007 (строгий вариант 0.2: отзыв запрещает и новое доверенное чтение; доказательства неизменяемы; 0.1-вход не затронут). ЗАКРЫТ |
+| D-3 | consumption из 6 полей без bodySha256: observe/reconcile/dispatch; повреждённый bodySha256; валидный расход | DENY CONSUMPTION_INCOMPLETE (в т.ч. чтение); повреждённый хеш — CONSUMPTION_INCOMPLETE; валидный — observe ALLOW TRUST_OK, dispatch APPROVAL_CONSUMED. ЗАКРЫТ |
+| D-4 | неизвестный attestation.error в dispatch/preflight/observe/reconcile/publish; известная ошибка в чтении; известная ошибка в dispatch | неизвестный код → DENY CONTRACT_INVALID во всех фазах; ENVIRONMENT_ATTESTATION_FAILED/ENVIRONMENT_UNAVAILABLE в observe → ALLOW TRUST_OK (живая аттестация для чтения не требуется); в dispatch → DENY ENVIRONMENT_ATTESTATION_FAILED. ЗАКРЫТ |
+| D-5 | projectToVerdict на реальных решениях decide для revoked/disabled: dispatch/preflight, observe/reconcile/publish | dispatch → BLOCKED ENVIRONMENT_CHANGED; observe/reconcile/publish → INCONCLUSIVE ENVIRONMENT_CHANGED; строки добавлены в таблицу проекции тестов. ЗАКРЫТ |
+
+### 9.4. Регрессия и остаточные наблюдения
+
+- Счастливые пути: dispatch/preflight → ALLOW TRUST_OK consume-dispatch; observe/reconcile/publish →
+  ALLOW TRUST_OK do-not-dispatch; чтение при смене поколения стенда всё ещё ALLOW (P-03), dispatch при
+  смене поколения — DENY ENVIRONMENT_ATTESTATION_FAILED.
+- Неопределённость: trustStore недоступен + испорченный principal → INDETERMINATE TRUST_STORE_UNAVAILABLE
+  (приоритет 1 не сломан); approval отсутствует → APPROVAL_MISSING; dispatch без аттестации → DENY
+  ENVIRONMENT_ATTESTATION_FAILED; kind=dev → ENVIRONMENT_KIND_DENIED; отмена/уже записанный intent — DENY.
+- Мусорные facts → DENY CONTRACT_INVALID без исключений; facts не мутируются; effect/reasonCode
+  детерминированы, decisionId разный.
+- Новых дефектов повторная проверка не выявила.
+- O-1 (randomUUID при формулировке «без криптографии»), O-2 (projectToVerdict сверх §5.3) и O-3
+  (проекция MUTATION_ALREADY_RECORDED/APPROVAL_CONSUMED после intent) остаются наблюдениями для
+  фиксации Lead'ом; они не влияют на D-1…D-5 и не дают ложного ALLOW. O-4 (тестовые пробелы) закрыт
+  для D-1/D-3/D-4/D-5; по O-3 явного теста по-прежнему нет.
+
+### 9.5. Вердикт повторной проверки
+
+ACCEPT. D-1…D-5 закрыты фактически (код + регрессии + мои независимые пробы), 106/106 тестов зелёные,
+интеграционный и wp03 worktree не изменялись. Безопасных обходов, ложного ALLOW/PASS или второго POST
+повторная проверка не нашла. Приёмку пакета как такового подтверждает Lead; это независимое внутреннее
+ревью, а не внешний аудит.
+
+Текущий HEAD ветки ревьюера wp04 после коммита этого раздела передан Lead в сообщении.
