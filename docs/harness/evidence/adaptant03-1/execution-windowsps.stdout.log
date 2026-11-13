@@ -1,0 +1,18 @@
+✔ execution contracts reject invalid transitions, dependency cycles and model-invented privileges (702.527ms)
+✔ TaskStore preserves exact request, versions plans immutably and verifies the journal chain (4539.758ms)
+✔ concurrent duplicate planning transitions serialize; recovery never redispatches (2104.8402ms)
+✔ recovery isolates corrupt journals and blocks an active task whose immutable plan is missing (3243.7402ms)
+✔ mock planner provenance is explicit and unsupported plan remains blocked without a run (3272.0013ms)
+✔ missing provider and malformed planner response fail closed (4239.0184ms)
+✔ owner approval is tied to the current plan version; plan approval is not an execution verdict (9526.4398ms)
+✔ bounded Planner response enforces stream limits; timeout and oversized provider output block the task (5217.5355ms)
+✔ owner approval compare-and-transition rejects a stale decision after concurrent replanning (2871.6611ms)
+✔ TaskStore rejects PASS without trusted evidence bound to every required step (4678.0244ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 45676.1626
