@@ -197,3 +197,119 @@ Smoke каркаса против уже собранной интеграцио
 - `tests/redteam/rt-01…rt-16-*.mjs` — 16 воспроизводимых атак/проверок с JSON-вердиктом и exit code;
 - `tests/redteam/run-all.mjs` — агрегатор; `tests/redteam/run-matrix.mjs` — каркас матрицы E/V/L/B;
 - `docs/harness/REDTEAM-BASELINE.md`, `docs/harness/REDTEAM-REPORT.md` — этот отчёт и фиксация базы.
+
+## 9. ВОЛНА 2 — проверка интеграции 0.2 (WP-03/04/05/06)
+
+Все факты ниже — собственные прогоны Red Team на Windows. Продуктовый код интеграции не менялся.
+Каждый скрипт волны 2 работает на **закреплённом снимке** HEAD+diff целевой ветки (копия в %TEMP%,
+junction на node_modules); если дерево меняется в момент снятия снимка — вердикт INCONCLUSIVE, а не PASS.
+
+### 9.1. Ревизия и общее состояние
+
+| Параметр | Значение |
+|---|---|
+| Закреплённая ревизия интеграции | `98f09ebda1c9af1fde907f79d83f4abebdb8bb39` |
+| Снимок | `%TEMP%\qa-rt-matrix-pin-9c429b93758595d2` (tracked diff пуст) |
+| Изменения интеграции во время волны | `399d441 → 8be5b7f → 094753b → b57962b → 8674816 → 98f09eb` (результаты привязаны к 98f09eb) |
+| `node tests/redteam/run-all-w2.mjs` | **24 из 24 PASS**, exit 0, суммарно ~4 мин |
+| `node tests/redteam/run-matrix.mjs <integration>` | 34 строки: **24 PASS, 10 TODO, 0 FAIL, 0 PARTIAL, 0 UNVERIFIABLE** |
+
+Итог: на 98f09eb **подтверждённых P0/P1 нет**. GAP-01 и GAP-02 закрыты фактически; R-02 закрыт;
+R-01 остаётся открытым P2; два наблюдения P3 (§9.5).
+
+### 9.2. Матрица E/V/L/B по строкам (PASS / TODO)
+
+**PASS (24 строки).** Для каждой — отдельный воспроизводимый скрипт с JSON-вердиктом и exit code.
+
+| ID | Скрипт | Что подтверждено фактически |
+|---|---|---|
+| E-01 | rt2-attack-env-substitution | зеркало с копией environmentId/fingerprint и старой аттестации на том же origin → BLOCKED ENVIRONMENT_CHANGED; аттестация запрошена, POST нет |
+| E-02 | rt2-e02-unknown-environment | environmentId вне реестра → BLOCKED ENVIRONMENT_CHANGED, 0 POST, нет intent |
+| E-03 | rt2-e03-generation-change | поколение реестра 1 против живого 2 → BLOCKED ENVIRONMENT_CHANGED, 0 POST |
+| E-05 | rt2-e05-registry-unreadable | повреждённая запись поколения → fail-closed BLOCKED CONTRACT_INVALID, 0 POST; битый owner.pub → TRUST_STORE_UNAVAILABLE до старта (нюанс проекции — OBS-03) |
+| E-06 | rt2-e06-dev-environment | kind=dev при active → BLOCKED (PDP ENVIRONMENT_KIND_DENIED), 0 POST, только 127.0.0.1 |
+| E-07 | rt2-attack-env-substitution | процесс без ключа стенда (нет /attest) → BLOCKED, route.continue/POST нет |
+| E-08 | run-matrix (built-in) | второй bind живого стенда → EADDRINUSE, стенд отвечает; WP-04 аттестация присутствует |
+| V-01 | rt2-attack-false-pass | подмена терминального коммита evidence при старом анкере → observeTrusted не PASS |
+| V-02 | rt2-attack-false-pass | подмена verdict после публикации → observeTrusted не PASS |
+| V-03 | rt2-v03-signer-unavailable | подписант недоступен дольше бюджета → один INCONCLUSIVE EVIDENCE_MISSING, анкера нет, повторное наблюдение не PASS |
+| V-04 | rt2-v04-two-anchors | второе заявление на тот же runId → ANCHOR_CONFLICT, первый анкер сохранён, PASS не появляется |
+| V-07 | rt2-v07-anchor-before-verdict | анкер+выбор записаны, verdict нет → дописан ровно один verdict, равный candidate; повтор не создаёт второй |
+| V-08 | rt2-v08-owner-as-anchor | owner-подпись анкера → ANCHOR_SIGNATURE_INVALID; observeTrusted не PASS; после восстановления PASS |
+| V-09 | rt2-v09-budget-race | анкер создан, ответ после бюджета → один INCONCLUSIVE, ANCHOR_UNLINKED, перехода в PASS и ANCHOR_CONFLICT нет |
+| V-11 | rt2-v07-anchor-before-verdict | выбор anchor записан, verdict нет → ровно выбранный candidate, бюджет заново не разыгрывается |
+| L-03 | rt2-l03-crash-after-consumption | падение после consumption до POST (dropIntentAck): расход есть, POST нет; reconcile без нового dispatch; новая попытка требует нового approval |
+| L-06 | rt2-l06-used-approval | повтор использованного approval → APPROVAL_REPLAY; повторное закрепление approvalId отвергнуто; второй старт 0 POST |
+| L-07 | run-matrix (built-in) | неполный расход после CREATE_NEW не заменяется, ACK нет |
+| L-08 | rt2-l08-old-start-rejects-trust | старый start() отвергает trustRoot/approvalId/approval/standPublicKey/signerPipe/adapter (CONTRACT_INVALID), runDir/consumption не созданы, approval issued |
+| L-09 | run-matrix (built-in) | два процесса один approval → один ACK и один полный файл, второй APPROVAL_REPLAY |
+| B-01 | rt2-b01-registry | операция вне реестра 0.1 → BLOCKED CONTRACT_INVALID, 0 POST |
+| B-03 | rt2-b03-effects-mismatch | набор эффектов approval ≠ операции → BLOCKED CONTRACT_INVALID, 0 POST |
+| B-04 | rt2-b04-fixture-mismatch | fixtureId в approval ≠ снимку → BLOCKED CONTRACT_INVALID, объект B не создан |
+| B-05 | rt2-b05-http-200-existing | заранее созданный объект, POST 200 → не PASS (INCONCLUSIVE RESULT_UNCONFIRMED), mutationCount не растёт |
+
+**TODO (10 строк) — на 98f09eb не проверены, требуют отдельного harness (не «всё ок»):**
+
+| ID | Почему TODO |
+|---|---|
+| E-04 | нужен адаптер выдачи секрета по credentialRef и проверка, что секрет другой среды не выдан; путь выдачи на 98f09eb не собран в проверяемый сценарий |
+| V-05 | идемпотентная повторная публикация тех же байт анкера — нужен прямой harness подписанта/публикации |
+| V-06 | падение после локального response и до анкера + reconcile — нужна crash-injection точка между verifyAndPersist и publish |
+| V-10 | подложный PASS-candidate и прямой запрос к anchor-signer — нужен отдельный harness подписанта (L-03/V-04 частично смежны) |
+| V-12 | неполный terminal-choice.json после CREATE_NEW — нужен crash сразу после создания файла |
+| L-01 | одновременный старт двух доверенных процессов на один approval — гонка уровня Control, не реализована (L-06/L-09 покрывают частично) |
+| L-02 | cancel до INTENT на доверенном входе — сценарий отмены не реализован |
+| L-04 | падение после POST на доверенном пути — старый 0.1-путь покрыт RT-13, доверенный — нет |
+| L-05 | повторный reconcile уже терминального доверенного прогона — частично покрыт L-03; отдельной строки нет |
+| B-02 | второй старт на тот же fixture на доверенном пути — привязка fixture 0.1 не воспроизведена в доверенном сценарии |
+
+Строки, которые раньше были UNVERIFIABLE, стали PASS только там, где есть фактический прогон;
+остальные честно помечены TODO и вынесены в список внешней приёмки (§9.6).
+
+### 9.3. Отдельно по пяти пунктам
+
+**GAP-01 (ложный PASS без анкера) — ЗАКРЫТ на 98f09eb.** `rt2-attack-false-pass.mjs`, 20 проверок, PASS:
+- эталонный доверенный прогон: PASS + observeTrusted `passed=true, anchorStatus=ANCHOR_OK`;
+- без подписанта: INCONCLUSIVE EVIDENCE_MISSING, observeTrusted не PASS (mutationCount=1);
+- подделанный terminal-choice «anchor» без файла анкера → observeTrusted не PASS (inconsistent, TERMINAL_CHOICE_INCOMPLETE);
+- чужой анкер от другого runId → не PASS;
+- подмена verdict после публикации и подмена терминального коммита evidence → observeTrusted не PASS;
+- полностью сфабрикованная локальная цепочка PASS без POST/approval/анкера → observeTrusted `passed=false, state=inconsistent, INTEGRITY_ERROR`, при этом старый `observe()` показывает PASS — **старый вход не является доказательством доверенного PASS**.
+
+**GAP-02 (подмена среды) — ЗАКРЫТ на 98f09eb.** `rt2-attack-env-substitution.mjs`, PASS:
+(A) зеркало с копией публичных полей и старой аттестацией на том же origin → BLOCKED ENVIRONMENT_CHANGED, зеркало получило только /attest, mutationCount=0;
+(B) сервер без ключа стенда (/attest=404) → BLOCKED, POST нет;
+(C) подмена на другой реальный стенд с другим ключом на том же origin → BLOCKED, mutationCount=0. Ни в одном варианте нет mutation-intent/request.
+
+**L-08 — PASS.** `rt2-l08-old-start-rejects-trust.mjs`: старый start() отвергает каждый из 7 аргументов доверия с CONTRACT_INVALID до snapshot/мутации; каталог прогона и consumption не созданы; approval остаётся issued.
+
+**R-01 — открыт, P2, владелец WP-02.** `rt2-r01-guard-lock.mjs`, PASS (риск подтверждён):
+SIGKILL внутри реального withGuard оставляет пустой `guards/<approvalId>.lock`; revoke падает через **5005 мс**, consume — через **5006 мс** (CONSUMPTION_INCOMPLETE); второго ACK/расхода нет. На доверенном входе тот же lock даёт T-B отказ: BLOCKED AUTH_UNAVAILABLE через ~7.4 с, 0 POST, нет mutation-intent, consumption не создан (`rt2-attack-ack-without-consumption.mjs`). Слепое удаление lock недопустимо: файл пуст, владелец/liveness неизвестны; удаление при живом держателе открывает окно второго dispatch. Safe recovery — только по отдельному доказательству.
+
+**R-02 — ЗАКРЫТ на 98f09eb.** `rt2-r02-keygen-run-dir.mjs`: `--secrets <...>\runs\<runId>\secrets` отвергается (exit 1, TRUST_STORE_UNAVAILABLE), ключи в runDir не создаются; сегмент `RUNS` в верхнем регистре тоже отвергается; secretsDir в репозитории отвергается; безопасный путь вне runs/ работает; в git нет *.key. Остаточное замечание: keygen проверяет только сегмент имени `runs` (обход через другой каталог-хранилище с иным именем не покрыт; для RunStore 0.1 раскладка всегда `<root>/runs/<id>`).
+
+### 9.4. Атаки WP-06 (все PASS на 98f09eb)
+
+| Скрипт | Факт |
+|---|---|
+| rt2-attack-ack-without-consumption | остаточный guard lock → T-B отказ BLOCKED AUTH_UNAVAILABLE, 0 POST, mutation-intent не записан, расхода нет (ACK без расхода невозможен) |
+| rt2-attack-second-post | PASS-прогон: reconcile и повторный старт не мутируют (mutationCount=1, request evidence=1); второй terminal verdict → INTEGRITY_ERROR; повторный старт с новым approval не расходует его |
+| rt2-attack-secret-before-allow | отказ до T-A: Browser не дошёл до READY/INTENT, browser.pid нет, Bearer и protectedPkcs8 в runDir отсутствуют; в успешном PASS-прогоне Bearer тоже не записан |
+| rt2-attack-foreign-sid | чужая карточка с SID другого пользователя → BLOCKED AUTH_UNAVAILABLE, 0 POST |
+| rt2-attack-false-pass | см. GAP-01 |
+
+### 9.5. Наблюдения P3 (не блокируют, но зафиксированы)
+
+- **OBS-02 — бюджет анкера берётся из неподписанного `trustRoot/profile.json`.** `loadAnchorBudgetMs` проверяет только `schemaVersion/domain` и диапазон 1…60000, подпись не проверяется, хотя BASELINE §5.2 требует «подписанный профиль». Red Team использовал это в V-03/V-09 (бюджет 500/1500 мс), прогоны прошли. Риск ограничен границей R-04 (тот же SID уже владеет trust root), но формулировке контракта не соответствует. Адресат: WP-05 (Agent B/владелец anchor.mjs).
+- **OBS-03 — проекция E-05 не совпала с матрицей.** Повреждённый реестр сред даёт BLOCKED `CONTRACT_INVALID` (PDP DENY), матрица ожидает INDETERMINATE TRUST_STORE_UNAVAILABLE → BLOCKED AUTH_UNAVAILABLE. Fail-closed сохранён (0 POST, нет intent), но reasonCode другой. Адресат: WP-06/Lead (решение о проекции или о матрице).
+- **OBS-04 — пояснение, не дефект.** E-06 actual verdictCode `CONTRACT_INVALID`, потому что PDP-код `ENVIRONMENT_KIND_DENIED` входит в contractReasons таблицы проекции (docs/wp-00/03-CONTRACT-PROPOSALS.md); критерий строки (fail-closed, 0 POST) выполнен.
+
+### 9.6. Открытые P0/P1 и что вынести на внешнюю приёмку
+
+**Подтверждённых P0/P1 на 98f09eb нет.** Открыто: R-01 (P2), OBS-02/OBS-03 (P3).
+Список для внешней приёмки:
+1. Прогнать `run-all-w2` и `run-matrix` на финальном SHA (одна команда, снимок закрепляется автоматически). Ожидание на 98f09eb: 24/24 и 24 PASS/10 TODO.
+2. Реализовать/принять 10 TODO строк из §9.2 (E-04, V-05, V-06, V-10, V-12, L-01, L-02, L-04, L-05, B-02).
+3. Принять решение по R-01: оставить как P2 fail-closed или ввести safe recovery с отдельным доказательством.
+4. Решить OBS-02 (подписывать profile.json или исправить контракт) и OBS-03 (проекция E-05).
+5. Зафиксировать, что старый `observe()` не используется как доказательство PASS (GAP-01).

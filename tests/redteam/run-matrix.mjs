@@ -14,6 +14,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
 
 const argv = process.argv.slice(2);
 const target = argv.find(item => !item.startsWith('--'));
@@ -24,13 +25,44 @@ if (!target || !fs.existsSync(target) || !fs.statSync(target).isDirectory()) {
   process.stderr.write('Использование: node tests/redteam/run-matrix.mjs <путь-к-worktree-интеграции> [--only=E,V,L,B] [--out=file.json]\n');
   process.exit(2);
 }
-const ROOT = path.resolve(target);
+const LIVE_TARGET = path.resolve(target);
+const liveState = { head: '', dirty: false, diffHash: '' };
+function captureLiveState() {
+  const head = git(['rev-parse', 'HEAD']);
+  const status = git(['status', '--porcelain']);
+  const diff = spawnSync('git', ['-C', LIVE_TARGET, 'diff'], { encoding: 'utf8', windowsHide: true }).stdout || '';
+  const digest = createHash('sha256').update(diff, 'utf8').digest('hex');
+  return { head: head || 'UNKNOWN', dirty: status !== '', diffHash: digest };
+}
+function sha256(text) {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+function pinnedSnapshot() {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const before = captureLiveState();
+    const key = sha256(before.head + '\n' + before.diffHash).slice(0, 16);
+    const dir = path.join(os.tmpdir(), 'qa-rt-matrix-pin-' + key);
+    if (!fs.existsSync(path.join(dir, 'package.json'))) {
+      try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* кэш */ }
+      fs.cpSync(LIVE_TARGET, dir, { recursive: true, force: true, filter: source => !['node_modules', '.git'].includes(path.basename(source)) });
+      const liveModules = path.join(LIVE_TARGET, 'node_modules');
+      if (fs.existsSync(liveModules)) fs.symlinkSync(liveModules, path.join(dir, 'node_modules'), 'junction');
+    }
+    const after = captureLiveState();
+    if (before.head === after.head && before.diffHash === after.diffHash) {
+      return { dir, head: before.head, dirty: before.dirty, diffHash: before.diffHash, stable: true };
+    }
+  }
+  return { dir: null, head: 'UNKNOWN', dirty: false, diffHash: '', stable: false };
+}
+const PIN = pinnedSnapshot();
+const ROOT = PIN.dir;
 
 function git(args) {
-  const result = spawnSync('git', ['-C', ROOT, ...args], { encoding: 'utf8', windowsHide: true });
+  const result = spawnSync('git', ['-C', LIVE_TARGET, ...args], { encoding: 'utf8', windowsHide: true });
   return result.status === 0 ? result.stdout.trim() : '';
 }
-const revision = git(['rev-parse', 'HEAD']) || 'UNKNOWN';
+const revision = PIN.head || 'UNKNOWN';
 const file = rel => path.join(ROOT, rel);
 const exists = rel => fs.existsSync(file(rel));
 const read = rel => fs.readFileSync(file(rel), 'utf8');
@@ -180,6 +212,43 @@ const checks = {
   }
 };
 
+// Строки, реализованные отдельными воспроизводимыми скриптами tests/redteam/rt2-*.mjs.
+// Каркас вызывает скрипт с --target=<проверяемая ветка>, парсит JSON-вердикт и exit code.
+const SCRIPT_CASES = {
+  'B-01': 'rt2-b01-registry.mjs',
+  'B-03': 'rt2-b03-effects-mismatch.mjs',
+  'B-04': 'rt2-b04-fixture-mismatch.mjs',
+  'B-05': 'rt2-b05-http-200-existing.mjs',
+  'E-01': 'rt2-attack-env-substitution.mjs',
+  'E-02': 'rt2-e02-unknown-environment.mjs',
+  'E-03': 'rt2-e03-generation-change.mjs',
+  'E-05': 'rt2-e05-registry-unreadable.mjs',
+  'E-06': 'rt2-e06-dev-environment.mjs',
+  'E-07': 'rt2-attack-env-substitution.mjs',
+  'V-01': 'rt2-attack-false-pass.mjs',
+  'V-02': 'rt2-attack-false-pass.mjs',
+  'V-03': 'rt2-v03-signer-unavailable.mjs',
+  'V-04': 'rt2-v04-two-anchors.mjs',
+  'V-07': 'rt2-v07-anchor-before-verdict.mjs',
+  'V-08': 'rt2-v08-owner-as-anchor.mjs',
+  'V-09': 'rt2-v09-budget-race.mjs',
+  'V-11': 'rt2-v07-anchor-before-verdict.mjs',
+  'L-03': 'rt2-l03-crash-after-consumption.mjs',
+  'L-06': 'rt2-l06-used-approval.mjs',
+  'L-08': 'rt2-l08-old-start-rejects-trust.mjs'
+};
+const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
+
+function runScriptCase(relative) {
+  const script = path.join(here, relative);
+  const child = spawnSync(process.execPath, [script, '--target=' + ROOT, '--pinned', '--sha=' + revision], { encoding: 'utf8', windowsHide: true, timeout: 180000 });
+  let parsed = null;
+  try { const start = (child.stdout || '').indexOf('{'); parsed = start === -1 ? null : JSON.parse(child.stdout.slice(start)); } catch { parsed = null; }
+  if (!parsed) return { status: 'FAIL', evidence: { exit: child.status, stderr: String(child.stderr || '').slice(0, 400) } };
+  const status = parsed.verdict === 'PASS' ? 'PASS' : parsed.verdict === 'INCONCLUSIVE' ? 'UNVERIFIABLE' : 'FAIL';
+  return { status, evidence: { script: relative, target: parsed.target || null, checks: parsed.checks } };
+}
+
 // Таблица матрицы: needs — обязательные файлы/экспорты на проверяемой ревизии.
 const CASES = [
   ['E-01', 'Копирование environmentId/fingerprint и любого ранее виденного ответа', ['packages/trust/environment.mjs']],
@@ -236,6 +305,14 @@ for (const [id, subject, needs] of CASES) {
     status = 'UNVERIFIABLE';
     reason = 'на ревизии отсутствуют: ' + missing.join(', ');
     evidence = { missing };
+  } else if (SCRIPT_CASES[id]) {
+    try {
+      const result = runScriptCase(SCRIPT_CASES[id]);
+      status = result.status; evidence = result.evidence;
+      if (status === 'UNVERIFIABLE') reason = 'скрипт-проверка вернул INCONCLUSIVE (ветка менялась или проверка не завершилась)';
+    } catch (error) {
+      status = 'FAIL'; evidence = { message: String(error.message || error) };
+    }
   } else if (checks[id]) {
     try {
       const result = await checks[id]();
@@ -255,8 +332,10 @@ for (const [id, subject, needs] of CASES) {
 const counts = rows.reduce((acc, row) => { acc[row.status] = (acc[row.status] || 0) + 1; return acc; }, {});
 const summary = {
   tool: 'REDTEAM-MATRIX',
-  target: ROOT,
+  target: LIVE_TARGET,
   revision,
+  pinnedSnapshot: PIN.dir,
+  targetStable: PIN.stable,
   generatedAt: new Date().toISOString(),
   node: process.version,
   platform: process.platform,
