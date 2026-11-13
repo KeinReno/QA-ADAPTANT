@@ -45,7 +45,8 @@ export function approvalFact({ trust, trustRoot, approvalId, approval, issuer, s
       revocation: viewed.revocation
     };
   } catch (error) {
-    return { body: null, state: null, error: codeOf(error, 'APPROVAL_SIGNATURE_INVALID'), consumption: null, revocation: null };
+    // state обязан остаться одним из состояний контракта: null дал бы отказ формы, а не причину.
+    return { body: null, state: 'missing', error: codeOf(error, 'APPROVAL_SIGNATURE_INVALID'), consumption: null, revocation: null };
   }
 }
 

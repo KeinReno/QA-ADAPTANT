@@ -50,3 +50,16 @@
 
 Схемы 0.1, `docs/contract-freeze.json`, формат `evidence-commits`, `VerdictPolicy`, `RunProtocol`,
 `EvidenceSchema`, реестр `local-create-record`, старые входы `start/observe/cancel/reconcile`.
+
+### 2.5. Тела кандидатов и четвёртый исход выбора
+
+Доверенный прогон может иметь два кандидата (бизнес-PASS и заменяющий его INCONCLUSIVE по бюджету). Чтобы после падения дописывать ровно выбранные байты, а не пересчитывать их:
+
+- `runDir/trust/candidates/<candidateSha256>.json` — тело каждого опубликованного кандидата, `CREATE_NEW`;
+- `publishTerminalVerdict` читает тело выбранного `candidateSha256` из этого каталога.
+
+Принято четвёртое значение `terminal-choice.outcome` — `inconclusive-without-anchor`: для бизнес-вердикта INCONCLUSIVE, который не является PASS и не требует анкера. `anchorId` и `discardedCandidateSha256` равны `null`, байты выбранного кандидата не пересчитываются. Остальные исходы (`anchor`, `budget-inconclusive`, `fail-without-anchor`) остаются как в WP-00.
+
+### 2.6. Бюджет анкера и профиль trust root
+
+WP-00 задаёт `anchorBudgetMs` в подписанном профиле trust root, но в WP-01 нет домена `trust-profile`, поэтому в 0.2 бюджет не проверяется криптографически: по умолчанию 5000 мс, диапазон 1…60000, вызывающий его не меняет. Это зафиксированный остаточный риск R-05: подмена файла профиля может изменить длительность ожидания, но не создаёт PASS без анкера и не открывает второй POST. Подписанный домен профиля — отдельное изменение после 0.2.

@@ -88,16 +88,20 @@ export function createTrustContext(options = {}) {
   async function refreshEnvironment(runId, frozen) {
     const expected = expectedFromFrozen(frozen);
     const environment = environmentFact({ trust, trustRoot, environmentId: expected.environmentId, origin: frozen.manifest.environment.baseUrl, generation: null });
-    if (!environment.record) { currentEnvironment = { record: null, attestation: { ok: false, body: null, error: environment.error } }; return expected; }
+    if (!environment.record) { currentEnvironment = { record: null, error: environment.error, attestation: { ok: false, body: null, error: environment.error } }; return expected; }
     const generation = environment.record.generation;
-    let attestation;
-    try {
-      const live = await attestLiveEnvironment({ trust, record: environment.record, standPublicKey });
-      attestation = { ok: true, body: live.attestation, error: null };
-    } catch (error) {
-      attestation = { ok: false, body: null, error: error?.code || 'ENVIRONMENT_ATTESTATION_FAILED' };
+    let attestation = { ok: false, body: null, error: 'ENVIRONMENT_ATTESTATION_FAILED' };
+    // Аттестуется только активный local-stand: dev/production и неактивные записи отсекает PDP по записи.
+    if (environment.record.status === 'active' && environment.record.kind === 'local-stand') {
+      try {
+        const live = await attestLiveEnvironment({ trust, record: environment.record, standPublicKey });
+        attestation = { ok: true, body: live.attestation, error: null };
+      } catch (error) {
+        const code = error?.code;
+        attestation = { ok: false, body: null, error: code === 'ENVIRONMENT_UNAVAILABLE' ? 'ENVIRONMENT_UNAVAILABLE' : 'ENVIRONMENT_ATTESTATION_FAILED' };
+      }
     }
-    currentEnvironment = { record: environment.record, attestation };
+    currentEnvironment = { record: environment.record, error: null, attestation };
     expected.environmentGeneration = generation;
     return expected;
   }
@@ -131,8 +135,10 @@ export function createTrustContext(options = {}) {
 
     async preflight({ runDir, frozen }) {
       const expected = await refreshEnvironment(frozen.manifest.runId, frozen);
-      const approvalStateValue = approvalState(expected);
-      if (approvalStateValue.body && expected.environmentGeneration === null) expected.environmentGeneration = approvalStateValue.body.environmentGeneration;
+      // Поколение для сверки связки берётся из самого approval: без него форма facts неполна.
+      const probe = approvalFact({ trust, trustRoot, approvalId, approval, issuer, subject, windowsSid: sid, expected: null, runId: null });
+      if (probe.body) expected.environmentGeneration = probe.body.environmentGeneration;
+      const approvalStateValue = probe.body ? approvalState(expected) : probe;
       const facts = factsFor('preflight', { runId: frozen.manifest.runId, frozen, expected, approvalState: approvalStateValue });
       const decision = decide(facts);
       lastDecision = decision;
@@ -142,8 +148,9 @@ export function createTrustContext(options = {}) {
 
     async dispatch({ runDir, frozen, intent }) {
       const expected = await refreshEnvironment(frozen.manifest.runId, frozen);
-      const approvalStateValue = approvalState(expected);
-      if (approvalStateValue.body) expected.environmentGeneration = approvalStateValue.body.environmentGeneration;
+      const probe = approvalFact({ trust, trustRoot, approvalId, approval, issuer, subject, windowsSid: sid, expected: null, runId: null });
+      if (probe.body) expected.environmentGeneration = probe.body.environmentGeneration;
+      const approvalStateValue = probe.body ? approvalState(expected) : probe;
       const facts = factsFor('dispatch', { runId: frozen.manifest.runId, frozen, expected, approvalState: approvalStateValue, mutationRecorded: false });
       const decision = decide(facts);
       lastDecision = decision;

@@ -47,9 +47,11 @@ async function world(t, { standOptions = {}, recordOverrides = {} } = {}) {
     schemaVersion: '0.2.0', domain: 'principal', principalId: 'local-owner',
     roles: ['owner'], keyId: created.ownerKeyId, windowsSid: sid, status: 'active'
   });
+  // Карточку подписывает owner, поэтому keyId указывает на его публичный ключ; личность оператора
+  // подтверждается SID Windows, а не ключом подписи.
   const operator = signTrustedDocument(ownerKey, {
     schemaVersion: '0.2.0', domain: 'principal', principalId: 'local-operator',
-    roles: ['operator'], keyId: null, windowsSid: sid, status: 'active'
+    roles: ['operator'], keyId: created.ownerKeyId, windowsSid: sid, status: 'active'
   });
   t.after(async () => {
     await signer.close();
@@ -65,6 +67,8 @@ function prepare(w, { runId = 'trust-run-' + randomUUID().slice(0, 8) } = {}) {
   const bundle = localBundle(w.stand, { runId });
   bundle.fixture = contract;
   bundle.manifest.fixtureSha256 = digest(contract);
+  // Запас на загруженной машине: срок не входит в подписанные поля approval.
+  bundle.manifest.budget.deadlineMs = 60000;
   return { bundle, contract, runId };
 }
 
@@ -154,7 +158,7 @@ test('T-03: чужой SID не получает доверенный прого
   const approval = signApproval(w.ownerKey, approvalFields(w, { bundle, contract }), w.trust, w.trustRoot);
   const foreign = signTrustedDocument(w.ownerKey, {
     schemaVersion: '0.2.0', domain: 'principal', principalId: 'local-operator',
-    roles: ['operator'], keyId: null, windowsSid: 'S-1-5-21-9999999999-1-1-1', status: 'active'
+    roles: ['operator'], keyId: w.created.ownerKeyId, windowsSid: 'S-1-5-21-9999999999-1-1-1', status: 'active'
   });
   const result = await startTrusted(bundle, trustedOptions(w, approval, { subject: foreign }));
   assert.equal(result.verdict.verdict, 'BLOCKED');
