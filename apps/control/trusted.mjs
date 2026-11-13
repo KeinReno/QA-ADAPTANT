@@ -85,24 +85,48 @@ function persistDecision(runDir, decision) {
 }
 
 function standChannelAvailable() {
-  return typeof environment.attestationVerifiedReads === 'function';
+  return typeof environment.attestationVerifiedReads === 'function' && typeof environment.openPinnedStandConnection === 'function';
+}
+
+function publicKeyBase64(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (value.export) return Buffer.from(value.export({ type: 'spki', format: 'der' })).toString('base64');
+  return Buffer.from(value).toString('base64');
+}
+
+// Окружение доверенного Verification Worker (имена зафиксированы в интеграции R-B/Lead).
+export function buildVerificationEnv({ trustRoot, environmentId = '', environmentGeneration = 0, standPublicKey = null, fixtureToken = '', approvalId = '' } = {}) {
+  return {
+    QA_ADAPTANT_TRUSTED_VERIFIER: '1',
+    QA_ADAPTANT_TRUST_ROOT: trustRoot,
+    QA_ADAPTANT_ENVIRONMENT_ID: environmentId,
+    QA_ADAPTANT_ENVIRONMENT_GENERATION: String(environmentGeneration || ''),
+    QA_ADAPTANT_STAND_PUBLIC_KEY: publicKeyBase64(standPublicKey),
+    QA_ADAPTANT_APPROVAL_ID: approvalId,
+    QA_ADAPTANT_AUTHORIZATION: fixtureToken ? 'Bearer ' + fixtureToken : '',
+    QA_ADAPTANT_FIXTURE_TOKEN: fixtureToken
+  };
 }
 
 // Control запускает доверенный Verification Worker как дочерний процесс и принимает
 // аттестацию и публичный ключ только по fork IPC. Приватный ключ Verification по IPC
 // не передаётся: Worker подписывает аттестацию у себя и отдаёт только результат.
-export async function verifyWithTrustedWorker({ runDir, frozen, trustRoot, approvalId, fixtureToken = '', standPublicKey = null, timeoutMs } = {}) {
+export async function verifyWithTrustedWorker({ runDir, frozen, trustRoot, approvalId, fixtureToken = '', standPublicKey = null, timeoutMs, canceled = false, browserUncertain = false } = {}) {
   if (!runDir || !frozen || !trustRoot || !approvalId) throw new TypeError('Нужны runDir, frozen, trustRoot и approvalId');
   const store = new RunStore(path.dirname(path.dirname(path.resolve(runDir))));
   const entry = fileURLToPath(new URL('../verification/trusted-worker.mjs', import.meta.url));
-  const allowUnsigned = !standChannelAvailable();
-  const env = {
-    QA_ADAPTANT_FIXTURE_TOKEN: fixtureToken,
-    QA_TRUST_ROOT: trustRoot,
-    QA_TRUSTED_APPROVAL_ID: approvalId,
-    QA_TRUSTED_ALLOW_UNSIGNED_STAND: allowUnsigned ? '1' : '0'
-  };
-  if (standPublicKey) env.QA_STAND_PUBLIC_KEY = typeof standPublicKey === 'string' ? standPublicKey : Buffer.from(standPublicKey?.export ? standPublicKey.export({ type: 'spki', format: 'der' }) : standPublicKey).toString('base64');
+  if (!standChannelAvailable()) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Аттестованный канал стенда недоступен: доверенный Verification невозможен');
+  const env = buildVerificationEnv({
+    trustRoot,
+    environmentId: frozen.manifest.environment.id,
+    environmentGeneration: frozen.manifest.environment.generation || 1,
+    standPublicKey,
+    fixtureToken,
+    approvalId
+  });
+  if (canceled) env.QA_ADAPTANT_CANCELED = '1';
+  if (browserUncertain) env.QA_ADAPTANT_BROWSER_UNCERTAIN = '1';
   const child = fork(entry, [runDir, frozen.manifestSha256], {
     stdio: ['ignore', 'ignore', process.env.QA_ADAPTANT_DEBUG === '1' ? 'inherit' : 'ignore', 'ipc'],
     env: { ...process.env, ...env }
@@ -177,6 +201,8 @@ export function createTrustContext(options = {}) {
   let currentEnvironment = null;
   let trustStoreUnavailable = false;
   let lastDecision = null;
+  // Закреплённое соединение Control→стенд и PINNED_JOB для доверенного Browser Worker (P0-02).
+  let pinned = null;
 
   async function refreshEnvironment(runId, frozen) {
     const expected = expectedFromFrozen(frozen);
@@ -233,12 +259,112 @@ export function createTrustContext(options = {}) {
     return spawnAnchorSigner({ trustRoot: root, anchorKeyPath });
   }
 
+  function requirePinnedChannel(what) {
+    if (!standChannelAvailable()) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Аттестованный канал стенда недоступен: ' + what);
+    if (!currentEnvironment?.record) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Среда не подтверждена: ' + what);
+    return currentEnvironment.record;
+  }
+
+  // P0-02: Control открывает закреплённое соединение после T-A и аттестует его на этом же сокете.
+  // Сокет и PINNED_JOB уходят доверенному Browser Worker одним сообщением; новых TCP на origin нет.
+  async function preparePinnedDispatch({ frozen, token, child } = {}) {
+    if (!frozen || !frozen.manifest) throw new TypeError('Нужен замороженный bundle');
+    if (!child || typeof child.send !== 'function') throw new TypeError('Нужен дочерний процесс Browser Worker');
+    if (pinned?.connection) { try { await pinned.connection.close(); } catch { /* уже закрыто */ } pinned = null; }
+    let connection = null;
+    try {
+      const record = requirePinnedChannel('подготовка dispatch');
+      if (typeof token !== 'string' || token.length === 0) fail('CONTRACT_INVALID', 'Нужен токен стенда для закреплённого соединения');
+      connection = await environment.openPinnedStandConnection({
+        record, trust, standPublicKey, headers: { authorization: 'Bearer ' + token }, timeoutMs: 3000
+      });
+      const { manifest, operation, fixture, scenario } = frozen;
+      const clickNode = scenario.nodes.find(node => node.action.type === 'click' && node.action.mutation);
+      if (!clickNode) fail('CONTRACT_INVALID', 'В сценарии нет узла мутации');
+      const job = {
+        type: 'PINNED_JOB',
+        runId: manifest.runId,
+        manifestSha256: frozen.manifestSha256,
+        stepId: clickNode.id,
+        intentId: manifest.runId + ':' + clickNode.id,
+        operationId: operation.id,
+        mutationName: operation.mutation.name,
+        inputsSha256: digest(operation.inputs),
+        fixtureId: fixture.fixtureId,
+        entityKind: operation.entityKind,
+        origin: connection.origin || record.origin || manifest.environment.baseUrl,
+        token,
+        fields: { ...operation.inputs, fixtureId: fixture.fixtureId },
+        timeoutMs: manifest.budget.deadlineMs
+      };
+      // handle net.Socket и Bearer уходят одним сообщением; после передачи родитель сокет не использует.
+      child.send(job, connection.socket);
+      pinned = { connection, job, token };
+      return { allow: true };
+    } catch (error) {
+      if (connection) { try { await connection.close(); } catch { /* уже закрыто */ } }
+      pinned = null;
+      return { allow: false, denial: errorDenial(error, 'dispatch') };
+    }
+  }
+
+  // Control-side проверка подписанного ответа POST до записи evidence/публикации.
+  function verifyDispatchResponse({ payload, connection = null } = {}) {
+    try {
+      const record = requirePinnedChannel('проверка ответа POST');
+      if (typeof environment.verifyStandResponse !== 'function') fail('ENVIRONMENT_ATTESTATION_FAILED', 'verifyStandResponse недоступна');
+      const target = connection || pinned?.connection || null;
+      const responseBody = payload?.responseBody;
+      const signature = payload?.responseSignature;
+      const challenge = payload?.responseChallenge;
+      if (!responseBody || !signature || !challenge) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Ответ POST не подписан ключом стенда');
+      const body = environment.verifyStandResponse({
+        trust,
+        record,
+        challenge,
+        body: responseBody,
+        signature,
+        method: 'POST',
+        path: '/records',
+        status: payload.status,
+        pid: target?.attestation?.pid,
+        standPublicKey
+      });
+      return { allow: true, body };
+    } catch (error) {
+      return { allow: false, denial: errorDenial(error, 'dispatch'), body: null };
+    }
+  }
+
+  // Окружение для доверенного Verification Worker / Browser Worker (имена из интеграции).
+  function verificationEnv() {
+    return buildVerificationEnv({
+      trustRoot,
+      environmentId: currentEnvironment?.record?.environmentId || '',
+      environmentGeneration: currentEnvironment?.record?.generation || 0,
+      standPublicKey,
+      fixtureToken,
+      approvalId
+    });
+  }
+
+  async function closePinnedConnection() {
+    if (!pinned) return;
+    const connection = pinned.connection;
+    pinned = null;
+    try { await connection.close(); } catch { /* уже закрыто */ }
+  }
+
   return {
     trust,
     trustRoot,
     approvalId,
     get signer() { return signer; },
     get lastDecision() { return lastDecision; },
+    preparePinnedDispatch,
+    verifyDispatchResponse,
+    verificationEnv,
+    async close() { await closePinnedConnection(); },
 
     async preflight({ runDir, frozen }) {
       const expected = await refreshEnvironment(frozen.manifest.runId, frozen);
@@ -279,6 +405,19 @@ export function createTrustContext(options = {}) {
 
     async beforeRequestAck({ frozen }) {
       try {
+        if (pinned?.connection) {
+          // Доверенный путь: новая аттестация не открывается, живость проверяется на закреплённом сокете.
+          const record = requirePinnedChannel('подтверждение перед POST');
+          if (typeof environment.attestPinnedConnection !== 'function') fail('ENVIRONMENT_ATTESTATION_FAILED', 'attestPinnedConnection недоступна');
+          const attested = await environment.attestPinnedConnection(pinned.connection, { trust, record, standPublicKey });
+          const pid = attested?.attestation?.pid ?? pinned.connection.attestation?.pid;
+          if (attested?.attestation) pinned.connection.attestation = attested.attestation;
+          if (!environment.processAlive(pid)) fail('ENVIRONMENT_CHANGED', 'Процесс стенда не жив перед отправкой POST');
+          const owner = await environment.portOwnerPid(record.origin);
+          if (owner === null) fail('ENVIRONMENT_CHANGED', 'Владелец локального порта не определён перед POST');
+          if (owner !== pid) fail('ENVIRONMENT_CHANGED', 'Порт обслуживает не аттестованный процесс');
+          return { allow: true };
+        }
         const record = currentEnvironment?.record;
         if (!record) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Среда не подтверждена до отправки');
         await attestLiveEnvironment({ trust, record, standPublicKey });
@@ -288,20 +427,24 @@ export function createTrustContext(options = {}) {
       }
     },
 
-    async publish({ store, runDir, frozen, verdict }) {
+    async publish({ store, runDir, frozen, verdict = null, canceled = false, browserUncertain = false }) {
       const existing = readTerminalChoice(runDir);
       let worker = null;
       let signerHandle = null;
       try {
         let chosen = verdict;
-        if (!existing && verdict.verdict === 'PASS') {
-          // P0-01: кандидат PASS принимается только вместе с подписанной аттестацией доверенного Verification.
+        const items = store.readEvidence(runDir);
+        const mutationKnown = items.some(item => item.envelope.kind === 'mutation-intent');
+        if (!existing && mutationKnown) {
+          // P0-01: кандидат принимается только вместе с подписанной аттестацией доверенного Verification.
           worker = await verifyWithTrustedWorker({
             runDir, frozen, trustRoot, approvalId, fixtureToken, standPublicKey,
-            timeoutMs: workerTimeoutMs
+            timeoutMs: workerTimeoutMs, canceled, browserUncertain
           });
           chosen = worker.payload.verdict;
+          if (canceled && chosen.verdict === 'PASS') fail('INTEGRITY_ERROR', 'PASS запрещён для отменённого прогона');
         }
+        if (!chosen) fail('INTEGRITY_ERROR', 'Нет доверенного кандидата для публикации');
         if (!existing) {
           publishCandidate(runDir, chosen);
           if (chosen.verdict === 'PASS') {
@@ -401,6 +544,7 @@ export async function startTrusted(bundle, options = {}) {
     const result = await start(bundle, { root: options.root, headed: options.headed || false, fault: options.fault || null, fixtureToken: options.fixtureToken || process.env.QA_ADAPTANT_FIXTURE_TOKEN || '', trust: context });
     return assertTrustedPass(result, { root: options.root, trustRoot: options.trustRoot, trust });
   } finally {
+    try { await context.close(); } catch { /* соединение уже закрыто */ }
     if (signer && typeof signer.close === 'function') signer.close();
   }
 }
@@ -445,6 +589,7 @@ export async function reconcileTrusted({ root, trustRoot, approvalId, approval =
     const result = await reconcile({ root, runId, trust: context, fault });
     return assertTrustedPass(result, { root, trustRoot, trust });
   } finally {
+    try { await context.close(); } catch { /* соединение уже закрыто */ }
     if (signer && typeof signer.close === 'function') signer.close();
   }
 }
