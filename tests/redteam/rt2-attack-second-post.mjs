@@ -20,7 +20,9 @@ await caseMain({ id: 'WP06-2POST', title: 'Второй POST и второй ter
   const reconciled = await modules.trusted.reconcileTrusted({
     root: world.root, trustRoot: world.trustRoot, approvalId: approval.approvalId, approval,
     issuer: world.cards.owner, subject: world.cards.operator, standPublicKey: world.stand.standPublicKey,
-    signerPipe: world.signer.pipePath, runId: bundle.manifest.runId
+    anchorKeyPath: path.join(world.secretsDir, 'anchor.key'),
+    credentials: { [world.record.credentialRef]: world.stand.authToken },
+    runId: bundle.manifest.runId
   });
   check(checks, 'reconcile возвращает тот же PASS', reconciled.verdict.verdict === 'PASS');
   checkNoMutation(checks, world, 1);

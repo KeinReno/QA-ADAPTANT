@@ -20,8 +20,6 @@ await caseMain({ id: 'GAP-01', title: 'Ложный PASS без анкера н�
   check(checks, 'эталонный доверенный прогон PASS', real.verdict.verdict === 'PASS', { verdict: real.verdict.verdict });
   const realObserved = await modules.trusted.observeTrusted({ root: trustedWorld.root, trustRoot: trustedWorld.trustRoot, runId: trustedRun.bundle.manifest.runId });
   check(checks, 'эталон: observeTrusted показывает PASS с анкером', realObserved.passed === true && realObserved.anchorStatus === 'ANCHOR_OK', { passed: realObserved.passed, anchorStatus: realObserved.anchorStatus });
-  const realAnchorFile = path.join(trustedWorld.trustRoot, 'anchors', realObserved.anchorId + '.json');
-  const realAnchor = fs.readFileSync(realAnchorFile);
 
   // V-02: подмена verdict после публикации — observeTrusted не PASS.
   const realStore = new modules.store.RunStore(trustedWorld.root);
@@ -51,33 +49,49 @@ await caseMain({ id: 'GAP-01', title: 'Ложный PASS без анкера н�
   cleanup(noSignerWorld.cleanup);
   const noSignerRun = noSignerWorld.prepare({ runId: 'rt2-gap01-nosigner' });
   const noSignerApproval = noSignerWorld.approvalFor({ bundle: noSignerRun.bundle, contract: noSignerRun.contract });
-  const noSignerResult = await modules.trusted.startTrusted(noSignerRun.bundle, noSignerWorld.trustedOptions(noSignerApproval));
-  check(checks, '(A) без подписанта вердикт INCONCLUSIVE/EVIDENCE_MISSING', noSignerResult.verdict.verdict === 'INCONCLUSIVE' && noSignerResult.verdict.reasonCode === 'EVIDENCE_MISSING', { verdict: noSignerResult.verdict.verdict, reasonCode: noSignerResult.verdict.reasonCode });
+  // Public trusted entry launches its signer from anchorKeyPath; omit the key file to model an
+  // unavailable signer after the mutation instead of merely skipping the helper's prestarted signer.
+  let noSignerResult = null;
+  let noSignerError = null;
+  try { noSignerResult = await modules.trusted.startTrusted(noSignerRun.bundle, noSignerWorld.trustedOptions(noSignerApproval, {
+    anchorKeyPath: path.join(noSignerWorld.secretsDir, 'unavailable-anchor.key')
+  })); } catch (error) { noSignerError = error; }
+  check(checks, '(A) недоступный подписант не возвращает доверенный PASS', noSignerResult?.verdict?.verdict !== 'PASS', { verdict: noSignerResult?.verdict?.verdict || null, error: noSignerError?.message || null });
   const noSignerObserved = await modules.trusted.observeTrusted({ root: noSignerWorld.root, trustRoot: noSignerWorld.trustRoot, runId: noSignerRun.bundle.manifest.runId });
-  check(checks, '(A) observeTrusted не показывает PASS', noSignerObserved.passed === false, { passed: noSignerObserved.passed, verdict: noSignerObserved.verdict?.verdict || null });
+  check(checks, '(A) observeTrusted не показывает PASS', noSignerObserved.passed === false, { passed: noSignerObserved.passed, verdict: noSignerObserved.verdict?.verdict || null, publication: noSignerObserved.publication, reasonCode: noSignerObserved.reasonCode });
   checkNoMutation(checks, noSignerWorld, 1);
 
+  // B/C need a durable candidate and terminal-choice to tamper with; obtain those from a valid run.
+  const attackRun = noSignerWorld.prepare({ runId: 'rt2-gap01-choice-tamper' });
+  const attackApproval = noSignerWorld.approvalFor({ bundle: attackRun.bundle, contract: attackRun.contract });
+  const attackResult = await modules.trusted.startTrusted(attackRun.bundle, noSignerWorld.trustedOptions(attackApproval));
+  check(checks, '(B/C) подготовлен доверенный прогон для порчи terminal-choice', attackResult.verdict.verdict === 'PASS', { verdict: attackResult.verdict.verdict });
+  const foreignRun = noSignerWorld.prepare({ runId: 'rt2-gap01-foreign-anchor' });
+  const foreignApproval = noSignerWorld.approvalFor({ bundle: foreignRun.bundle, contract: foreignRun.contract });
+  const foreignResult = await modules.trusted.startTrusted(foreignRun.bundle, noSignerWorld.trustedOptions(foreignApproval));
+  const foreignObserved = await modules.trusted.observeTrusted({ root: noSignerWorld.root, trustRoot: noSignerWorld.trustRoot, runId: foreignRun.bundle.manifest.runId });
+  check(checks, '(C) создан валидный анкер другого runId в том же trust root', foreignResult.verdict.verdict === 'PASS' && foreignObserved.anchorStatus === 'ANCHOR_OK', { verdict: foreignResult.verdict.verdict, anchorStatus: foreignObserved.anchorStatus });
+
   // (B) Подделанный terminal-choice: исход anchor, файла анкера нет.
-  const runDir = modules.store.RunStore ? new modules.store.RunStore(noSignerWorld.root).runPath(noSignerRun.bundle.manifest.runId) : null;
+  const runDir = modules.store.RunStore ? new modules.store.RunStore(noSignerWorld.root).runPath(attackRun.bundle.manifest.runId) : null;
   const realChoice = modules.anchor.readTerminalChoice(runDir);
   const forgedChoice = {
     schemaVersion: '0.2.0', domain: 'terminal-choice', outcome: 'anchor',
     candidateSha256: realChoice.candidateSha256, discardedCandidateSha256: null,
     anchorId: 'forged-missing-anchor', createdAt: new Date().toISOString()
   };
-  fs.writeFileSync(path.join(runDir, 'trust', 'terminal-choice.json'), JSON.stringify(forgedChoice) + '\n');
-  const forgedObserved = await modules.trusted.observeTrusted({ root: noSignerWorld.root, trustRoot: noSignerWorld.trustRoot, runId: noSignerRun.bundle.manifest.runId });
+  fs.writeFileSync(path.join(runDir, 'trust', 'terminal-choice.json'), modules.core.canonical(forgedChoice) + '\n');
+  const forgedObserved = await modules.trusted.observeTrusted({ root: noSignerWorld.root, trustRoot: noSignerWorld.trustRoot, runId: attackRun.bundle.manifest.runId });
   check(checks, '(B) подделанный выбор без анкера не даёт PASS', forgedObserved.passed === false, { passed: forgedObserved.passed, state: forgedObserved.publication, reasonCode: forgedObserved.reasonCode, anchorStatus: forgedObserved.anchorStatus });
 
-  // (C) Чужой анкер от другого runId.
+  // (C) Чужой подписанный анкер от другого runId, с локальным candidate hash.
   const anchorsDir = path.join(noSignerWorld.trustRoot, 'anchors');
-  fs.mkdirSync(anchorsDir, { recursive: true });
-  fs.writeFileSync(path.join(anchorsDir, 'borrowed-anchor.json'), realAnchor);
-  const borrowedChoice = { ...forgedChoice, anchorId: 'borrowed-anchor' };
-  fs.writeFileSync(path.join(runDir, 'trust', 'terminal-choice.json'), JSON.stringify(borrowedChoice) + '\n');
-  const borrowedObserved = await modules.trusted.observeTrusted({ root: noSignerWorld.root, trustRoot: noSignerWorld.trustRoot, runId: noSignerRun.bundle.manifest.runId });
-  check(checks, '(C) чужой анкер (другой runId) не даёт PASS', borrowedObserved.passed === false, { passed: borrowedObserved.passed, state: borrowedObserved.publication, reasonCode: borrowedObserved.reasonCode, anchorStatus: borrowedObserved.anchorStatus });
-  fs.rmSync(path.join(anchorsDir, 'borrowed-anchor.json'));
+  const borrowedStatement = JSON.parse(fs.readFileSync(path.join(anchorsDir, foreignObserved.anchorId + '.json'), 'utf8'));
+  // Локальный candidate hash сохраняет проверку кандидата; подписанный runId анкера проверяется до approval/evidence binding.
+  const borrowedChoice = { ...forgedChoice, anchorId: foreignObserved.anchorId, candidateSha256: realChoice.candidateSha256 };
+  fs.writeFileSync(path.join(runDir, 'trust', 'terminal-choice.json'), modules.core.canonical(borrowedChoice) + '\n');
+  const borrowedObserved = await modules.trusted.observeTrusted({ root: noSignerWorld.root, trustRoot: noSignerWorld.trustRoot, runId: attackRun.bundle.manifest.runId });
+  check(checks, '(C) чужой подписанный анкер отклоняется именно по runId после локальной проверки candidate', borrowedObserved.passed === false && borrowedObserved.reasonCode === 'ANCHOR_CONFLICT', { passed: borrowedObserved.passed, state: borrowedObserved.publication, reasonCode: borrowedObserved.reasonCode, anchorStatus: borrowedObserved.anchorStatus, anchorRunId: borrowedStatement.runId, targetRunId: attackRun.bundle.manifest.runId, candidateHashMatchedLocalChoice: borrowedChoice.candidateSha256 === realChoice.candidateSha256 });
 
   // (D) Полностью подделанная локальная цепочка PASS без POST и без candidate/anchor.
   const forgedRunId = 'rt2-gap01-forged';
@@ -114,6 +128,6 @@ await caseMain({ id: 'GAP-01', title: 'Ложный PASS без анкера н�
   const oldObserve = await modules.run.observe({ root: noSignerWorld.root, runId: forgedRunId });
   check(checks, '(D) старый observe() показывает PASS — он не является доказательством доверенного PASS', oldObserve.verdict?.verdict === 'PASS', { oldVerdict: oldObserve.verdict?.verdict || null });
   // Имя проверки совпадает со смыслом: подделка не добавила ни одного POST.
-  check(checks, '(D) подделанный прогон не добавил POST (мутация только от эталонного no-signer прогона)', noSignerWorld.stand.mutationCount === 1, { mutationCount: noSignerWorld.stand.mutationCount });
+  check(checks, '(D) подделанный прогон не добавил POST (только три предшествующих тестовых прогона мутировали стенд)', noSignerWorld.stand.mutationCount === 3, { mutationCount: noSignerWorld.stand.mutationCount });
   return { checks };
 } });

@@ -997,6 +997,13 @@ function analyze({ store, runDir, frozen, trust, trustRoot }) {
     try { body = verifyAnchorStatement(trust, statement); }
     catch (error) { result.state = 'inconsistent'; result.reasonCode = error.code === 'ANCHOR_SIGNATURE_INVALID' ? 'ANCHOR_SIGNATURE_INVALID' : 'INTEGRITY_ERROR'; result.anchorStatus = result.reasonCode; return result; }
     result.anchorStatement = statement;
+    if (body.runId !== current.manifest.runId) {
+      result.state = 'inconsistent';
+      result.reasonCode = 'ANCHOR_CONFLICT';
+      result.anchorStatus = 'ANCHOR_CONFLICT';
+      result.verdict = null;
+      return result;
+    }
     let binding;
     try { binding = inspectEvidenceBinding({ trust, trustRoot, runDir, approvalId: body.approvalId, mode: 'terminal' }); }
     catch (error) { result.state = 'inconsistent'; result.reasonCode = error.code === 'TRUST_STORE_UNAVAILABLE' ? 'TRUST_STORE_UNAVAILABLE' : (error.code === 'ANCHOR_BINDING_REJECTED' ? 'ANCHOR_BINDING_REJECTED' : (error.code === 'APPROVAL_MISSING' ? 'ANCHOR_MISSING' : 'ANCHOR_BINDING_REJECTED')); result.anchorStatus = result.reasonCode; result.verdict = null; return result; }

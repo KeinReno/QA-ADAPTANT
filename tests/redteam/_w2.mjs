@@ -171,7 +171,7 @@ export async function makeWorld(modules, options = {}) {
         approval,
         issuer: cards.owner,
         subject: cards.operator,
-        signerPipe: signer ? signer.pipePath : null,
+        anchorKeyPath: path.join(secretsDir, 'anchor.key'),
         standPublicKey: stand.standPublicKey,
         fixtureToken: stand.authToken,
         // E-04: секрет выдаётся только по credentialRef подписанной записи среды.
@@ -412,6 +412,47 @@ export function runChildProcess(script, requestFile, timeoutMs = 60000) {
     child.stderr.on('data', chunk => stderr.push(chunk));
     child.on('error', error => { clearTimeout(timer); resolve({ status: -1, stderr: String(error.message) }); });
     child.on('exit', code => { clearTimeout(timer); resolve({ status: code, stderr: Buffer.concat(stderr).toString('utf8') }); });
+  });
+}
+
+export function runChildUntilAnchor(script, requestFile, trustRoot, anchorFile, timeoutMs = 60000) {
+  return new Promise(resolve => {
+    const anchorDir = path.join(trustRoot, 'anchors');
+    const initial = new Set(fs.existsSync(anchorDir) ? fs.readdirSync(anchorDir).filter(name => name.endsWith('.json')) : []);
+    const child = spawn(process.execPath, [script, requestFile], { windowsHide: true });
+    const stderr = [];
+    let killedAtAnchor = false;
+    let stopConfirmed = false;
+    let settled = false;
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      clearInterval(poll);
+      clearTimeout(timer);
+      resolve({ ...value, killedAtAnchor, stopConfirmed, stderr: Buffer.concat(stderr).toString('utf8') });
+    };
+    child.stderr.on('data', chunk => stderr.push(chunk));
+    const poll = setInterval(() => {
+      const current = fs.existsSync(anchorDir) ? fs.readdirSync(anchorDir).filter(name => name.endsWith('.json')) : [];
+      const added = current.find(name => !initial.has(name));
+      if (!added) return;
+      try { fs.writeFileSync(anchorFile, fs.readFileSync(path.join(anchorDir, added))); } catch {}
+      killedAtAnchor = true;
+      const killer = spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, timeout: 15000 });
+      if (killer.error && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }, 25);
+    poll.unref();
+    const timer = setTimeout(() => {
+      const killer = spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, timeout: 15000 });
+      if ((killer.error || killer.status !== 0) && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      const timeoutResult = setTimeout(() => {
+        stopConfirmed = child.exitCode !== null || child.signalCode !== null;
+        finish({ status: -1, error: 'timeout' });
+      }, 1000);
+      timeoutResult.unref();
+    }, timeoutMs);
+    child.once('error', error => { stopConfirmed = true; finish({ status: -1, error: String(error.message || error) }); });
+    child.once('exit', (code, signal) => { stopConfirmed = true; finish({ status: code, signal }); });
   });
 }
 export async function waitFile(filePath, timeoutMs = 15000) {
