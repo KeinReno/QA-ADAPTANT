@@ -90,9 +90,8 @@ async function postMutation() {
   const headers = {
     authorization: 'Bearer ' + job.token,
     'idempotency-key': job.intentId,
-    // QWEN-F3: привязка к runId включает на стенде one-shot-защиту мутации.
-    // Заголовок не входит в подписываемое тело/ответ и не меняет проверку подписи.
-    'x-qa-run-id': job.runId,
+    // QWEN-F3: привязка к runId не включена — она конфликтует с поддержанной топологией
+    // «один стенд/токен обслуживает несколько прогонов» (см. QWEN-FINDINGS-DISPOSITION.md).
     [STAND_CHALLENGE_HEADER]: challenge
   };
   // Единственный POST: только по переданному handle, без redirect и без повторов.
