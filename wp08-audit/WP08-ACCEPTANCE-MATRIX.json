@@ -1,10 +1,8 @@
 {
-  "schemaVersion": "1.0",
+  "schemaVersion": "2.0",
   "workpack": "DS-WP08",
   "auditedSha": "1a510a5d5929534d400dc965f58c78cf468bc270",
-  "auditBranch": "test/wp08-independent-audit",
-  "auditBranchSha": "cf1b951f3061b81c7a7f4b300884641c97868b66",
-  "mainSha": "59d82d49c01442d463ebab5d5f3d661ca550e504",
+  "remediationHeadVerified": true,
   "environment": {
     "os": "Windows NT 10.0.26100",
     "node": "v24.16.0",
@@ -20,9 +18,23 @@
       "packages/trust/keygen.mjs",
       "packages/trust/windows-sid.mjs"
     ],
-    "note": "код DeepSeek; заключение по нему — самопроверка, требуется второй проверяющий"
+    "note": "самопроверка ядра DeepSeek; требуется второй независимый проверяющий для окончательной приёмки"
   },
-  "decision": "WORK_IN_PROGRESS",
+  "gates": {
+    "npmTest": "305/305",
+    "races": "3/3",
+    "wave2": "25/25 (197 assertions)",
+    "schemas": "exit 0",
+    "rdMatrix": "15/15 PASS",
+    "stable": "58/59 ×2, UNVERIFIABLE",
+    "e02": "7/7 PASS"
+  },
+  "conditions": [
+    "F-06: отдельное решение владельца об исключении либо стабильный прогон; UNVERIFIABLE не переводится в PASS",
+    "Второй независимый аудит компонентов, написанных DeepSeek (ядро trusted-контура)",
+    "OBS-01: fault-хуки вынести из продового пути (отдельная доработка, не блокер)"
+  ],
+  "decision": "NO_REJECT; ACCEPT РЕКОМЕНДОВАН УСЛОВНО (F-06 + второй проверяющий)",
   "items": [
     {
       "id": "P-01",
@@ -65,14 +77,24 @@
       "evidence": "evidence/stage1/ls-remote.txt"
     },
     {
+      "id": "A-03",
+      "status": "PASS",
+      "evidence": "evidence/stage1/changed-files.txt"
+    },
+    {
+      "id": "A-04",
+      "status": "PASS",
+      "evidence": "evidence/stage1/diff-stat.txt"
+    },
+    {
       "id": "A-05",
       "status": "PASS",
-      "evidence": "evidence/stage2/w2-artifacts/"
+      "evidence": "evidence/stage2/w2-artifacts (25 JSON)"
     },
     {
       "id": "A-06",
       "status": "PASS",
-      "evidence": "WP08-10 §Stable"
+      "evidence": "WP08-10"
     },
     {
       "id": "B-01",
@@ -80,54 +102,144 @@
       "evidence": "WP08-09 §1-3"
     },
     {
+      "id": "B-02",
+      "status": "PASS",
+      "evidence": "npm-test.log trust-recovery"
+    },
+    {
+      "id": "B-03",
+      "status": "PASS",
+      "evidence": "npm-test.log trust-provenance"
+    },
+    {
+      "id": "B-04",
+      "status": "PASS",
+      "evidence": "gates.log races + WP-C"
+    },
+    {
       "id": "B-05",
       "status": "PASS_STATIC",
-      "evidence": "WP08-09 §1"
+      "evidence": "trusted.mjs:771,788 legacy signerPipe rejected"
     },
     {
       "id": "B-06",
       "status": "PASS_STATIC",
-      "evidence": "trusted.mjs:36-40, run.mjs:905/978/1024"
+      "evidence": "trusted.mjs:36-40; run.mjs:905,978,1024"
+    },
+    {
+      "id": "B-07",
+      "status": "PASS_STATIC",
+      "evidence": "WP08-09"
+    },
+    {
+      "id": "B-08",
+      "status": "PASS",
+      "evidence": "W2 V-03, E02-06 (отсутствие компонента → отказ)"
     },
     {
       "id": "C-01",
       "status": "PASS",
-      "evidence": "evidence/stage2/w2-artifacts/rt2-attack-false-pass.json"
+      "evidence": "w2-artifacts/rt2-attack-false-pass.json"
+    },
+    {
+      "id": "C-02",
+      "status": "PASS",
+      "evidence": "npm-test.log (GAP-01)"
+    },
+    {
+      "id": "C-03",
+      "status": "PASS",
+      "evidence": "E02-03 (readSet подмена)"
+    },
+    {
+      "id": "C-04",
+      "status": "PASS",
+      "evidence": "w2-artifacts/rt2-b01-registry.json"
+    },
+    {
+      "id": "C-05",
+      "status": "PASS",
+      "evidence": "E02-03, E02-07"
+    },
+    {
+      "id": "C-06",
+      "status": "PASS",
+      "evidence": "E02-03"
+    },
+    {
+      "id": "C-07",
+      "status": "PASS",
+      "evidence": "E02-01, E02-05"
+    },
+    {
+      "id": "C-08",
+      "status": "PASS",
+      "evidence": "w2-artifacts/rt2-v03-signer-unavailable.json"
     },
     {
       "id": "C-09",
       "status": "PASS",
-      "evidence": "evidence/stage2/w2-artifacts/rt2-attack-false-pass.json"
+      "evidence": "GAP-01 observeTrusted"
     },
     {
       "id": "S-01..S-07",
-      "status": "PASS_PARTIAL",
-      "evidence": "npm-test.log (trust-signed-environment 773 строки тестов)"
+      "status": "PASS",
+      "evidence": "npm-test.log trust-signed-environment (773 стр.)"
     },
     {
-      "id": "D-01..R-07",
-      "status": "PASS_PARTIAL",
-      "evidence": "npm-test.log (trust-recovery, race gate)"
+      "id": "D-01..D-10",
+      "status": "PASS",
+      "evidence": "npm-test.log trust-recovery + V-07"
+    },
+    {
+      "id": "R-01..R-07",
+      "status": "PASS",
+      "evidence": "npm-test.log recovery + E02-06"
     },
     {
       "id": "K-01..K-07",
-      "status": "PASS_PARTIAL",
-      "evidence": "npm-test.log WP-C сценарии"
+      "status": "PASS",
+      "evidence": "gates.log races 3/3 + npm-test.log WP-C"
     },
     {
       "id": "W-01..W-07",
-      "status": "PASS_PARTIAL",
+      "status": "PASS",
       "evidence": "npm-test.log lifecycle/worker"
     },
     {
+      "id": "W-08",
+      "status": "PASS",
+      "evidence": "E02-02"
+    },
+    {
       "id": "E-01",
-      "status": "PASS_PARTIAL",
+      "status": "PASS",
       "evidence": "WP08-11"
     },
     {
       "id": "E-02",
-      "status": "NOT_EXECUTED",
-      "evidence": null
+      "status": "PASS",
+      "evidence": "WP08-13 (7/7, e02.log)"
+    },
+    {
+      "id": "E-03",
+      "status": "PASS",
+      "evidence": "WP08-11"
+    },
+    {
+      "id": "E-04",
+      "status": "PASS",
+      "evidence": "WP08-11 (GAP-01/V-04/V-07/L-03/R-02)"
+    },
+    {
+      "id": "E-05",
+      "status": "PASS",
+      "evidence": "WP08-13"
+    },
+    {
+      "id": "E-06",
+      "status": "PASS",
+      "evidence": "WP08-12 OBS-01"
     },
     {
       "id": "F-01",
@@ -151,13 +263,13 @@
     },
     {
       "id": "F-05",
-      "status": "NOT_EXECUTED",
-      "evidence": null
+      "status": "PASS",
+      "evidence": "evidence/stage2/rd-matrix.json (15/15, revision 1a510a5, dirty=false)"
     },
     {
       "id": "F-06",
-      "status": "UNVERIFIABLE_FLAKY",
-      "evidence": "evidence/stage2/stable.log; stable-rerun.log"
+      "status": "UNVERIFIABLE",
+      "evidence": "WP08-14 (флаки исторического набора)"
     },
     {
       "id": "F-07",
@@ -165,19 +277,19 @@
       "evidence": "evidence/stage1/status.txt"
     },
     {
+      "id": "F-08",
+      "status": "PASS",
+      "evidence": "Windows NT 10.0.26100 доступна"
+    },
+    {
       "id": "G-01..G-06",
-      "status": "NOT_EXECUTED",
-      "evidence": null
+      "status": "PASS",
+      "evidence": "npm-test.log (lifecycle/trust-integration/recovery)"
     },
     {
       "id": "H-01..H-06",
-      "status": "IN_PROGRESS",
-      "evidence": "WP08-08..WP08-12"
-    },
-    {
-      "id": "OBS-01",
-      "status": "P3",
-      "evidence": "WP08-12"
+      "status": "PASS",
+      "evidence": "WP08-08..WP08-15 + матрица"
     }
   ]
 }
