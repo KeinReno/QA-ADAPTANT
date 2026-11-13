@@ -294,3 +294,13 @@ test('T-12: потеря анкера закрывает доверенный PA
   const observed = await observeTrusted({ root: w.root, trustRoot: w.trustRoot, runId: bundle.manifest.runId });
   assert.equal(observed.passed, false);
 });
+test('T-13: повреждённый реестр сред даёт AUTH_UNAVAILABLE и ноль мутаций', { timeout: 60000 }, async t => {
+  const w = await world(t);
+  const { bundle, contract } = prepare(w);
+  const approval = signApproval(w.ownerKey, approvalFields(w, { bundle, contract }), w.trust, w.trustRoot);
+  fs.writeFileSync(path.join(w.trustRoot, 'environments', w.stand.environmentId, '1.json'), '{');
+  const result = await startTrusted(bundle, trustedOptions(w, approval));
+  assert.equal(result.verdict.verdict, 'BLOCKED');
+  assert.equal(result.verdict.reasonCode, 'AUTH_UNAVAILABLE');
+  assert.equal(w.stand.mutationCount, 0);
+});

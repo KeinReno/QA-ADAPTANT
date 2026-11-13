@@ -82,11 +82,18 @@ export function createTrustContext(options = {}) {
   const { trust, trustRoot, approvalId, approval = null, issuer, subject, sid, standPublicKey, signer = null } = options;
   if (!trust || !trustRoot || !approvalId) throw new TypeError('Нужны trust, trustRoot и approvalId');
   let currentEnvironment = null;
+  let trustStoreUnavailable = false;
   let lastDecision = null;
 
   async function refreshEnvironment(runId, frozen) {
     const expected = expectedFromFrozen(frozen);
     const environment = environmentFact({ trust, trustRoot, environmentId: expected.environmentId, origin: frozen.manifest.environment.baseUrl, generation: null });
+    // Повреждённый реестр — недоступность корня доверия (E-05), а не «просто неизвестная среда».
+    trustStoreUnavailable = ['CONTRACT_INVALID', 'TRUST_STORE_UNAVAILABLE'].includes(environment.error);
+    if (trustStoreUnavailable) {
+      currentEnvironment = { record: null, error: 'ENVIRONMENT_UNKNOWN', attestation: { ok: false, body: null, error: 'ENVIRONMENT_UNAVAILABLE' } };
+      return expected;
+    }
     if (!environment.record) { currentEnvironment = { record: null, error: environment.error, attestation: { ok: false, body: null, error: environment.error } }; return expected; }
     const generation = environment.record.generation;
     let attestation = { ok: false, body: null, error: 'ENVIRONMENT_ATTESTATION_FAILED' };
@@ -110,7 +117,7 @@ export function createTrustContext(options = {}) {
       phase,
       now: nowIso(),
       authenticatedSid: sid,
-      trustStore: { available: true, code: null },
+      trustStore: trustStoreUnavailable ? { available: false, code: 'TRUST_STORE_UNAVAILABLE' } : { available: true, code: null },
       principal: principalFact(trust, subject, { windowsSid: sid }),
       issuer: principalFact(trust, issuer, { role: 'owner', domain: 'approval' }),
       approval: approvalState,
