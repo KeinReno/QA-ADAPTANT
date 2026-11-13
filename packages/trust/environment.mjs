@@ -1,6 +1,8 @@
-import { createPublicKey, generateKeyPairSync, randomBytes, sign, verify } from 'node:crypto';
+import { createHash, createPublicKey, generateKeyPairSync, randomBytes, sign, verify } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
+import net from 'node:net';
 import path from 'node:path';
 import { canonical } from '../core/canonical.mjs';
 import { publicKeyId, signTrustedDocument, verifyTrustedDocument } from './identity.mjs';
@@ -25,6 +27,17 @@ const loopbackOrigin = /^http:\/\/127\.0\.0\.1:(\d{1,5})\/$/;
 const hex64 = /^[a-f0-9]{64}$/;
 const hex = /^[a-f0-9]+$/i;
 const maxAttestationBytes = 65_536;
+const maxReadBytes = 1_048_576;
+// AUD-P0-02: аутентифицированный канал чтений. Заголовки совпадают с adapters/local/server.mjs.
+export const STAND_CHALLENGE_HEADER = 'x-qa-stand-challenge';
+export const STAND_RESPONSE_HEADER = 'x-qa-stand-response';
+const standResponseVersion = '0.2.1';
+const standResponseKeys = [
+  'schemaVersion', 'domain', 'environmentId', 'generation', 'origin', 'standKeyId', 'challenge',
+  'method', 'path', 'status', 'bodySha256', 'pid', 'issuedAt', 'keyId', 'signature', 'signatureAlgorithm'
+];
+const httpMethod = /^[A-Z]{1,16}$/;
+const hashCanonical = value => createHash('sha256').update(canonical(value), 'utf8').digest('hex');
 // Метка «тело уже проверено подписью owner»: не даёт аттестовать неподписанную запись, собранную вызывающим.
 const verifiedRecord = Symbol('qa-adaptant-environment-record-verified');
 
@@ -349,6 +362,341 @@ export function verifyEnvironmentAttestation(trust, record, attestation, options
   return body;
 }
 
+function assertStandResponseContent(body) {
+  if (body.schemaVersion !== standResponseVersion || body.domain !== 'stand-response') fail('CONTRACT_INVALID', 'Версия или домен подписи ответа стенда не 0.2.1');
+  assertId(body.environmentId, 'environmentId ответа стенда');
+  assertGeneration(body.generation);
+  if (typeof body.origin !== 'string' || body.origin.length < 1 || body.origin.length > 200) fail('CONTRACT_INVALID', 'origin ответа стенда не строка');
+  if (typeof body.standKeyId !== 'string' || !hex64.test(body.standKeyId)) fail('CONTRACT_INVALID', 'standKeyId ответа стенда не SHA-256');
+  if (typeof body.challenge !== 'string' || !hex64.test(body.challenge)) fail('CONTRACT_INVALID', 'challenge ответа стенда не 32 байта hex');
+  if (typeof body.method !== 'string' || !httpMethod.test(body.method)) fail('CONTRACT_INVALID', 'method ответа стенда не HTTP-метод');
+  if (typeof body.path !== 'string' || body.path.length < 1 || body.path.length > 200 || body.path[0] !== '/') fail('CONTRACT_INVALID', 'path ответа стенда не путь');
+  if (!Number.isSafeInteger(body.status) || body.status < 100 || body.status > 599) fail('CONTRACT_INVALID', 'status ответа стенда вне диапазона');
+  if (typeof body.bodySha256 !== 'string' || !hex64.test(body.bodySha256)) fail('CONTRACT_INVALID', 'bodySha256 ответа стенда не SHA-256');
+  assertAttestationPid(body.pid);
+  if (typeof body.issuedAt !== 'string' || body.issuedAt.length < 20 || body.issuedAt.length > 40 || !Number.isFinite(Date.parse(body.issuedAt))) fail('CONTRACT_INVALID', 'issuedAt ответа стенда не ISO-8601');
+  if (typeof body.keyId !== 'string' || !hex64.test(body.keyId)) fail('CONTRACT_INVALID', 'keyId ответа стенда не SHA-256');
+}
+
+function standResponseStatement(signature) {
+  if (signature && typeof signature === 'object' && !Array.isArray(signature)) return signature;
+  if (typeof signature === 'string' && signature.length > 0) {
+    const text = signature.trim().startsWith('{') ? signature : Buffer.from(signature, 'base64url').toString('utf8');
+    try { return JSON.parse(text); }
+    catch { fail('ENVIRONMENT_ATTESTATION_FAILED', 'Подпись ответа стенда не разбирается'); }
+  }
+  fail('ENVIRONMENT_ATTESTATION_FAILED', 'Подпись ответа стенда отсутствует');
+}
+
+function responseBodySha256({ body, responseBytes }) {
+  if (responseBytes !== undefined) {
+    let parsed = body;
+    if (parsed === undefined) {
+      let text;
+      if (typeof responseBytes === 'string') text = responseBytes;
+      else if (Buffer.isBuffer(responseBytes) || responseBytes instanceof Uint8Array) text = Buffer.from(responseBytes).toString('utf8');
+      else fail('CONTRACT_INVALID', 'responseBytes не строка и не байты');
+      try { parsed = JSON.parse(text); }
+      catch { fail('ENVIRONMENT_ATTESTATION_FAILED', 'Тело ответа стенда не JSON'); }
+    }
+    return hashCanonical(parsed);
+  }
+  if (body === undefined) fail('CONTRACT_INVALID', 'Тело ответа стенда не передано');
+  return hashCanonical(body);
+}
+
+// AUD-P0-02: проверка подписи ответа стенда ключом из доверенной регистрации (record подписан owner).
+// Сверяются environmentId/generation/origin/standKeyId/challenge/method/path/status/bodySha256/pid/keyId,
+// затем Ed25519-подпись по каноническому JSON без signature/signatureAlgorithm.
+export function verifyStandResponse({
+  trust, record, challenge, body, responseBytes, signature,
+  method, path: responsePath, status, pid, standPublicKey: publicKey
+} = {}) {
+  const recordFields = recordBody(trust, record);
+  requireAttestable(recordFields);
+  if (typeof challenge !== 'string' || !hex64.test(challenge)) fail('CONTRACT_INVALID', 'Свежий challenge не передан');
+  const statement = standResponseStatement(signature);
+  exactKeys(statement, standResponseKeys);
+  assertStandResponseContent(statement);
+  if (statement.signatureAlgorithm !== 'Ed25519') fail('ENVIRONMENT_ATTESTATION_FAILED', 'Алгоритм подписи ответа стенда не Ed25519');
+  if (typeof statement.signature !== 'string' || !hex.test(statement.signature)) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Подпись ответа стенда отсутствует или не hex');
+  if (statement.environmentId !== recordFields.environmentId) fail('ENVIRONMENT_ATTESTATION_FAILED', 'environmentId ответа стенда не совпал с реестром');
+  if (statement.generation !== recordFields.generation) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Поколение среды в ответе стенда изменилось');
+  if (statement.origin !== recordFields.origin) fail('ENVIRONMENT_ATTESTATION_FAILED', 'origin ответа стенда не совпал с реестром');
+  if (statement.standKeyId !== recordFields.standKeyId) fail('ENVIRONMENT_ATTESTATION_FAILED', 'standKeyId ответа стенда не совпал с реестром');
+  if (statement.keyId !== recordFields.standKeyId) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Ответ стенда подписан не ключом стенда');
+  if (statement.challenge !== challenge) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Ответ стенда не несёт свежий challenge');
+  if (method !== undefined && statement.method !== String(method).toUpperCase()) fail('ENVIRONMENT_ATTESTATION_FAILED', 'method ответа стенда не совпал с запросом');
+  if (responsePath !== undefined && statement.path !== responsePath) fail('ENVIRONMENT_ATTESTATION_FAILED', 'path ответа стенда не совпал с запросом');
+  if (status !== undefined && statement.status !== status) fail('ENVIRONMENT_ATTESTATION_FAILED', 'status ответа стенда не совпал с прочитанным');
+  if (pid !== undefined && statement.pid !== pid) fail('ENVIRONMENT_ATTESTATION_FAILED', 'pid ответа стенда не совпал с аттестованным процессом');
+  if (statement.bodySha256 !== responseBodySha256({ body, responseBytes })) fail('ENVIRONMENT_ATTESTATION_FAILED', 'bodySha256 ответа стенда не совпал с телом');
+  const key = standPublicKey(trust, recordFields, { standPublicKey: publicKey });
+  if (!key) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Неизвестный ключ стенда: standKeyId не разрешается');
+  const unsignedStatement = unsigned(statement);
+  const ok = verify(null, Buffer.from(canonical(unsignedStatement), 'utf8'), key, Buffer.from(statement.signature, 'hex'));
+  if (!ok) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Подпись ответа стенда не сошлась');
+  return unsignedStatement;
+}
+
+function headerValue(headers, name) {
+  if (!headers) return null;
+  if (typeof headers.get === 'function') return headers.get(name);
+  if (typeof headers === 'object') {
+    for (const key of Object.keys(headers)) if (key.toLowerCase() === name) return headers[key];
+  }
+  return null;
+}
+
+// Разбор заголовка подписи ответа: base64url(JSON) либо сам JSON (для тестовых двойников).
+export function readStandResponseSignature(headers) {
+  const raw = headerValue(headers, STAND_RESPONSE_HEADER);
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  const text = raw.trim().startsWith('{') ? raw : Buffer.from(raw, 'base64url').toString('utf8');
+  try { return JSON.parse(text); }
+  catch { fail('ENVIRONMENT_ATTESTATION_FAILED', 'Подпись ответа стенда не JSON'); }
+}
+
+// AUD-P0-02 / §10.2: закреплённое соединение (pinned keep-alive). Control/Verification один раз
+// открывают TCP к аттестованному стенду, аттестуют его на этом же сокете и далее не открывают новых
+// соединений: подмена процесса стенда ломает закреплённый сокет, а не уводит запрос на rogue.
+export function createPinnedAgent(socket) {
+  if (!socket || typeof socket !== 'object' || typeof socket.destroyed !== 'boolean') fail('CONTRACT_INVALID', 'Закреплённый сокет не передан');
+  const agent = new http.Agent({ keepAlive: true, maxSockets: 1, maxFreeSockets: 1 });
+  agent.createConnection = (options, callback) => {
+    if (!socket.destroyed) {
+      if (typeof callback === 'function') { callback(null, socket); return undefined; }
+      return socket;
+    }
+    // Новое TCP-соединение не открывается принципиально: разрыв закреплённого сокета — отказ.
+    const error = Object.assign(new Error('Закреплённое соединение стенда разорвано'), { code: 'ENVIRONMENT_UNAVAILABLE' });
+    if (typeof callback === 'function') { callback(error); return undefined; }
+    throw error;
+  };
+  return agent;
+}
+
+function transportError(error) {
+  if (error && typeof error.code === 'string'
+    && (error.code.startsWith('ENVIRONMENT_') || error.code === 'CONTRACT_INVALID')) return error;
+  return Object.assign(new Error('Закреплённое соединение стенда недоступно: ' + (error?.message || 'разрыв')), { code: 'ENVIRONMENT_UNAVAILABLE' });
+}
+
+// HTTP-запрос строго по уже закреплённому сокету. Новый TCP не открывается никогда.
+export function pinnedStandRequest(connection, { method = 'GET', path: requestPath = '/', headers = {}, body, timeoutMs } = {}) {
+  if (!connection || !connection.agent || typeof connection.origin !== 'string') fail('CONTRACT_INVALID', 'Закреплённое соединение стенда не передано');
+  let target;
+  try { target = new URL(requestPath, connection.origin); }
+  catch { fail('CONTRACT_INVALID', 'Путь запроса закреплённого соединения не URL'); }
+  if (target.origin !== connection.origin) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Запрос уходит за пределы закреплённого origin');
+  if (target.protocol !== 'http:') fail('ENVIRONMENT_ATTESTATION_FAILED', 'Закреплённое соединение не по http');
+  const payload = body === undefined ? null : Buffer.from(typeof body === 'string' ? body : JSON.stringify(body), 'utf8');
+  const requestHeaders = { accept: 'application/json', ...headers };
+  if (payload !== null) {
+    requestHeaders['content-type'] = requestHeaders['content-type'] || 'application/json';
+    requestHeaders['content-length'] = payload.length;
+  }
+  const limit = timeoutOf(timeoutMs === undefined ? connection.timeoutMs : timeoutMs);
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(transportError(error));
+      else resolve(value);
+    };
+    let request;
+    try {
+      request = http.request({
+        host: target.hostname,
+        port: Number(target.port),
+        method: String(method).toUpperCase(),
+        path: target.pathname + target.search,
+        headers: requestHeaders,
+        agent: connection.agent,
+        timeout: limit
+      }, response => {
+        const chunks = [];
+        let total = 0;
+        let tooLarge = false;
+        response.on('data', chunk => {
+          total += chunk.length;
+          if (total > maxReadBytes) { tooLarge = true; response.destroy(); return; }
+          chunks.push(chunk);
+        });
+        response.on('end', () => {
+          if (tooLarge) return finish(Object.assign(new Error('Ответ закреплённого соединения слишком большой'), { code: 'ENVIRONMENT_ATTESTATION_FAILED' }));
+          const responseTextValue = Buffer.concat(chunks).toString('utf8');
+          let parsed = null;
+          try { parsed = responseTextValue.length ? JSON.parse(responseTextValue) : null; }
+          catch { parsed = null; }
+          finish(null, { status: response.statusCode, headers: response.headers, text: responseTextValue, body: parsed });
+        });
+        response.on('error', error => finish(error));
+      });
+    } catch (error) { finish(error); return; }
+    request.on('timeout', () => request.destroy(Object.assign(new Error('Таймаут закреплённого соединения стенда'), { code: 'ENVIRONMENT_UNAVAILABLE' })));
+    request.on('error', error => finish(error));
+    if (payload !== null) request.write(payload);
+    request.end();
+  });
+}
+
+// Свежая аттестация по тому же закреплённому сокету: challenge-response, подпись environment-attest
+// и подпись stand-response на тот же challenge и то же тело.
+export async function attestPinnedConnection(connection, { trust, record, standPublicKey: publicKey, headers = {}, timeoutMs } = {}) {
+  if (!connection || typeof connection.request !== 'function') fail('CONTRACT_INVALID', 'Закреплённое соединение стенда не передано');
+  const recordFields = recordBody(trust, record || connection.record);
+  requireAttestable(recordFields);
+  if (new URL(recordFields.origin).origin !== connection.origin) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Запись среды не совпадает с закреплённым origin');
+  const challenge = newChallenge();
+  const response = await pinnedStandRequest(connection, {
+    method: 'POST', path: '/attest',
+    headers: { ...headers, [STAND_CHALLENGE_HEADER]: challenge },
+    body: { challenge }, timeoutMs
+  });
+  if (response.status !== 200) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Среда ответила ' + response.status);
+  if (!response.body || typeof response.body !== 'object' || Array.isArray(response.body)) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Аттестация среды не JSON-объект');
+  const attestation = verifyEnvironmentAttestation(trust, recordFields, response.body, { challenge, standPublicKey: publicKey });
+  const statement = readStandResponseSignature(response.headers);
+  if (!statement) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Ответ аттестации не подписан доменом stand-response');
+  const verified = verifyStandResponse({
+    trust, record: recordFields, challenge, body: response.body, responseBytes: response.text, signature: statement,
+    method: 'POST', path: '/attest', status: 200, standPublicKey: publicKey
+  });
+  if (verified.pid !== attestation.pid) fail('ENVIRONMENT_ATTESTATION_FAILED', 'pid подписи ответа не совпал с pid аттестации');
+  return { challenge, attestation, response: verified };
+}
+
+// Control открывает ОДНО соединение к аттестованному стенду и аттестует его на этом же сокете.
+// Возвращает { socket, agent, attestation, portOwnerPid, request(), close() }; новых TCP не открывает.
+export async function openPinnedStandConnection({ record, trust, standPublicKey: publicKey, headers = {}, timeoutMs } = {}) {
+  const recordFields = recordBody(trust, record);
+  requireAttestable(recordFields);
+  const parsed = new URL(recordFields.origin);
+  if (parsed.protocol !== 'http:' || parsed.hostname !== '127.0.0.1' || !parsed.port) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Закрепляется только локальный http-стенд 127.0.0.1:<port>');
+  const port = Number(parsed.port);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Порт закрепляемого стенда вне диапазона');
+  const socket = net.connect({ host: '127.0.0.1', port });
+  socket.setNoDelay(true);
+  const connected = await new Promise(resolve => {
+    socket.once('connect', () => resolve({ ok: true }));
+    socket.once('error', error => resolve({ error }));
+    socket.setTimeout(timeoutOf(timeoutMs), () => socket.destroy(Object.assign(new Error('Таймаут закреплённого соединения стенда'), { code: 'ENVIRONMENT_UNAVAILABLE' })));
+  });
+  if (!connected.ok) {
+    try { socket.destroy(); } catch { /* уже закрыт */ }
+    fail('ENVIRONMENT_UNAVAILABLE', 'Закреплённое соединение со стендом не установлено');
+  }
+  socket.setTimeout(0);
+  const connection = {
+    socket,
+    record: recordFields,
+    origin: parsed.origin,
+    timeoutMs: timeoutOf(timeoutMs),
+    agent: createPinnedAgent(socket),
+    request(options = {}) { return pinnedStandRequest(connection, options); },
+    close() {
+      try { connection.agent.destroy(); } catch { /* уже уничтожен */ }
+      try { socket.destroy(); } catch { /* уже закрыт */ }
+    }
+  };
+  try {
+    const attested = await attestPinnedConnection(connection, { trust, record: recordFields, standPublicKey: publicKey, headers, timeoutMs });
+    if (!processAlive(attested.attestation.pid)) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Процесс стенда не жив');
+    const owner = await portOwnerPid(recordFields.origin);
+    if (owner === null) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Владелец локального порта не определён');
+    if (owner !== attested.attestation.pid) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Порт обслуживает не аттестованный процесс');
+    connection.attestation = attested.attestation;
+    connection.attestationResponse = attested.response;
+    connection.portOwnerPid = owner;
+    return connection;
+  } catch (error) {
+    connection.close();
+    throw error;
+  }
+}
+
+// AUD-P0-02: Verification сам подтверждает среду — свежая аттестация до и после набора чтений
+// на собственном закреплённом соединении; каждое чтение обязано нести подпись стенда.
+// read(ctx) — набор чтений вызывающего; ctx.verifiedRead(url, {headers, method}) подписывает каждое чтение.
+export async function attestationVerifiedReads({
+  trust, record, standPublicKey: publicKey, timeoutMs, headers = {}, read, maxReads = 64
+} = {}) {
+  if (typeof read !== 'function') fail('CONTRACT_INVALID', 'Набор чтений не передан');
+  const recordFields = recordBody(trust, record);
+  requireAttestable(recordFields);
+  const connection = await openPinnedStandConnection({ record: recordFields, trust, standPublicKey: publicKey, timeoutMs });
+  const before = { record: recordFields, attestation: connection.attestation, portOwnerPid: connection.portOwnerPid };
+  const identity = {
+    environmentId: recordFields.environmentId,
+    generation: recordFields.generation,
+    origin: recordFields.origin,
+    standKeyId: recordFields.standKeyId,
+    pid: connection.attestation.pid
+  };
+  const reads = [];
+  const context = {
+    environmentId: identity.environmentId,
+    generation: identity.generation,
+    origin: identity.origin,
+    standKeyId: identity.standKeyId,
+    pid: identity.pid,
+    async verifiedRead(target, options = {}) {
+      if (reads.length >= maxReads) fail('CONTRACT_INVALID', 'Превышено число подписанных чтений среды');
+      const method = String(options.method || 'GET').toUpperCase();
+      let url;
+      try { url = new URL(target, identity.origin); }
+      catch { fail('CONTRACT_INVALID', 'Адрес чтения среды не URL'); }
+      if (url.origin !== connection.origin) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Чтение уходит за пределы закреплённого origin');
+      if (url.protocol !== 'http:') fail('ENVIRONMENT_ATTESTATION_FAILED', 'Чтение среды не по http');
+      const challenge = newChallenge();
+      const response = await connection.request({
+        method,
+        path: url.pathname + url.search,
+        headers: { ...headers, ...(options.headers || {}), [STAND_CHALLENGE_HEADER]: challenge },
+        timeoutMs: options.timeoutMs
+      });
+      if (response.status >= 300 && response.status < 400) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Редирект среды запрещён');
+      if (!response.body || typeof response.body !== 'object') fail('ENVIRONMENT_ATTESTATION_FAILED', 'Тело ответа среды не JSON');
+      const signature = readStandResponseSignature(response.headers);
+      if (!signature) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Ответ среды не подписан ключом стенда');
+      let verified;
+      try {
+        verified = verifyStandResponse({
+          trust, record: recordFields, challenge, body: response.body, responseBytes: response.text, signature,
+          method, path: url.pathname, status: response.status, pid: identity.pid, standPublicKey: publicKey
+        });
+      } catch (error) {
+        if (error.code === 'TRUST_STORE_UNAVAILABLE' || error.code === 'ENVIRONMENT_REVOKED' || error.code === 'ENVIRONMENT_ATTESTATION_FAILED') throw error;
+        fail('ENVIRONMENT_ATTESTATION_FAILED', 'Подпись ответа среды не подтверждена: ' + error.message);
+      }
+      reads.push({
+        method, path: url.pathname, status: response.status, challenge,
+        bodySha256: verified.bodySha256, issuedAt: verified.issuedAt
+      });
+      return { status: response.status, body: response.body, headers: response.headers, bodySha256: verified.bodySha256, attestation: verified };
+    }
+  };
+  try {
+    const result = await read(context);
+    const afterAttested = await attestPinnedConnection(connection, { trust, record: recordFields, standPublicKey: publicKey, headers, timeoutMs });
+    const after = { record: recordFields, attestation: afterAttested.attestation };
+    if (afterAttested.attestation.pid !== identity.pid) fail('ENVIRONMENT_ATTESTATION_FAILED', 'pid среды изменился во время набора чтений');
+    if (!processAlive(identity.pid)) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Процесс стенда не жив после набора чтений');
+    const owner = await portOwnerPid(recordFields.origin);
+    if (owner === null) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Владелец локального порта не определён после набора чтений');
+    if (owner !== identity.pid) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Порт обслуживает не аттестованный процесс');
+    after.portOwnerPid = owner;
+    for (const field of ['environmentId', 'generation', 'origin', 'standKeyId', 'pid']) {
+      const afterValue = field === 'pid' ? after.attestation.pid : recordFields[field];
+      if (afterValue !== identity[field]) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Среда изменилась во время набора чтений: ' + field);
+    }
+    return { result, before, after, reads };
+  } finally {
+    connection.close();
+  }
+}
 function timeoutOf(value) {
   if (Number.isFinite(value) && value > 0) return Math.floor(value);
   return DEFAULT_ATTEST_TIMEOUT_MS;
@@ -373,10 +721,10 @@ function declaredContentLength(response) {
 }
 
 // D-04: читаем поток с капом до буферизации всего тела; content-length проверяется заранее.
-async function responseText(response) {
+async function responseText(response, cap = maxAttestationBytes) {
   if (!response || typeof response.text !== 'function') fail('ENVIRONMENT_ATTESTATION_FAILED', 'Ответ среды не читается');
   const declared = declaredContentLength(response);
-  if (declared !== null && declared > maxAttestationBytes) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Ответ среды слишком большой');
+  if (declared !== null && declared > cap) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Ответ среды слишком большой');
   if (response.body && typeof response.body.getReader === 'function') {
     const reader = response.body.getReader();
     const chunks = [];
@@ -387,7 +735,7 @@ async function responseText(response) {
         if (done) break;
         const chunk = Buffer.from(value);
         total += chunk.length;
-        if (total > maxAttestationBytes) {
+        if (total > cap) {
           try { await reader.cancel(); } catch { /* поток уже закрыт */ }
           fail('ENVIRONMENT_ATTESTATION_FAILED', 'Ответ среды слишком большой');
         }
@@ -404,7 +752,7 @@ async function responseText(response) {
   try { text = await response.text(); }
   catch { fail('ENVIRONMENT_UNAVAILABLE', 'Ответ среды оборван'); }
   if (typeof text !== 'string') fail('ENVIRONMENT_ATTESTATION_FAILED', 'Ответ среды не текст');
-  if (Buffer.byteLength(text, 'utf8') > maxAttestationBytes) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Ответ среды слишком большой');
+  if (Buffer.byteLength(text, 'utf8') > cap) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Ответ среды слишком большой');
   return text;
 }
 
