@@ -442,6 +442,8 @@ const projectionTable = [
   { name: 'отмена после intent', decision: { effect: 'DENY', phase: 'reconcile', reasonCode: 'RUN_CANCELED' }, expected: { verdict: 'INCONCLUSIVE', reasonCode: 'CANCELED' } },
   { name: 'конфликт анкера', decision: { effect: 'DENY', phase: 'publish', reasonCode: 'ANCHOR_CONFLICT' }, expected: { verdict: 'BLOCKED', reasonCode: 'INTEGRITY_ERROR' } },
   { name: 'анкер отсутствует', decision: { effect: 'DENY', phase: 'publish', reasonCode: 'ANCHOR_MISSING' }, expected: { verdict: 'INCONCLUSIVE', reasonCode: 'EVIDENCE_MISSING' } },
+  { name: 'ENVIRONMENT_REVOKED до intent', decision: { effect: 'DENY', phase: 'dispatch', reasonCode: 'ENVIRONMENT_REVOKED' }, expected: { verdict: 'BLOCKED', reasonCode: 'ENVIRONMENT_CHANGED' } },
+  { name: 'ENVIRONMENT_REVOKED после intent', decision: { effect: 'DENY', phase: 'reconcile', reasonCode: 'ENVIRONMENT_REVOKED' }, expected: { verdict: 'INCONCLUSIVE', reasonCode: 'ENVIRONMENT_CHANGED' } },
   { name: 'неизвестный код не даёт PASS', decision: { effect: 'DENY', phase: 'dispatch', reasonCode: 'SOMETHING_ELSE' }, expected: { verdict: 'BLOCKED', reasonCode: 'CONTRACT_INVALID' } },
   { name: 'некорректное решение', decision: null, expected: { verdict: 'BLOCKED', reasonCode: 'CONTRACT_INVALID' } }
 ];
@@ -504,6 +506,70 @@ test('чтение не блокируется сменой поколения �
   const dispatch = decide(baseFacts({ environment: { record: environmentRecord({ generation: 2 }) } }));
   assert.equal(dispatch.effect, 'DENY');
   assert.equal(dispatch.reasonCode, 'ENVIRONMENT_ATTESTATION_FAILED');
+});
+
+test('D-1: SID проверяется раньше роли — CALLER_UNAUTHENTICATED, а не ROLE_DENIED', () => {
+  const cases = [
+    ['чужая роль', { authenticatedSid: 'S-1-5-21-9999', principal: { body: principal({ roles: ['verifier'] }) } }],
+    ['null SID', { authenticatedSid: null, principal: { body: principal({ roles: ['verifier'] }) } }],
+    ['owner+runner', { authenticatedSid: 'S-1-5-21-9999', principal: { body: principal({ roles: ['owner', 'runner'], keyId: OWNER_KEY_ID }) } }]
+  ];
+  for (const [name, patch] of cases) {
+    const decision = decide(baseFacts(patch));
+    assert.equal(decision.effect, 'DENY', name);
+    assert.equal(decision.reasonCode, 'CALLER_UNAUTHENTICATED', name);
+  }
+  // Отзыв Principal остаётся раньше SID и роли.
+  const revoked = decide(baseFacts({ authenticatedSid: 'S-1-5-21-9999', principal: { body: principal({ status: 'revoked' }) } }));
+  assert.equal(revoked.reasonCode, 'PRINCIPAL_REVOKED');
+});
+
+test('D-2: revoked/disabled среда запрещает и доверенное чтение в 0.2', () => {
+  for (const phase of ['observe', 'reconcile', 'publish']) {
+    for (const status of ['revoked', 'disabled']) {
+      const decision = decide(baseFacts({ phase, environment: { record: environmentRecord({ status }) } }));
+      assert.equal(decision.effect, 'DENY', phase + '/' + status);
+      assert.equal(decision.reasonCode, 'ENVIRONMENT_REVOKED', phase + '/' + status);
+    }
+    const fromError = decide(baseFacts({ phase, environment: { error: 'ENVIRONMENT_REVOKED' } }));
+    assert.equal(fromError.effect, 'DENY');
+    assert.equal(fromError.reasonCode, 'ENVIRONMENT_REVOKED');
+  }
+  const dispatch = decide(baseFacts({ environment: { record: environmentRecord({ status: 'revoked' }) } }));
+  assert.equal(dispatch.reasonCode, 'ENVIRONMENT_REVOKED');
+});
+
+test('D-3: consumption без bodySha256 не является полным и не даёт ALLOW в чтении', () => {
+  const { bodySha256, ...withoutHash } = consumptionBody();
+  assert.equal(typeof bodySha256, 'string');
+  for (const phase of ['observe', 'reconcile']) {
+    const decision = decide(baseFacts({ phase, approval: { state: 'consumed', consumption: withoutHash } }));
+    assert.equal(decision.effect, 'DENY', phase);
+    assert.equal(decision.reasonCode, 'CONSUMPTION_INCOMPLETE', phase);
+  }
+  const dispatch = decide(baseFacts({ approval: { state: 'consumed', consumption: withoutHash } }));
+  assert.equal(dispatch.reasonCode, 'CONSUMPTION_INCOMPLETE');
+});
+
+test('D-4: неизвестный environment.attestation.error отвергается во всех фазах', () => {
+  for (const phase of ['dispatch', 'preflight', 'observe', 'reconcile', 'publish']) {
+    const decision = decide(baseFacts({ phase, environment: { attestation: { ok: false, body: null, error: 'SOMETHING_NEW' } } }));
+    assert.equal(decision.effect, 'DENY', phase);
+    assert.equal(decision.reasonCode, 'CONTRACT_INVALID', phase);
+  }
+  // Известная ошибка аттестации в чтении не требуется (живая аттестация нужна только перед dispatch).
+  const read = decide(baseFacts({ phase: 'observe', environment: { attestation: { ok: false, body: null, error: 'ENVIRONMENT_ATTESTATION_FAILED' } } }));
+  assert.equal(read.effect, 'ALLOW');
+  assert.equal(read.reasonCode, 'TRUST_OK');
+});
+
+test('D-5: projectToVerdict отображает ENVIRONMENT_REVOKED в ENVIRONMENT_CHANGED до и после intent', () => {
+  const before = decide(baseFacts({ phase: 'dispatch', environment: { record: environmentRecord({ status: 'revoked' }) } }));
+  assert.equal(before.reasonCode, 'ENVIRONMENT_REVOKED');
+  assert.deepEqual(projectToVerdict(before), { verdict: 'BLOCKED', reasonCode: 'ENVIRONMENT_CHANGED' });
+  const after = decide(baseFacts({ phase: 'reconcile', environment: { record: environmentRecord({ status: 'revoked' }) } }));
+  assert.equal(after.reasonCode, 'ENVIRONMENT_REVOKED');
+  assert.deepEqual(projectToVerdict(after), { verdict: 'INCONCLUSIVE', reasonCode: 'ENVIRONMENT_CHANGED' });
 });
 
 test('проекция берёт реальные решения decide: DENY даёт BLOCKED, INDETERMINATE — INCONCLUSIVE', () => {

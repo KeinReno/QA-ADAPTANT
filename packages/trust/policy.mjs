@@ -34,7 +34,7 @@ const consumptionKeys = ['approvalId', 'consumedAt', 'decisionId', 'environmentG
 // Коды причин, которые PDP возвращает вызывающему. Таблица: docs/wp-00/03-CONTRACT-PROPOSALS.md.
 const authReasons = new Set(['TRUST_STORE_UNAVAILABLE', 'PRINCIPAL_UNKNOWN', 'PRINCIPAL_REVOKED', 'CALLER_UNAUTHENTICATED', 'APPROVAL_SIGNATURE_INVALID', 'CONSUMPTION_INCOMPLETE']);
 const contractReasons = new Set(['ROLE_DENIED', 'APPROVAL_MISSING', 'APPROVAL_MISMATCH', 'APPROVAL_EXPIRED', 'APPROVAL_REVOKED', 'APPROVAL_REPLAY', 'APPROVAL_CONSUMED', 'ENVIRONMENT_KIND_DENIED', 'CONTRACT_INVALID', 'MUTATION_ALREADY_RECORDED']);
-const environmentReasons = new Set(['ENVIRONMENT_UNKNOWN', 'ENVIRONMENT_ATTESTATION_FAILED', 'ENVIRONMENT_UNAVAILABLE']);
+const environmentReasons = new Set(['ENVIRONMENT_UNKNOWN', 'ENVIRONMENT_REVOKED', 'ENVIRONMENT_ATTESTATION_FAILED', 'ENVIRONMENT_UNAVAILABLE']);
 const anchorReasons = new Set(['ANCHOR_MISSING', 'PUBLICATION_PENDING', 'ANCHOR_UNLINKED']);
 const integrityReasons = new Set(['ANCHOR_CONFLICT', 'ANCHOR_SIGNATURE_INVALID', 'ANCHOR_BINDING_REJECTED']);
 
@@ -197,9 +197,9 @@ function inspectConsumption(consumption) {
   for (const key of consumptionKeys) body[key] = consumption[key];
   if (!isId(body.approvalId) || !isId(body.runId) || !isId(body.decisionId)) return { status: 'incomplete', body: null };
   if (!isHash(body.inputsHash) || !isTime(body.consumedAt) || !isGeneration(body.environmentGeneration)) return { status: 'incomplete', body: null };
-  if (Object.hasOwn(consumption, 'bodySha256')) {
-    if (!isHash(consumption.bodySha256) || consumption.bodySha256 !== digest(body)) return { status: 'incomplete', body: null };
-  }
+  // D-3: полное тело расхода обязано содержать сходящийся bodySha256 (03-CONTRACT-PROPOSALS, approval.mjs).
+  if (!Object.hasOwn(consumption, 'bodySha256')) return { status: 'incomplete', body: null };
+  if (!isHash(consumption.bodySha256) || consumption.bodySha256 !== digest(body)) return { status: 'incomplete', body: null };
   return { status: 'complete', body };
 }
 
@@ -275,22 +275,25 @@ function evaluate(facts) {
     fail('TRUST_STORE_UNAVAILABLE', 'Корень доверия недоступен');
   }
 
-  // 2. Субъект (Principal), его состояние и роль.
+  // 2. Субъект (Principal) и его состояние. Отзыв субъекта проверяется до SID.
   const principal = facts.principal.body;
   if (principal === null) fail('PRINCIPAL_UNKNOWN', 'Карточка субъекта не загружена');
   if (errorCodeOf(facts.principal.error)) fail('PRINCIPAL_UNKNOWN', 'Карточка субъекта не проверена');
   validatePrincipalCard(principal, 'principal');
   if (principal.status !== 'active') fail('PRINCIPAL_REVOKED', 'Субъект отозван');
-  if (principal.roles.includes('owner') && principal.roles.includes('runner')) fail('ROLE_DENIED', 'Owner и runner не совмещаются');
-  if (principal.roles.includes('owner') && principal.roles.includes('anchor-signer')) fail('ROLE_DENIED', 'Owner и anchor-signer не совмещаются');
-  if (!principal.roles.includes('owner') && !principal.roles.includes('operator')) fail('ROLE_DENIED', 'Роль не позволяет вызывать доверенный вход');
 
-  // 3. Аутентификация вызывающего: SID процесса, а не строка пользовательского ввода.
+  // 3. Аутентификация вызывающего до авторизации роли (§5.3: SID раньше ROLE_DENIED).
+  // SID читается у процесса, а не берётся из строки пользовательского ввода.
   if (typeof facts.authenticatedSid !== 'string' || facts.authenticatedSid.length === 0) fail('CALLER_UNAUTHENTICATED', 'SID вызывающего не прочитан');
   if (principal.roles.includes('operator') && typeof principal.windowsSid !== 'string') fail('CALLER_UNAUTHENTICATED', 'У оператора нет windowsSid в карточке');
   if (principal.windowsSid !== facts.authenticatedSid) fail('CALLER_UNAUTHENTICATED', 'SID вызывающего не совпал с карточкой субъекта');
 
-  // 4. Реестр операций 0.1: без записи в реестре доверенный путь не расширяется.
+  // 4. Роль субъекта: только после подтверждённого SID.
+  if (principal.roles.includes('owner') && principal.roles.includes('runner')) fail('ROLE_DENIED', 'Owner и runner не совмещаются');
+  if (principal.roles.includes('owner') && principal.roles.includes('anchor-signer')) fail('ROLE_DENIED', 'Owner и anchor-signer не совмещаются');
+  if (!principal.roles.includes('owner') && !principal.roles.includes('operator')) fail('ROLE_DENIED', 'Роль не позволяет вызывать доверенный вход');
+
+  // 5. Реестр операций 0.1: без записи в реестре доверенный путь не расширяется.
   if (facts.registry.operationAllowed !== true) fail('CONTRACT_INVALID', 'Операция вне доверенного реестра 0.1');
   if (facts.registry.effectsMatch !== true) fail('APPROVAL_MISMATCH', 'Ожидаемые эффекты не входят в реестр операции');
 
@@ -358,6 +361,11 @@ function evaluate(facts) {
   if (environmentError) {
     if (environmentError === 'ENVIRONMENT_UNKNOWN' || environmentError === 'ENVIRONMENT_REVOKED' || environmentError === 'ENVIRONMENT_UNAVAILABLE' || environmentError === 'ENVIRONMENT_ATTESTATION_FAILED') fail(environmentError, 'Среда не подтверждена сборщиком фактов');
     fail('CONTRACT_INVALID', 'environment.error имеет неизвестный код');
+  }
+  // D-4: неизвестный код ошибки аттестации отвергается во всех фазах, включая чтение.
+  const attestationError = errorCodeOf(environment.attestation.error);
+  if (attestationError && attestationError !== 'ENVIRONMENT_ATTESTATION_FAILED' && attestationError !== 'ENVIRONMENT_UNAVAILABLE') {
+    fail('CONTRACT_INVALID', 'environment.attestation.error имеет неизвестный код');
   }
   if (environment.record === null) fail('ENVIRONMENT_UNKNOWN', 'Запись реестра сред отсутствует');
   validateEnvironmentRecord(environment.record);
