@@ -1,90 +1,68 @@
 # WP-06 — внутреннее независимое ревью: интеграция доверенного входа
 
 Ревьюер: Agent B (автор WP-05, код WP-06 не писал). Код интеграции не изменялся.
-Проверяемая ревизия: `feat/adaptant-02-trust-integration`, SHA `077bca4420049ba767ab5a0c62d1e4d21f0aaa84`, worktree `C:\Users\gvi\Desktop\QA-ADAPTANT-harness\integration`.
-Дата: 13.11.2026.
-Метод: чтение `git diff 0e7e6c2..077bca4` и фактический запуск кода. Ветка уехала вперёд во время ревью, поэтому все заявленные ниже прогоны выполнены в **отдельном detached-worktree ровно на 077bca4** (`git worktree add --detach ... 077bca4`), после прогонов worktree удалён. Пробы — во временных каталогах вне репозитория.
+Проверяемая ревизия: `feat/adaptant-02-trust-integration`, SHA `53b1115b5efd4c9c2be48452c3fc523b19b56df8`.
+Предыдущая проверенная ревизия: `077bca4` (FIX REQUIRED по F-01). Дата повторной проверки: 13.11.2026.
 
-## 1. Проверенные файлы
+**Вердикт по ревизии `53b1115`: ACCEPT (в границах внутреннего ревью WP-06).**
 
-`apps/control/run.mjs` (65 строк diff, врезки T-A/T-B/T-C/T-D и запрет старых аргументов), `apps/control/trusted.mjs` (301 строка, новый), `packages/trust/facts.mjs` (81 строка, новый), `packages/trust/windows-sid.mjs` (33 строки, новый), `tests/trust-integration.test.mjs` (256 строк, 10 тестов).
+Метод: чтение `git diff 077bca4..53b1115` по файлам WP-06 и фактический запуск кода в отдельном detached-worktree ровно на `53b1115` (ветка может уезжать вперёд; прогоны сделаны на зафиксированном SHA). Код интеграции не изменялся; worktree после проверки удалён. Пробы — во временных каталогах вне репозитория.
 
-`git diff 0e7e6c2..077bca4` затрагивает 25 файлов; `packages/contracts/`, `schemas/`, `docs/contract-freeze.json`, `packages/core/*`, `apps/browser/worker.mjs`, `apps/verification/worker.mjs` не изменены. `apps/control/run.mjs` не содержит импортов `packages/trust` (0 совпадений).
+## 1. Что изменилось с 077bca4
 
-## 2. Фактические прогоны (detached worktree, ровно 077bca4)
+- `apps/control/trusted.mjs`: добавлен `assertTrustedPass` — PASS из общего терминального результата `start()`/`reconcile()` проверяется через `observeTrustedVerdict`; без годного анкера выбрасывается `INTEGRITY_ERROR`. `dispatchApproved` удалён.
+- `tests/trust-integration.test.mjs`: регрессии T-11 (adopt старого PASS) и T-12 (потеря анкера для start и reconcile).
+- Изменения `packages/trust/policy.mjs`/доков — из соседних пакетов, в границы WP-06 не входят; полный `npm test` покрывает их регрессии.
+
+## 2. Фактические прогоны (detached worktree, ровно 53b1115)
 
 | Команда | Факт |
 |---|---|
-| `node --test tests/trust-integration.test.mjs` | **10 tests / 10 pass / 0 fail**, exit 0, ~66 s |
-| `npm test` | **248 tests / 248 pass / 0 fail**, exit 0, ~292 s |
-| `npm run schemas` | exit 0, диффа схем 0.1 нет; дерево чистое |
-| `node apps/control/...` (пробы ниже) | см. §3 |
+| `node --test tests/trust-integration.test.mjs` | **12 tests / 12 pass / 0 fail**, exit 0, ~72 s (повторный прогон — 12/12, ~69 s) |
+| `npm test` | **257 tests / 257 pass / 0 fail**, exit 0, ~298 s |
+| `npm run schemas` | exit 0, диффа схем 0.1 нет |
+| `apps/control/run.mjs` | 0 импортов `packages/trust`; `dispatchApproved` в trusted.mjs — 0 совпадений |
+| `git status --porcelain` | пусто; HEAD = `53b1115` |
 
-HEAD на момент фиксации ревизии: `077bca4`; `git status --porcelain` в detached worktree пуст.
+Примечание о стабильности: один промежуточный полный прогон `npm test` на этой же ревизии дал один флейк T-08 (13 s; деталь не сохранена, повторный полный прогон 257/257 exit 0, изолированный T-08 и два прогона файла зелёные). Это не воспроизводится и не связано с F-01; помечено как среда/нагрузка, рекомендуется наблюдение в WP-07.
 
-## 3. Независимые пробы и ответы на обязательные вопросы
+## 3. Повторная проверка F-01 (обе пробы, независимо)
 
-| # | Вопрос | Факт |
-|---|---|---|
-| 1 | T-A: отказ до Chromium и токена | С просроченным approval: verdict `BLOCKED`, `mutationCount=0`, events = только `STATE` (PREFLIGHT/FINISHED), `READY` нет, `browser.pid` нет, `consumption` нет, request evidence 0, verdict 1, число chrome.exe до/после не изменилось (34→34). Тест T-10 проверяет те же факты + отсутствие `REQUEST_DURABLE`. |
-| 2 | T-B: порядок и ACK без расхода | Successful PASS: `consumption.consumedAt <= intent.observedAt <= request.observedAt` (11 мс и 180 мс), decision-файлы `preflight`+`dispatch`. Подложен неполный `consumption` после preflight: dispatch вернул `BLOCKED/AUTH_UNAVAILABLE`, intent 0, ACK не ушёл, mutation 0, файл расхода не заменён. По коду `trust.dispatch` вызывает `consumeDispatch`, требует `ack===true` и только затем run.mjs пишет mutation-intent и ACK. Обратный случай: расход durable до intent/ACK; при падении Control после расхода расход остаётся (проба crash: consumption есть, повторный вход → INCONCLUSIVE, mutation 0, один consumption, один verdict, расход не изменён и не переигран). |
-| 3 | T-C: гибель стенда между INTENT и HTTP_REQUEST | Стенд погашен сразу после durable `mutation-intent`: verdict `INCONCLUSIVE/ENVIRONMENT_CHANGED`, `mutationCount=0`, request evidence 0, verdict ровно 1 (`evidence = mutation-intent, verdict`). POST не ушёл, второго POST нет (счётчик стенда 0). |
-| 4 | T-D: PASS только с анкером; без подписанта | T-01: PASS, choice `anchor`, анкер проверен, 1 request, 1 verdict, `observeTrusted.passed=true`. T-08 (`signerPipe=null`): `INCONCLUSIVE/EVIDENCE_MISSING`, `mutationCount=1`, choice `budget-inconclusive`, verdict ровно 1. Повторный `startTrusted` после терминального результата вернул тот же INCONCLUSIVE, mutation 1, verdict 1, consumption 1. `publishTerminalVerdict` получает `trust/trustRoot` и проверяет анкер (интегрирован WP-05 D-01, SHA `c168465`). |
-| 5 | T-E: observe без PASS и без расхода | Для INCONCLUSIVE: `passed=false`, `verdict=INCONCLUSIVE`, `publication=terminal`, байты consumption до/после `observeTrusted` идентичны, mutation не изменился. После удаления анкера у терминального PASS: `observeTrusted` даёт `passed=false`, `verdict=null`, `publication=inconsistent`, `reason=ANCHOR_MISSING`, consumption не изменён. |
-| 6 | Старый start() и доверенные аргументы | `start()` отвергает `approvalId`, `approval`, `trustRoot`, `adapter`, `adapterId`, `standPublicKey`, `signerPipe` кодом `CONTRACT_INVALID` (все 7 проверены), mutation 0. |
-| 7 | Подмены → 0 мутаций | Чужой SID — T-03 `BLOCKED/AUTH_UNAVAILABLE`, 0; отозванный approval — T-05, 0; approval на другие входы — T-06 `CONTRACT_INVALID`, 0; `kind=dev` — T-07 `ENVIRONMENT_CHANGED`, 0; чужой `standPublicKey` — проба: `BLOCKED/ENVIRONMENT_CHANGED`, 0. |
-| 8 | Форма facts §5.3 | `buildFacts` даёт ровно 11 ключей: `approval, authenticatedSid, environment, expected, issuer, now, phase, principal, registry, run, trustStore`. Лишний верхний ключ, отсутствующий `registry`, лишнее поле в `run`, лишнее поле в `environment.attestation` → `decide` возвращает `DENY/CONTRACT_INVALID` (не ALLOW). |
-| 9 | Инварианты 0.1 | `npm test` 248/248 exit 0; `npm run schemas` exit 0, диффа нет; в `apps/control/run.mjs` 0 импортов `packages/trust`; запрещённые каталоги/файлы не изменены. |
+| Проба | Факт на 53b1115 |
+|---|---|
+| Adopt старого PASS: старый `start()` доводит прогон до PASS, затем `startTrusted` на том же runId | `startTrusted` выбрасывает `INTEGRITY_ERROR` («PASS доверенного прогона не подтверждён анкером»); PASS не возвращён; anchor/consumption/terminal-choice отсутствуют; `observeTrusted.passed=false` (inconsistent/INTEGRITY_ERROR); mutationCount не вырос (1 старая), verdict 1. |
+| Потеря анкера: доверенный PASS, удалён `anchors/<id>.json`; повторные `startTrusted` и `reconcileTrusted` | Оба выбрасывают `INTEGRITY_ERROR`; PASS не возвращён; `observeTrusted.passed=false`, `verdict=null`, `reason=ANCHOR_MISSING`; mutationCount не вырос (1), verdict 1. |
 
-## 4. Дефекты
+F-01 закрыт. Регрессии T-11/T-12 проходят в составе файла и полного набора.
 
-### WP06-F-01 — HIGH (блокирующий для ревизии 077bca4). Доверенные входы возвращают PASS без проверки анкера на уже терминальном прогоне
+## 4. Повторно подтверждённые факты по вопросам 1–9
 
-Где: `apps/control/trusted.mjs` — `startTrusted()` возвращает результат `start()`, `reconcileTrusted()` — результат `reconcile()`, без `observeTrustedVerdict`. В `apps/control/run.mjs` `terminalResult`/`verifyAndPersist` отдают уже записанный терминальный verdict до обращения к `trust.publish`.
+| # | Факт на 53b1115 |
+|---|---|
+| 1 | T-A: просроченный/подменённый approval → verdict `BLOCKED`, `mutationCount=0`, `READY` нет, `browser.pid` нет, consumption нет, request evidence 0, число chrome.exe до/после не изменилось (34→34); T-10 подтверждает отсутствие `REQUEST_DURABLE`. |
+| 2 | T-B: `consumption.consumedAt ≤ intent.observedAt ≤ request.observedAt` (20 мс и 129 мс), decision-файлы `preflight`+`dispatch`. Неполный consumption после preflight → `BLOCKED/AUTH_UNAVAILABLE`, intent 0, mutation 0, ACK не ушёл, файл расхода не заменён. Расход durable до intent/ACK; crash после расхода → повторный вход `INCONCLUSIVE`, mutation 0, один consumption, один verdict, расход не переигран. |
+| 3 | T-C: стенд погашен сразу после durable `mutation-intent` → `INCONCLUSIVE/ENVIRONMENT_CHANGED`, `mutationCount=0`, request evidence 0, verdict ровно 1. Второго POST нет. |
+| 4 | T-D: PASS только с анкером (T-01); без подписанта — `INCONCLUSIVE/EVIDENCE_MISSING`, mutation 1, choice `budget-inconclusive`, verdict 1; повторный reconcile второй verdict не пишет; `publishTerminalVerdict` получает `trust/trustRoot` и проверяет анкер (WP-05 D-01 интегрирован). |
+| 5 | T-E: `observeTrusted` не показывает PASS без анкера; для INCONCLUSIVE `passed=false`, consumption до/после идентичен, mutation не меняется. После удаления анкера observe даёт `verdict=null`, `ANCHOR_MISSING`; startTrusted/reconcileTrusted при этом отказывают (F-01). |
+| 6 | Старый `start()` отвергает `approvalId`, `approval`, `trustRoot`, `adapter`, `adapterId`, `standPublicKey`, `signerPipe` → `CONTRACT_INVALID`, mutation 0. |
+| 7 | Чужой SID (T-03), отозванный approval (T-05), approval на другие входы (T-06), `kind=dev` (T-07), чужой `standPublicKey` (проба) → 0 мутаций; коды `AUTH_UNAVAILABLE`/`CONTRACT_INVALID`/`ENVIRONMENT_CHANGED`. |
+| 8 | `buildFacts` — ровно 11 ключей §5.3; лишний/недостающий/вложенный ключ и лишнее поле attestation → `DENY/CONTRACT_INVALID` (не ALLOW). |
+| 9 | `npm test` 257/257 exit 0; `npm run schemas` exit 0 без диффа; `run.mjs` без импортов `packages/trust`; запрещённые файлы не изменены. |
 
-Факты (две независимые пробы на 077bca4):
+## 5. Статус замечаний предыдущего ревью
 
-1. **Adopt старого прогона.** Прогон выполнен старым `start()` (путь 0.1) до PASS. Затем `startTrusted` с тем же bundle/runId и валидным approval вернул `verdict=PASS`, хотя `terminal-choice.json` нет, анкеров 0, consumption по approval нет, `observeTrusted` даёт `passed=false`, `publication=inconsistent`, `reason=INTEGRITY_ERROR`. mutationCount=1 (это старая мутация старого входа; новых нет).
-2. **Потеря анкера после публикации.** Легитимный доверенный PASS опубликован с анкером; файл `trustRoot/anchors/<id>.json` удалён. Повторный `startTrusted` вернул `PASS` (reason `NONE`), `reconcileTrusted` тоже вернул `PASS`; `observeTrusted` при этом `passed=false`, `reason=ANCHOR_MISSING`. mutation/verdict те же (новых нет).
+| ID | Статус |
+|---|---|
+| WP06-F-01 (HIGH) | **Закрыт**: `assertTrustedPass`, пробы adopt и потеря анкера дают `INTEGRITY_ERROR`, регрессии T-11/T-12 зелёные. |
+| WP06-F-02 (LOW) | **Закрыт**: мёртвый `dispatchApproved` удалён (0 совпадений). |
+| WP06-F-03/F-04/F-05 (INFO) | Приняты Lead как границы и зафиксированы в WP-06-REPORT: preflight-DENY через общий catch; `options.trust` — in-process мост внутри границы R-04; `standPublicKey` обязателен по факту (fail-closed). |
 
-Нарушение: инвариант §6.2 «Ни одного PASS без годного анкера»; требование T-E «PASS только при полной связке»; рекомендация R-01 ревью WP-05 (единственный источник PASS — `observeTrustedVerdict`). Severity HIGH по границе доверия: вызывающий `startTrusted` получает PASS, который доверенный наблюдатель отвергает.
+## 6. Остаточные риски и границы
 
-Примечание (вне проверяемой ревизии): в более позднем HEAD `8674816` уже добавлен `assertTrustedPass`, и та же проба adopt на нём завершается `INTEGRITY_ERROR` (проверено). В ревизии `077bca4` этого guard нет. Требование к финальной интеграции: сохранить этот guard (или эквивалент) и регрессию на adopt старого PASS + потерю анкера.
+- L-01: один невоспроизведённый флейк T-08 в полном прогоне под нагрузкой; в WP-07 держать под наблюдением (повторные прогоны зелёные).
+- L-02: границы локальной 0.2 действуют: ACL/DPAPI одного SID не изолируют Control от произвольного кода той же учётной записи (R-04); `options.trust` не является внешним входом.
+- L-03: анкер удостоверяет связку и неизменность candidate, не бизнес-истину; candidate обязан строиться доверенным Verification (D-02, docs/changes/004).
 
-### WP06-F-02 — LOW. Мёртвый код
+## 7. Вердикт
 
-`apps/control/trusted.mjs:` переменная `dispatchApproved` объявляется и присваивается (`line 86, 170`), но нигде не читается. Не влияет на безопасность, удалить.
-
-### WP06-F-03 — INFO. Preflight-отказ обрабатывается общим catch run()
-
-При DENY на T-A `trust.preflight` бросает, и run.mjs обрабатывает это общим catch: verdict корректен (`BLOCKED`), но событие `TRUST_DENIED`/`phase` для preflight не пишется, `trustDenial.phase` не используется. На доказательность и инварианты не влияет.
-
-### WP06-F-04 — INFO. Внутренний `trust`-контекст доступен старым публичным функциям
-
-`start/observe/cancel/reconcile` принимают `options.trust`, и `assertOldEntryOptions` это поле не запрещает. Это in-process мост для `*Trusted`, а не внешний вход; старый вход сам по себе не обещает доверенный PASS, а `startTrusted` отдельно проверяет анкер (после исправления F-01). Зафиксировать как границу локальной 0.2.
-
-### WP06-F-05 — INFO. `startTrusted` не требует `standPublicKey`
-
-Без `standPublicKey` аттестация среды падает (fail-closed), доверенный прогон не начнётся. Это не обход, но ошибка конфигурации выглядит как `ENVIRONMENT_CHANGED`; желательно явное требование аргумента.
-
-## 5. Что подтверждено и не является дефектом
-
-- Порядок T-B: `decide → consumeDispatch → mutation-intent → ACK`; ACK без полного расхода не выдаётся (подложенный неполный consumption → отказ, 0 intent, 0 мутаций).
-- T-C: гибель стенда после INTENT до HTTP_REQUEST → POST не уходит, 0 мутаций, один INCONCLUSIVE; второго POST нет.
-- T-D: без подписанта PASS не публикуется, ровно один INCONCLUSIVE/EVIDENCE_MISSING; повторный вход не пишет второй verdict.
-- T-E (наблюдение): `observeTrustedVerdict` не показывает PASS без анкера и не расходует право; байты consumption не меняются.
-- Старый `start()` отвергает все доверенные аргументы; чужие SID/ключ стенда/входы/вид `dev`/отзыв дают 0 мутаций.
-- Форма facts строго 11 ключей; расхождения → DENY CONTRACT_INVALID.
-- Полный `npm test` 248/248, `npm run schemas` без диффа, `run.mjs` без импортов `packages/trust`.
-
-## 6. Вердикт
-
-**FIX REQUIRED** по ревизии `077bca4420049ba767ab5a0c62d1e4d21f0aaa84`: один блокирующий дефект WP06-F-01 (доверенные `startTrusted`/`reconcileTrusted` возвращают PASS без полной связки анкера на уже терминальном прогоне). Остальные обязательные вопросы 1–9 подтверждены фактами, P0 не найдено.
-
-Обязательно до ACCEPT: guard уровня `assertTrustedPass` (PASS из `start`/`reconcile`/`terminalResult` допустим только после `observeTrustedVerdict.trusted && passed`) + регрессии: «adopt старого PASS-прогона через startTrusted → отказ, не PASS» и «анкер удалён после публикации → startTrusted/reconcileTrusted не возвращают PASS» (в более позднем HEAD уже реализовано, проверить в финальной интеграции).
-
-Желательно: WP06-F-02 (мёртвый код), F-03/F-05 (диагностика/конфигурация), F-04 зафиксировать в отчёте как границу.
-
-## 7. Воспроизводимость
-
-Все прогоны и пробы — на detached worktree `077bca4` (node_modules — junction на корневой). Код интеграции не изменялся; после ревью временный worktree удалён. Пробы хранились во временных каталогах вне репозитория.
+**ACCEPT** для ревизии `53b1115b5efd4c9c2be48452c3fc523b19b56df8` в границах внутреннего ревью WP-06: F-01 закрыт и покрыт регрессиями, обязательные вопросы 1–9 подтверждены фактическими прогонами, инварианты 0.1 не ослаблены. Это внутреннее ревью, не внешняя приёмка WP-08; остаточный флейк T-08 и границы R-04/D-02 остаются зафиксированными.
