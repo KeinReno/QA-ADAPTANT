@@ -102,6 +102,15 @@ export const TaskEventSchema = z.strictObject({
   sha256: z.string().regex(/^[a-f0-9]{64}$/)
 });
 
+export const TaskDispatchIntentSchema = z.strictObject({
+  runId: id,
+  stepId: id,
+  adapterId: id,
+  executionRefSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  preparedDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  idempotencyKey: z.string().regex(/^[a-f0-9]{64}$/)
+});
+
 export const ALLOWED_TASK_TRANSITIONS = Object.freeze({
   DRAFT: ['PLANNING', 'CANCELED'],
   PLANNING: ['PLAN_READY', 'BLOCKED', 'FAILED', 'CANCELED'],

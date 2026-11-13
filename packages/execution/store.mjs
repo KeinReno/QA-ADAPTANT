@@ -3,7 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { canonical, digest } from '../core/canonical.mjs';
 import { withFileMutex } from '../core/file-mutex.mjs';
-import { assertTaskPassSupported, ExecutionPlanSchema, TaskEventSchema, TaskSchema, TaskStateSchema, transitionTask } from './contracts.mjs';
+import { assertTaskPassSupported, ExecutionPlanSchema, TaskDispatchIntentSchema, TaskEventSchema, TaskSchema, TaskStateSchema, transitionTask } from './contracts.mjs';
 
 const bytes = value => Buffer.from(`${canonical(value)}\n`, 'utf8');
 const isoNow = () => new Date().toISOString();
@@ -203,6 +203,57 @@ export class TaskStore {
     return withFileMutex(this.lockPath, () => {
       const current = this.#snapshot(taskId);
       return this.#commit(taskId, stateOf(current), type, payload);
+    });
+  }
+
+  async recordDispatchIntent(taskId, intent, expected) {
+    return withFileMutex(this.lockPath, () => {
+      const current = this.#snapshot(taskId);
+      if (current.status !== 'READY' || current.revision !== expected?.revision || current.executionPlanId !== expected?.planId) {
+        throw error('TASK_CONFLICT', 'Task или одобренный план изменился до dispatch intent');
+      }
+      const plan = this.#readPlan(taskId, current.executionPlanId);
+      if (plan.sha256 !== expected?.planSha256) throw error('TASK_CONFLICT', 'Digest плана изменился до dispatch intent');
+      const checked = TaskDispatchIntentSchema.parse(intent);
+      const step = plan.steps.find(item => item.stepId === checked.stepId);
+      if (!step || step.adapterId !== checked.adapterId || step.executionRef === null || digest(step.executionRef) !== checked.executionRefSha256) {
+        throw error('INVALID_DISPATCH_INTENT', 'Dispatch intent не соответствует утверждённому шагу');
+      }
+      const transitioned = transitionTask(current, 'RUNNING');
+      return this.#commit(taskId, stateOf(transitioned), 'DISPATCH_INTENT', { ...checked, planId: plan.planId, planSha256: plan.sha256 });
+    });
+  }
+
+  async recordDispatchReturned(taskId, { runId, executionOutcome, reasonCode = null }) {
+    return withFileMutex(this.lockPath, () => {
+      const current = this.#snapshot(taskId);
+      if (current.status !== 'RUNNING') throw error('INVALID_TASK_TRANSITION', 'DISPATCH_RETURNED допустим только для RUNNING Task');
+      if (!current.runIds.includes(runId)) {
+        const next = TaskStateSchema.parse({ ...stateOf(current), runIds: [...current.runIds, runId], revision: current.revision + 1, updatedAt: isoNow() });
+        return this.#commit(taskId, next, 'DISPATCH_RETURNED', { runId, executionOutcome, reasonCode });
+      }
+      throw error('DUPLICATE_DISPATCH_RESULT', 'Результат dispatch уже сохранён');
+    });
+  }
+
+  async recordRecoveryRunId(taskId, { runId, reasonCode = null }) {
+    return withFileMutex(this.lockPath, () => {
+      const current = this.#snapshot(taskId);
+      if (!['RUNNING', 'VERIFYING'].includes(current.status)) throw error('INVALID_TASK_TRANSITION', 'Recovery run ref допустим только для активной Task');
+      if (current.runIds.includes(runId)) return current;
+      const next = TaskStateSchema.parse({ ...stateOf(current), runIds: [...current.runIds, runId], revision: current.revision + 1, updatedAt: isoNow() });
+      return this.#commit(taskId, next, 'RECOVERY_RUN_OBSERVED', { runId, reasonCode });
+    });
+  }
+
+  async recordDispatchUncertain(taskId, { runId = null, reasonCode }) {
+    return withFileMutex(this.lockPath, () => {
+      const current = this.#snapshot(taskId);
+      if (current.status !== 'RUNNING') throw error('INVALID_TASK_TRANSITION', 'Неопределённый dispatch допустим только для RUNNING Task');
+      const transitioned = transitionTask(current, 'INCONCLUSIVE');
+      const runIds = runId && !current.runIds.includes(runId) ? [...current.runIds, runId] : current.runIds;
+      const next = TaskStateSchema.parse({ ...stateOf(transitioned), runIds, revision: current.revision + 1, updatedAt: isoNow() });
+      return this.#commit(taskId, next, 'DISPATCH_OUTCOME_UNKNOWN', { runId, reasonCode });
     });
   }
 

@@ -1,4 +1,5 @@
 import { TaskSchema } from '../../packages/execution/contracts.mjs';
+import { digest } from '../../packages/core/canonical.mjs';
 import { assertExecutionAdapter } from '../../packages/execution/adapter.mjs';
 import { PlannerResultSchema, PlannerProviderError } from '../../packages/planner/provider.mjs';
 import { validatePlanDraft } from '../../packages/planner/validate.mjs';
@@ -22,6 +23,53 @@ export class TaskService {
   }
 
   async create(input) { return this.store.createTask(input); }
+
+  async #finishObserved({ taskId, plan, step, runId, executionOutcome, observation, observerError = null }) {
+    let current = await this.store.getTask(taskId);
+    const terminal = new Set(['COMPLETED', 'FAILED', 'CANCELED', 'BLOCKED', 'INCONCLUSIVE']);
+    if (terminal.has(current.status)) return { task: current, plan, started: true, observation, result: current.result };
+    if (current.status === 'RUNNING') {
+      try {
+        current = await this.store.transition(taskId, 'VERIFYING', {
+          payload: { runId, adapterId: step.adapterId },
+          expected: { revision: current.revision, planId: plan.planId, planSha256: plan.sha256 }
+        });
+      } catch (cause) {
+        current = await this.store.getTask(taskId);
+        if (terminal.has(current.status)) return { task: current, plan, started: true, observation, result: current.result };
+        if (current.status !== 'VERIFYING') throw cause;
+      }
+    }
+    if (current.status !== 'VERIFYING') return { task: current, plan, started: true, observation, result: current.result };
+    const evidenceIds = Array.isArray(observation?.evidenceIds) ? observation.evidenceIds : [];
+    const trusted = observation?.trusted === true;
+    const verdict = trusted ? observation.verdict?.verdict : null;
+    const taskOutcome = trusted && observation.passed === true && verdict === 'PASS'
+      ? 'PASS'
+      : trusted && verdict === 'FAIL' ? 'FAIL'
+        : trusted && verdict === 'CANCELED' ? 'CANCELED' : 'INCONCLUSIVE';
+    const verificationOutcome = taskOutcome === 'PASS' ? 'PASS' : taskOutcome === 'FAIL' ? 'FAIL' : 'INCONCLUSIVE';
+    const verifiedExecutionOutcome = trusted && ['PASS', 'FAIL'].includes(verdict) ? 'SUCCEEDED' : executionOutcome;
+    const result = {
+      taskOutcome, plannerMode: plan.provider.mode,
+      stepOutcomes: [{ stepId: step.stepId, executionOutcome: verifiedExecutionOutcome, verificationOutcome, trustedVerification: trusted,
+        runIds: [runId], evidenceRefs: evidenceIds.map(evidenceId => ({ runId, evidenceId })) }],
+      reasonCode: taskOutcome === 'PASS' ? null : observerError || observation?.reasonCode || 'TRUSTED_RESULT_NOT_PASS',
+      message: taskOutcome === 'PASS' ? 'Trusted observer подтвердил выполнение' : 'Trusted observer не подтвердил PASS'
+    };
+    const finalStatus = taskOutcome === 'PASS' || taskOutcome === 'FAIL' ? 'COMPLETED' : taskOutcome === 'CANCELED' ? 'CANCELED' : 'INCONCLUSIVE';
+    let finalTask;
+    try {
+      finalTask = await this.store.transition(taskId, finalStatus, {
+        patch: { result }, payload: { runId, taskOutcome, reasonCode: result.reasonCode },
+        expected: { revision: current.revision, planId: plan.planId, planSha256: plan.sha256 }
+      });
+    } catch (cause) {
+      finalTask = await this.store.getTask(taskId);
+      if (!terminal.has(finalTask.status)) throw cause;
+    }
+    return { task: finalTask, plan, started: true, observation, result: finalTask.result };
+  }
 
   async plan(taskId) {
     let task = await this.store.getTask(taskId);
@@ -100,7 +148,7 @@ export class TaskService {
   }
 
   async approvePlan(taskId, { planId, actorRef, approvalRef } = {}) {
-    const task = await this.store.getTask(taskId);
+    let task = await this.store.getTask(taskId);
     const plan = await this.store.getPlan(taskId, planId);
     if (task.status !== 'AWAITING_APPROVAL' || task.executionPlanId !== plan.planId) throw failure('PLAN_NOT_CURRENT', 'Подтверждается только текущая версия плана в состоянии ожидания');
     if (actorRef !== task.ownerRef) throw failure('OWNER_MISMATCH', 'Подтверждение может дать только владелец Task');
@@ -114,11 +162,12 @@ export class TaskService {
   }
 
   async start(taskId) {
-    const task = await this.store.getTask(taskId);
+    let task = await this.store.getTask(taskId);
     if (task.status !== 'READY') throw failure('TASK_NOT_READY', `Task нельзя запустить в состоянии ${task.status}`);
     const plan = await this.store.getPlan(taskId, task.executionPlanId);
-    const executableSteps = plan.steps.filter(item => item.actionType === 'trusted-scenario');
-    if (executableSteps.length !== 1) {
+    const requiredSteps = plan.steps.filter(item => item.required);
+    const executableSteps = requiredSteps.filter(item => item.actionType === 'trusted-scenario');
+    if (requiredSteps.length !== 1 || executableSteps.length !== 1) {
       const reasonCode = executableSteps.length ? 'UNSUPPORTED_EXECUTION_SHAPE' : 'NO_EXECUTABLE_TRUSTED_STEP';
       const blocked = await this.store.transition(taskId, 'BLOCKED', { payload: { reasonCode } });
       return { task: blocked, started: false };
@@ -140,7 +189,49 @@ export class TaskService {
       const blocked = await this.store.transition(taskId, 'BLOCKED', { payload: { reasonCode: 'ADAPTER_CAPABILITY_UNSUPPORTED', adapterId: step.adapterId } });
       return { task: blocked, started: false };
     }
-    throw failure('EXECUTION_ADAPTER_NOT_IMPLEMENTED', 'Trusted adapter dispatch подключается на этапе C');
+    let prepared;
+    try { prepared = await adapter.prepare({ task, plan, step, executionRef: step.executionRef }); }
+    catch (error) {
+      const blocked = await this.store.transition(taskId, 'BLOCKED', { payload: { reasonCode: error.code || 'ADAPTER_PREPARE_FAILED', adapterId: step.adapterId } });
+      return { task: blocked, started: false };
+    }
+    if (!prepared || typeof prepared.runId !== 'string' || typeof prepared.preparedRef !== 'string' || !/^[a-f0-9]{64}$/.test(prepared.preparedDigest || '')) {
+      const blocked = await this.store.transition(taskId, 'BLOCKED', { payload: { reasonCode: 'ADAPTER_PREPARE_INVALID', adapterId: step.adapterId } });
+      return { task: blocked, started: false };
+    }
+    const idempotencyKey = digest({ taskId, planId: plan.planId, stepId: step.stepId, runId: prepared.runId });
+    try {
+      const dispatchTask = await this.store.recordDispatchIntent(taskId, {
+        runId: prepared.runId, stepId: step.stepId, adapterId: adapter.id,
+        executionRefSha256: digest(step.executionRef), preparedDigest: prepared.preparedDigest, idempotencyKey
+      }, { revision: task.revision, planId: plan.planId, planSha256: plan.sha256 });
+      task = dispatchTask;
+    } catch (error) {
+      if (error.code === 'TASK_CONFLICT') throw error;
+      const current = await this.store.getTask(taskId);
+      if (current.status === 'READY') return { task: await this.store.transition(taskId, 'BLOCKED', { payload: { reasonCode: error.code || 'DISPATCH_INTENT_FAILED' } }), started: false };
+      throw error;
+    }
+    let started;
+    try {
+      started = await adapter.start({ task, plan, step, prepared, idempotencyKey });
+      if (!started || started.runId !== prepared.runId || !['SUCCEEDED', 'FAILED', 'UNKNOWN'].includes(started.executionOutcome)) {
+        throw Object.assign(new Error('Adapter вернул некорректный dispatch result'), { code: 'ADAPTER_RESULT_INVALID', dispatched: true });
+      }
+      await this.store.recordDispatchReturned(taskId, { runId: prepared.runId, executionOutcome: started.executionOutcome, reasonCode: started.reasonCode || null });
+    } catch (error) {
+      const afterError = await this.store.getTask(taskId);
+      if (!['RUNNING'].includes(afterError.status)) return { task: afterError, plan, started: true, reasonCode: error.code || 'DISPATCH_OUTCOME_ALREADY_RECORDED' };
+      if (error.dispatched === false) {
+        return { task: await this.store.transition(taskId, 'BLOCKED', { payload: { reasonCode: error.code || 'ADAPTER_START_FAILED', runId: prepared.runId } }), started: false };
+      }
+      const taskAfterUnknown = await this.store.recordDispatchUncertain(taskId, { runId: prepared.runId, reasonCode: error.code || 'DISPATCH_OUTCOME_UNKNOWN' });
+      return { task: taskAfterUnknown, started: false, reasonCode: error.code || 'DISPATCH_OUTCOME_UNKNOWN' };
+    }
+    let observation = null, observerError = null;
+    try { observation = await adapter.observe({ runId: prepared.runId, task, plan, step, expectedPreparedDigest: prepared.preparedDigest }); }
+    catch (error) { observerError = error?.code || 'TRUSTED_OBSERVER_FAILED'; }
+    return this.#finishObserved({ taskId, plan, step, runId: prepared.runId, executionOutcome: started.executionOutcome, observation, observerError });
   }
 
   async cancel(taskId, actorRef) {
@@ -149,7 +240,31 @@ export class TaskService {
     if (['DRAFT', 'PLANNING', 'PLAN_READY', 'AWAITING_APPROVAL', 'READY', 'BLOCKED'].includes(task.status)) {
       return this.store.transition(taskId, 'CANCELED', { payload: { actorRef, beforeDispatch: true } });
     }
-    throw failure('CANCELLATION_REQUIRES_ADAPTER', 'После dispatch отмена требует поддерживаемого trusted adapter');
+    if (!['RUNNING', 'VERIFYING'].includes(task.status)) throw failure('TASK_NOT_CANCELLABLE', `Task нельзя отменить в состоянии ${task.status}`);
+    const events = await this.store.getEvents(taskId);
+    const intent = [...events].reverse().find(event => event.type === 'DISPATCH_INTENT');
+    const runId = task.runIds.at(-1) || intent?.payload?.runId;
+    const plan = await this.store.getPlan(taskId, task.executionPlanId);
+    const step = plan.steps.find(item => item.stepId === intent?.payload?.stepId);
+    const adapter = step && this.adapters.get(step.adapterId);
+    if (!runId || !adapter) {
+      return this.store.transition(taskId, 'INCONCLUSIVE', { payload: { reasonCode: 'CANCEL_RUN_REF_UNAVAILABLE', actorRef } });
+    }
+    assertExecutionAdapter(adapter);
+    await this.store.appendEvent(taskId, 'CANCEL_REQUESTED', { actorRef, runId, adapterId: adapter.id });
+    try {
+      await adapter.cancel({ runId, actorRef, task, plan, step });
+      const observation = await adapter.observe({ runId, task, plan, step, expectedPreparedDigest: intent.payload.preparedDigest });
+      const returned = [...events].reverse().find(event => event.type === 'DISPATCH_RETURNED' && event.payload.runId === runId);
+      return this.#finishObserved({ taskId, plan, step, runId, executionOutcome: returned?.payload?.executionOutcome || 'UNKNOWN', observation });
+    } catch (error) {
+      const latest = await this.store.getTask(taskId);
+      if (['COMPLETED', 'FAILED', 'CANCELED', 'BLOCKED', 'INCONCLUSIVE'].includes(latest.status)) {
+        return { task: latest, cancelRequested: false, result: latest.result, reasonCode: 'TASK_ALREADY_FINISHED' };
+      }
+      await this.store.appendEvent(taskId, 'CANCEL_OUTCOME_UNKNOWN', { actorRef, runId, reasonCode: error?.code || 'CANCEL_UNCONFIRMED' });
+      return { task: await this.store.getTask(taskId), cancelRequested: true, reasonCode: error?.code || 'CANCEL_UNCONFIRMED' };
+    }
   }
 
   async observe(taskId) {
@@ -180,8 +295,39 @@ export class TaskService {
         await this.store.transition(task.taskId, 'BLOCKED', { payload: { reasonCode: 'PLANNER_INTERRUPTED' } });
         blocked.push(task.taskId);
       } else if (task.status === 'RUNNING' || task.status === 'VERIFYING') {
-        await this.store.transition(task.taskId, 'INCONCLUSIVE', { payload: { reasonCode: 'EXECUTION_STATE_UNKNOWN', runIds: task.runIds } });
-        inconclusive.push(task.taskId);
+        try {
+          const events = await this.store.getEvents(task.taskId);
+          const intent = [...events].reverse().find(event => event.type === 'DISPATCH_INTENT');
+          const runId = task.runIds.at(-1) || intent?.payload?.runId;
+          const plan = await this.store.getPlan(task.taskId, task.executionPlanId);
+          const step = plan.steps.find(item => item.stepId === intent?.payload?.stepId);
+          const adapter = step && this.adapters.get(step.adapterId);
+          if (!runId || !intent || !adapter) throw failure('RECOVERY_REF_UNAVAILABLE', 'Нет закреплённого runId/adapter для recovery');
+          assertExecutionAdapter(adapter);
+          const cancelRequested = events.some(event => event.type === 'CANCEL_REQUESTED' && event.payload.runId === runId);
+          if (cancelRequested) {
+            try { await adapter.cancel({ runId, actorRef: task.ownerRef, task, plan, step }); }
+            catch { /* cancel уже мог быть подтверждён или run ещё не зарегистрирован; reconcile ниже устанавливает исход */ }
+          }
+          const observation = await adapter.reconcile({ runId, task, plan, step, expectedPreparedDigest: intent.payload.preparedDigest });
+          if (!task.runIds.includes(runId)) await this.store.recordRecoveryRunId(task.taskId, { runId, reasonCode: 'TRUSTED_RECONCILE_OBSERVED' });
+          const returned = [...events].reverse().find(event => event.type === 'DISPATCH_RETURNED' && event.payload.runId === runId);
+          const outcome = returned?.payload?.executionOutcome || 'UNKNOWN';
+          await this.#finishObserved({ taskId: task.taskId, plan, step, runId, executionOutcome: outcome, observation });
+          const finalTask = await this.store.getTask(task.taskId);
+          if (finalTask.status === 'INCONCLUSIVE') inconclusive.push(task.taskId);
+          else recovered.push(task.taskId);
+        } catch (cause) {
+          const current = await this.store.getTask(task.taskId);
+          if (['COMPLETED', 'FAILED', 'CANCELED', 'BLOCKED'].includes(current.status)) {
+            recovered.push(task.taskId);
+            continue;
+          }
+          if (['RUNNING', 'VERIFYING'].includes(current.status)) {
+            await this.store.transition(task.taskId, 'INCONCLUSIVE', { payload: { reasonCode: cause?.code || 'EXECUTION_STATE_UNKNOWN', runIds: current.runIds } });
+          }
+          inconclusive.push(task.taskId);
+        }
       } else recovered.push(task.taskId);
     }
     return { recovered, blocked, inconclusive, integrityBlocked };
