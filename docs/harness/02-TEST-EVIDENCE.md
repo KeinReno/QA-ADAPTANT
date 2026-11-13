@@ -4,7 +4,8 @@
 
 | Параметр | Значение |
 |---|---|
-| Ревизия | 21edda60fb9ab2c0815efba775038db52af1f585 (feat/adaptant-02-trust-integration) |
+| Ревизия продукта, на которой выполнены все прогоны | 21edda60fb9ab2c0815efba775038db52af1f585 |
+| Ревизия поставки (документы пакета) | 520a32c30fda20e10ad9d0bba1e4f7226e8f3a93; продуктовый код байт-в-байт равен 21edda6 (`git diff 21edda6..520a32c -- packages apps adapters tests schemas` пусто) |
 | ОС | Windows (локальная машина) |
 | Node.js | v24.16.0 |
 | npm | 11.13.0 |
@@ -19,8 +20,8 @@
 | 2 | npm run test:races | 3 tests, 3 pass, 0 fail | 0 |
 | 3 | npm run schemas | экспортированы шесть схем, диффа файлов schemas/ нет | 0 |
 | 4 | node --test tests/trust-integration.test.mjs | 13 tests, 13 pass, 0 fail | 0 |
-| 5 | node tests/redteam/run-all-w2.mjs --target=. | 24 атаки, все PASS, 0 FAIL | 0 |
-| 6 | node tests/redteam/run-matrix.mjs . | 34 строки: 24 PASS, 10 TODO, 0 FAIL, 0 PARTIAL | 0 |
+| 5 | node tests/redteam/run-all-w2.mjs --target=. | 24 атаки: 24 PASS, 0 FAIL | 0 |
+| 6 | node tests/redteam/run-matrix.mjs . | 34 строки: 24 PASS, 10 TODO (E-04, V-05, V-06, V-10, V-12, L-01, L-02, L-04, L-05, B-02), 0 FAIL, 0 PARTIAL, 0 UNVERIFIABLE | 0 |
 | 7 | git diff 0e7e6c2..HEAD -- packages/contracts schemas docs/contract-freeze.json packages/core apps/browser apps/verification | пусто | 0 |
 
 ## Состав набора (npm test)

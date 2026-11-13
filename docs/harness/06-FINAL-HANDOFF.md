@@ -8,7 +8,8 @@
 |---|---|
 | Репозиторий | https://github.com/KeinReno/QA-ADAPTANT |
 | Интеграционная ветка | feat/adaptant-02-trust-integration |
-| Интеграционная ревизия | фиксируется в 02-TEST-EVIDENCE (последний SHA ветки) |
+| Интеграционная ревизия (поставка) | 520a32c30fda20e10ad9d0bba1e4f7226e8f3a93 |
+| Ревизия продукта, на которой шли все прогоны | 21edda60fb9ab2c0815efba775038db52af1f585 (продуктовый код байт-в-байт совпадает: diff по packages/apps/adapters/tests/schemas пуст) |
 | База разработки | 0e7e6c20f7a839ffe16047fa11006b1a9ab6cd31 |
 | Stable 0.1 | тег v0.1.0-stable → 88fc1d7b46e898b9d1ac85996042798fe55a2619 (не изменён) |
 | Merge в main | не выполнялся, требует решения владельца |
