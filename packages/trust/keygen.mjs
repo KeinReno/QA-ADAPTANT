@@ -9,10 +9,27 @@ function fail(code, message) {
 
 // R-02: без явного runDir генератор не знал о каталогах прогонов и мог создать ключи
 // внутри runDir. Ключи не должны попадать ни в один путь, проходящий через каталог runs.
+// Проверяется ФИЗИЧЕСКИЙ путь: junction/symlink на каталог прогонов обходил строковую проверку.
+function physicalPath(input) {
+  const resolved = path.resolve(input);
+  const missing = [];
+  let current = resolved;
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    missing.push(path.basename(current));
+    current = parent;
+  }
+  let base;
+  try { base = fs.realpathSync(current); }
+  catch { fail('TRUST_STORE_UNAVAILABLE', 'Путь хранилища не разрешается'); }
+  return path.resolve(base, ...missing.reverse());
+}
+
 function assertOutsideRunStore(label, value) {
-  const resolved = path.resolve(value);
+  const resolved = physicalPath(value);
   if (resolved.split(path.sep).filter(Boolean).some(segment => segment.toLowerCase() === 'runs')) {
-    fail('TRUST_STORE_UNAVAILABLE', label + ' не может находиться внутри каталога прогонов');
+    fail('TRUST_STORE_UNAVAILABLE', label + ' не может находиться внутри каталога прогонов (физический путь)');
   }
 }
 
