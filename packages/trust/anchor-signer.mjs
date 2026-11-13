@@ -26,7 +26,7 @@ import { loadTrustRoot, signTrustedDocument, unwrapPrivateKey, verifyTrustedDocu
 const MAX_REQUEST_BYTES = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 15000;
 const signRequestKeys = new Set(['type', 'runDir', 'approvalId', 'anchorId', 'attestation', 'id']);
-const registerRequestKeys = new Set(['type', 'runId', 'publicKey', 'verificationPid', 'id']);
+const registerRequestKeys = new Set(['type', 'runId', 'publicKey', 'verificationPid', 'sessionNonce', 'id']);
 const TRUSTED_WORKER_SUFFIX = 'apps' + path.sep + 'verification' + path.sep + 'trusted-worker.mjs';
 
 function powershellPath() {
@@ -128,12 +128,14 @@ function createSignerSession({ trustRoot, privateKeyPath, privateKey, inProcess 
   function registerVerificationKey(request) {
     assertId(request.runId, 'runId');
     if (!Number.isSafeInteger(request.verificationPid) || request.verificationPid < 1) fail('CONTRACT_INVALID', 'Регистрация ключа Verification требует verificationPid');
+    // session nonce приходит только по приватному каналу Control→подписант; он же входит в аттестацию.
+    if (typeof request.sessionNonce !== 'string' || !/^[a-f0-9]{64}$/.test(request.sessionNonce)) fail('CONTRACT_INVALID', 'Регистрация ключа Verification требует sessionNonce 32 байта hex');
     const normalized = verificationPublicKeyRecord(request.publicKey);
     const previous = verificationKeys.get(request.runId);
-    if (previous && (previous.keyId !== normalized.keyId || previous.verificationPid !== request.verificationPid)) {
-      fail('CONTRACT_INVALID', 'Для runId уже зарегистрирован другой ключ или процесс Verification');
+    if (previous && (previous.keyId !== normalized.keyId || previous.verificationPid !== request.verificationPid || previous.sessionNonce !== request.sessionNonce)) {
+      fail('CONTRACT_INVALID', 'Для runId уже зарегистрирован другой ключ, процесс или session nonce Verification');
     }
-    verificationKeys.set(request.runId, { ...normalized, verificationPid: request.verificationPid });
+    verificationKeys.set(request.runId, { ...normalized, verificationPid: request.verificationPid, sessionNonce: request.sessionNonce });
     return { keyId: normalized.keyId };
   }
 
@@ -180,11 +182,14 @@ function createSignerSession({ trustRoot, privateKeyPath, privateKey, inProcess 
     const runId = binding.frozen.manifest.runId;
     const registered = verificationKeys.get(runId);
     if (!registered) fail('ANCHOR_BINDING_REJECTED', 'Ключ Verification для этого runId не зарегистрирован в сессии подписанта');
-    await assertVerificationProvenance(runId, registered);
     const attestation = request.attestation;
     if (!attestation || typeof attestation !== 'object' || Array.isArray(attestation)) fail('ANCHOR_BINDING_REJECTED', 'Verification-attestation не передана по приватному каналу');
-    // Подписант проверяет подпись аттестации ключом, зарегистрированным в этой сессии.
+    // 1) Подпись аттестации ключом, зарегистрированным в этой сессии подписанта.
     const attested = verifyVerificationAttestation(attestation, { publicKey: registered, expectedKeyId: registered.keyId });
+    // 2) session nonce: поле nonce аттестации обязано совпасть с nonce из приватного IPC-сеанса Control.
+    if (attested.nonce !== registered.sessionNonce) fail('ANCHOR_BINDING_REJECTED', 'session nonce аттестации не совпал с зарегистрированным по приватному каналу');
+    // 3) defense-in-depth: происхождение процесса Verification (WMI: родитель/образ/живость).
+    await assertVerificationProvenance(runId, registered);
     if (attested.runId !== runId) fail('ANCHOR_BINDING_REJECTED', 'Аттестация Verification относится к другому runId');
     if (attested.manifestSha256 !== binding.frozen.manifestSha256) fail('ANCHOR_BINDING_REJECTED', 'Аттестация Verification относится к другому манифесту');
     if (attested.approvalId !== binding.approval.approvalId) fail('ANCHOR_BINDING_REJECTED', 'Аттестация Verification относится к другому approvalId');
@@ -408,10 +413,10 @@ export function connectAnchorSigner(pipePath) {
   }
 
   return {
-    async registerVerificationKey(runId, publicKey, verificationPid) {
+    async registerVerificationKey(runId, publicKey, verificationPid, sessionNonce) {
       assertId(runId, 'runId');
       if (!publicKey) fail('CONTRACT_INVALID', 'Нужен публичный ключ Verification');
-      const answer = await write({ type: 'register-verification-key', runId, publicKey: verificationPublicKeyRecord(publicKey), verificationPid });
+      const answer = await write({ type: 'register-verification-key', runId, publicKey: verificationPublicKeyRecord(publicKey), verificationPid, sessionNonce });
       return { keyId: answer.keyId };
     },
     sign(payload = {}) {
@@ -478,10 +483,10 @@ export function spawnAnchorSigner({ trustRoot, anchorKeyPath, timeoutMs } = {}) 
 
   return {
     pid: child.pid,
-    async registerVerificationKey(runId, publicKey, verificationPid) {
+    async registerVerificationKey(runId, publicKey, verificationPid, sessionNonce) {
       assertId(runId, 'runId');
       if (!publicKey) fail('CONTRACT_INVALID', 'Нужен публичный ключ Verification');
-      const answer = await request({ type: 'register-verification-key', runId, publicKey: verificationPublicKeyRecord(publicKey), verificationPid });
+      const answer = await request({ type: 'register-verification-key', runId, publicKey: verificationPublicKeyRecord(publicKey), verificationPid, sessionNonce });
       return { keyId: answer.keyId };
     },
     sign(payload = {}) {
