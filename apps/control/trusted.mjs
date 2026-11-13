@@ -112,15 +112,15 @@ export function buildVerificationEnv({ trustRoot, environmentId = '', environmen
 // Control запускает доверенный Verification Worker как дочерний процесс и принимает
 // аттестацию и публичный ключ только по fork IPC. Приватный ключ Verification по IPC
 // не передаётся: Worker подписывает аттестацию у себя и отдаёт только результат.
-export async function verifyWithTrustedWorker({ runDir, frozen, trustRoot, approvalId, fixtureToken = '', standPublicKey = null, timeoutMs, canceled = false, browserUncertain = false } = {}) {
+export async function verifyWithTrustedWorker({ runDir, frozen, trustRoot, approvalId, fixtureToken = '', standPublicKey = null, timeoutMs, canceled = false, browserUncertain = false, environmentId = null, environmentGeneration = null } = {}) {
   if (!runDir || !frozen || !trustRoot || !approvalId) throw new TypeError('Нужны runDir, frozen, trustRoot и approvalId');
   const store = new RunStore(path.dirname(path.dirname(path.resolve(runDir))));
   const entry = fileURLToPath(new URL('../verification/trusted-worker.mjs', import.meta.url));
   if (!standChannelAvailable()) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Аттестованный канал стенда недоступен: доверенный Verification невозможен');
   const env = buildVerificationEnv({
     trustRoot,
-    environmentId: frozen.manifest.environment.id,
-    environmentGeneration: frozen.manifest.environment.generation || 1,
+    environmentId: environmentId || frozen.manifest.environment.id,
+    environmentGeneration: environmentGeneration || frozen.manifest.environment.generation || 1,
     standPublicKey,
     fixtureToken,
     approvalId
@@ -447,7 +447,9 @@ export function createTrustContext(options = {}) {
           // P0-01: кандидат принимается только вместе с подписанной аттестацией доверенного Verification.
           worker = await verifyWithTrustedWorker({
             runDir, frozen, trustRoot, approvalId, fixtureToken, standPublicKey,
-            timeoutMs: workerTimeoutMs, canceled, browserUncertain
+            timeoutMs: workerTimeoutMs, canceled, browserUncertain,
+            environmentId: currentEnvironment?.record?.environmentId || null,
+            environmentGeneration: currentEnvironment?.record?.generation || null
           });
           chosen = worker.payload.verdict;
           if (canceled && chosen.verdict === 'PASS') fail('INTEGRITY_ERROR', 'PASS запрещён для отменённого прогона');
