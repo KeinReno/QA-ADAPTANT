@@ -201,10 +201,11 @@ async function waitForChild(child, timeoutMs = 30000) {
   });
 }
 
-export async function run(bundle, { root, headed = false, fault = null, fixtureToken = process.env.QA_ADAPTANT_FIXTURE_TOKEN || '' } = {}) {
+export async function run(bundle, { root, headed = false, fault = null, fixtureToken = process.env.QA_ADAPTANT_FIXTURE_TOKEN || '', trust = null } = {}) {
   if (!root) throw new TypeError('Нужен корень локального хранилища');
   let runId;
   let lease = null;
+  let trustDenial = null;
   const store = new RunStore(root);
   let runDir;
   try {
@@ -222,6 +223,13 @@ export async function run(bundle, { root, headed = false, fault = null, fixtureT
     claimFixture(store, manifest.environment.id, fixture.fixtureId, runId);
 
     store.appendEvent(runDir, { type: 'STATE', state: 'PREFLIGHT' });
+    if (trust) {
+      const preflight = await trust.preflight({ store, runDir, frozen, bundle });
+      if (!preflight || preflight.allow !== true) {
+        trustDenial = preflight?.denial || { verdictCode: 'CONTRACT_INVALID', message: 'Доверенный preflight отказал без решения' };
+        throw fail(trustDenial.verdictCode, trustDenial.message);
+      }
+    }
     const before = await readJson(new URL('/environment', manifest.environment.baseUrl));
     if (before.environmentId !== manifest.environment.id || before.fingerprint !== manifest.environment.fingerprint) {
       throw fail('FIXTURE_UNAVAILABLE', 'Идентификатор или fingerprint стенда не совпадает с утверждённым окружением');
@@ -269,6 +277,13 @@ export async function run(bundle, { root, headed = false, fault = null, fixtureT
             const payload = command.payload;
             const click = scenario.nodes.find(n => n.id === payload.stepId)?.action;
             if (!click || click.type !== 'click' || !click.mutation || payload.operationId !== operation.id || payload.mutationName !== operation.mutation.name || payload.fixtureId !== fixture.fixtureId || payload.inputsSha256 !== digest(operation.inputs)) throw fail('CONTRACT_INVALID', 'INTENT не совпадает с утверждённой мутацией');
+            if (trust && !intentRecord) {
+              const dispatch = await trust.dispatch({ store, runDir, frozen, intent: payload });
+              if (!dispatch || dispatch.allow !== true) {
+                trustDenial = dispatch?.denial || { verdictCode: 'CONTRACT_INVALID', message: 'Доверенный dispatch отказал без решения' };
+                throw fail(trustDenial.verdictCode, trustDenial.message);
+              }
+            }
             if (intentRecord) {
               if (!equal(intentRecord.artifact, payload)) throw fail('INTEGRITY_ERROR', 'Повторный INTENT содержит другой payload');
             } else {
@@ -286,6 +301,7 @@ export async function run(bundle, { root, headed = false, fault = null, fixtureT
             const p = message.payload || {};
             const expectedFields = { ...operation.inputs, fixtureId: fixture.fixtureId };
             if (p.method !== 'POST' || p.path !== '/records' || p.operationId !== operation.id || p.intentId !== intentRecord.artifact.intentId || p.fixtureId !== fixture.fixtureId || !p.requestId || !equal(p.fields, expectedFields)) throw fail('CONTRACT_INVALID', 'Фактический POST не совпадает с замороженными inputs');
+            if (trust) await trust.beforeRequestAck({ store, runDir, frozen, request: p });
             const artifact = { requestId: p.requestId, intentId: p.intentId, operationId: p.operationId, method: p.method, path: p.path, fixtureId: p.fixtureId, fields: p.fields };
             const envelope = store.appendEvidence(runDir, { runId, manifestSha256: frozen.manifestSha256, fixtureId: fixture.fixtureId, stepId: intentRecord.envelope.stepId, producer: 'browser', kind: 'request', artifact, requestId: p.requestId, parentEvidenceIds: [intentRecord.envelope.evidenceId] });
             requestRecord = { envelope, artifact };
@@ -325,6 +341,16 @@ export async function run(bundle, { root, headed = false, fault = null, fixtureT
       if (exit.code !== 0 && !workerError) workerError = { code: 'WORKER_LOST', message: `Browser завершился с кодом ${exit.code}` };
       const canceled = cancelRequested(runDir, runId);
 
+      if (trustDenial && !intentRecord) {
+        cancellations.delete(runId);
+        store.appendEvent(runDir, { type: 'STATE', state: 'TRUST_DENIED', phase: trustDenial.phase || 'preflight', code: trustDenial.reasonCode });
+        return persistVerdict(store, runDir, frozen, resultVerdict(frozen, 'BLOCKED', trustDenial.verdictCode, trustDenial.message));
+      }
+      if (trustDenial && intentRecord) {
+        cancellations.delete(runId);
+        store.appendEvent(runDir, { type: 'STATE', state: 'TRUST_DENIED', phase: 'dispatch-after-intent', code: trustDenial.reasonCode });
+        return persistVerdict(store, runDir, frozen, resultVerdict(frozen, 'INCONCLUSIVE', 'ENVIRONMENT_CHANGED', trustDenial.message));
+      }
       store.appendEvent(runDir, { type: 'STATE', state: 'VERIFYING', intentPersisted: Boolean(intentRecord), browserDone: gotDone });
       if (!intentRecord) {
         const code = canceled ? 'CANCELED' : (workerError?.code || 'CONTRACT_INVALID');
@@ -336,7 +362,7 @@ export async function run(bundle, { root, headed = false, fault = null, fixtureT
       const browserUncertain = Boolean(workerError) || !gotDone || exit.code !== 0;
       const lossDetail = `exit=${exit.code ?? 'null'}, signal=${exit.signal || 'none'}, done=${gotDone}, phase=${workerError?.code || (gotDone ? 'DONE' : 'NO_DONE')}${workerError?.message ? `, ipc=${String(workerError.message).slice(0, 160)}` : ''}`;
       cancellations.delete(runId);
-      return await verifyAndPersist(store, runDir, { fault, browserUncertain, canceled, fixtureToken, lossDetail });
+      return await verifyAndPersist(store, runDir, { fault, browserUncertain, canceled, fixtureToken, lossDetail, trust });
     } finally {
       try { fs.unlinkSync(lockFile); } catch {}
     }
@@ -399,7 +425,7 @@ function terminalResult(store, runDir, frozen) {
   };
 }
 
-async function verifyAndPersist(store, runDir, { fault = null, browserUncertain = true, canceled = false, fixtureToken = process.env.QA_ADAPTANT_FIXTURE_TOKEN || '', lossDetail = '' } = {}) {
+async function verifyAndPersist(store, runDir, { fault = null, browserUncertain = true, canceled = false, fixtureToken = process.env.QA_ADAPTANT_FIXTURE_TOKEN || '', lossDetail = '', trust = null } = {}) {
   const frozen = verifyFrozenBundle(store, runDir);
   const finished = terminalResult(store, runDir, frozen);
   if (finished) return finished;
@@ -422,6 +448,7 @@ async function verifyAndPersist(store, runDir, { fault = null, browserUncertain 
   }
   const verdict = validateVerdictCoverage(result.verdict, frozen.operation, result.reads);
   if (verdict.runId !== frozen.manifest.runId || verdict.manifestSha256 !== frozen.manifestSha256) throw fail('INTEGRITY_ERROR', 'Verifier вернул другой run/manifest');
+  if (trust) return await trust.publish({ store, runDir, frozen, verdict });
   const finalEvidence = store.appendEvidence(runDir, {
     runId: frozen.manifest.runId,
     manifestSha256: frozen.manifestSha256,
@@ -476,7 +503,7 @@ export async function start(bundle, options = {}) {
   const finished = terminalResult(store, runDir, frozen);
   if (finished) return finished;
   if (foreignOwnerAlive(runDir)) return runningView(runId, runDir, store);
-  return reconcile({ root: options.root, runId, fault: options.fault || null, fixtureToken: options.fixtureToken || process.env.QA_ADAPTANT_FIXTURE_TOKEN || '' });
+  return reconcile({ root: options.root, runId, fault: options.fault || null, fixtureToken: options.fixtureToken || process.env.QA_ADAPTANT_FIXTURE_TOKEN || '', trust: options.trust || null });
 }
 
 export async function observe({ root, runId }) {
@@ -498,7 +525,7 @@ export async function observe({ root, runId }) {
   };
 }
 
-export async function reconcile({ root, runId, fault = null, canceled = false, fixtureToken = process.env.QA_ADAPTANT_FIXTURE_TOKEN || '' } = {}) {
+export async function reconcile({ root, runId, fault = null, canceled = false, fixtureToken = process.env.QA_ADAPTANT_FIXTURE_TOKEN || '', trust = null } = {}) {
   const store = new RunStore(root);
   const safeId = safeRunId(runId);
   const runDir = store.runPath(safeId);
@@ -515,7 +542,7 @@ export async function reconcile({ root, runId, fault = null, canceled = false, f
     return persistVerdict(store, runDir, frozen, verdict);
   }
   store.appendEvent(runDir, { type: 'STATE', state: 'RECONCILING' });
-  return verifyAndPersist(store, runDir, { fault, browserUncertain: true, canceled, fixtureToken });
+  return verifyAndPersist(store, runDir, { fault, browserUncertain: true, canceled, fixtureToken, trust });
 }
 
 export async function cancel({ root, runId }) {
