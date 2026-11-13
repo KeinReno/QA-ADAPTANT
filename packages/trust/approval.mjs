@@ -273,7 +273,9 @@ export function verifyApproval(trust, approval, options = {}) {
 }
 
 export function readApprovalState(trust, approval, options = {}) {
-  return verifyApproval(trust, approval, { issuer: options.issuer, subject: options.subject, windowsSid: options.windowsSid, trustRoot: options.trustRoot, expected: options.expected, testNow: options.testNow, purpose: 'view' });
+  // P2-02: путь «только approvalId» обязан читать закреплённый документ из trust root,
+  // а не терять идентификатор и отказывать с CONTRACT_INVALID.
+  return verifyApproval(trust, approval, { issuer: options.issuer, subject: options.subject, windowsSid: options.windowsSid, trustRoot: options.trustRoot, expected: options.expected, testNow: options.testNow, approvalId: options.approvalId, purpose: 'view' });
 }
 
 export function revokeApproval(privateKey, trustRoot, fields) {
@@ -313,6 +315,7 @@ function dispatchLocked(trust, request) {
     windowsSid: request.windowsSid,
     expected: request.expected,
     runId: request.runId,
+    approvalId: request.approvalId,
     purpose: 'dispatch'
   });
   if (viewed.state === 'consumed') return { ...viewed, ack: false, code: 'APPROVAL_CONSUMED' };
@@ -366,7 +369,8 @@ function dispatchLocked(trust, request) {
 function finishExisting(trust, request) {
   const checked = verifyApproval(trust, request.approval, {
     trustRoot: request.trustRoot, issuer: request.issuer, subject: request.subject,
-    windowsSid: request.windowsSid, expected: request.expected, runId: request.runId, purpose: 'dispatch'
+    windowsSid: request.windowsSid, expected: request.expected, runId: request.runId,
+    approvalId: request.approvalId, purpose: 'dispatch'
   });
   if (checked.state === 'incomplete') fail('CONSUMPTION_INCOMPLETE', 'Занятое имя расхода неполно и не заменяется');
   if (checked.state === 'consumed' && checked.consumption.runId === request.runId) return { ...checked, ack: false, code: 'APPROVAL_CONSUMED' };
