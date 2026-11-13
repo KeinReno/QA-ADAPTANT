@@ -1,7 +1,22 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import http from 'node:http';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
+
+// Локальная копия канонизации и идентификатора ключа: адаптеру разрешён только node:http.
+// Совпадение с packages/core/canonical.mjs и packages/trust/identity.mjs проверяется тестами WP-04.
+const canonical = value => {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
+  return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + canonical(value[key])).join(',') + '}';
+};
+const rawPublic = publicKey => Buffer.from(publicKey.export({ format: 'jwk' }).x, 'base64url');
+const publicKeyId = publicKey => createHash('sha256').update(rawPublic(publicKey)).digest('hex');
+const signAttestation = (privateKey, keyId, fields) => {
+  const body = { schemaVersion: '0.2.0', domain: 'environment-attest', ...fields, keyId };
+  const signature = sign(null, Buffer.from(canonical(body), 'utf8'), privateKey).toString('hex');
+  return { ...body, signature, signatureAlgorithm: 'Ed25519' };
+};
 const baseHtml = (ambiguous = false) => `<!doctype html><html lang="ru"><meta charset="utf-8"><title>QA Adaptant local fixture</title>
 <main><form aria-label="Создать запись">
 <label>Название<input name="title" autocomplete="off"></label>
@@ -21,7 +36,7 @@ form.addEventListener('submit',async event=>{
 });
 </script></html>`;
 
-export async function serveLocalFixture({ fault = null, environmentId = randomUUID() } = {}) {
+export async function serveLocalFixture({ fault = null, environmentId = randomUUID(), generation = 1, port = 0 } = {}) {
   const records = [];
   const byIdempotency = new Map();
   const authToken = randomUUID();
@@ -29,6 +44,10 @@ export async function serveLocalFixture({ fault = null, environmentId = randomUU
   let readCount = 0;
   let mutated = false;
   const initialFingerprint = hash('qa-adaptant-local-fixture-v1');
+  // Ключ стенда живёт только в памяти процесса стенда и на диск не пишется.
+  const { publicKey: standPublicKeyObject, privateKey: standPrivateKey } = generateKeyPairSync('ed25519');
+  const standKeyId = publicKeyId(standPublicKeyObject);
+  let origin = null;
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     const send = (status, body) => {
@@ -44,6 +63,30 @@ export async function serveLocalFixture({ fault = null, environmentId = randomUU
     if (req.method === 'GET' && url.pathname === '/environment') {
       if (fault === 'slowEnvironment') await new Promise(resolve => setTimeout(resolve, 1500));
       send(200, { environmentId, fingerprint: mutated && fault === 'changedEnvironment' ? `${initialFingerprint}-changed` : initialFingerprint, sourceRevision: 'local-fixture-v1' });
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/attest') {
+      // Аддитивное расширение WP-04: подпись свежего challenge ключом стенда. Редиректы не выпускаются.
+      const chunks = [];
+      let size = 0;
+      let tooLarge = false;
+      for await (const chunk of req) {
+        size += chunk.length;
+        if (size > 4096) { tooLarge = true; break; }
+        chunks.push(chunk);
+      }
+      if (tooLarge) { req.resume(); send(400, { error: 'too_large' }); return; }
+      let payload;
+      try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+      catch { send(400, { error: 'invalid_json' }); return; }
+      const keys = payload && typeof payload === 'object' && !Array.isArray(payload) ? Object.keys(payload) : [];
+      if (keys.length !== 1 || keys[0] !== 'challenge' || typeof payload.challenge !== 'string' || !/^[a-f0-9]{64}$/.test(payload.challenge)) {
+        send(400, { error: 'challenge_required' });
+        return;
+      }
+      send(200, signAttestation(standPrivateKey, standKeyId, {
+        environmentId, generation, origin, pid: process.pid, challenge: payload.challenge
+      }));
       return;
     }
     const authorized = req.headers.authorization === `Bearer ${authToken}`;
@@ -110,11 +153,14 @@ export async function serveLocalFixture({ fault = null, environmentId = randomUU
     }
     send(404, { error: 'not_found' });
   });
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
-  const { port } = server.address();
-  const baseUrl = `http://127.0.0.1:${port}/`;
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
+  const actualPort = server.address().port;
+  const baseUrl = `http://127.0.0.1:${actualPort}/`;
+  origin = baseUrl;
+  const standPublicKey = standPublicKeyObject.export({ type: 'spki', format: 'der' }).toString('base64');
   return {
     baseUrl, environmentId, fingerprint: initialFingerprint, authToken,
+    standKeyId, standPublicKey, pid: process.pid, generation,
     get mutationCount() { return mutationCount; },
     get readCount() { return readCount; },
     get recordCount() { return records.length; },
