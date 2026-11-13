@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createPrivateKey, createPublicKey, sign as cryptoSign, verify as cryptoVerify } from 'node:crypto';
 import { digest, canonical, scenarioApprovalHash } from '../core/canonical.mjs';
-import { validate, reasonCodes } from '../contracts/index.mjs';
+import { validate, reasonCodes, validateVerdictCoverage } from '../contracts/index.mjs';
 import { RunStore } from '../core/store.mjs';
 import { verifyFrozenBundle } from '../core/bundle.mjs';
-import { verifyTrustedDocument } from './identity.mjs';
+import { assertEvidenceRefs, assertTerminalEvidence } from '../core/evidence-policy.mjs';
+import { publicKeyId, verifyTrustedDocument } from './identity.mjs';
 
 export const DEFAULT_ANCHOR_BUDGET_MS = 5000;
 export const MIN_ANCHOR_BUDGET_MS = 1;
@@ -14,8 +16,24 @@ export const INCONCLUSIVE_MESSAGE = 'Анкер не получен в пред�
 const choiceKeys = ['anchorId', 'candidateSha256', 'createdAt', 'discardedCandidateSha256', 'domain', 'outcome', 'schemaVersion'];
 const statementBodyKeys = [
   'anchorId', 'approvalId', 'candidateSha256', 'chainHead', 'domain', 'environmentGeneration', 'environmentId',
-  'inputsHash', 'keyId', 'manifestSha256', 'publishedAt', 'reasonCode', 'runId', 'schemaVersion', 'verdict'
+  'inputsHash', 'keyId', 'manifestSha256', 'publishedAt', 'reasonCode', 'runId', 'schemaVersion', 'verdict',
+  // P0-01: заявление анкера связывается с подписанной аттестацией Verification.
+  'verificationAttestationSha256', 'verificationKeyId'
 ];
+export const VERIFICATION_ATTESTATION_SCHEMA_VERSION = '0.2.1';
+export const VERIFICATION_ATTESTATION_DOMAIN = 'verification-attestation';
+const VERIFICATION_RECORD_SCHEMA_VERSION = '0.2.0';
+const VERIFICATION_RECORD_DOMAIN = 'verification-attestation-record';
+const attestationBodyKeys = [
+  'schemaVersion', 'domain', 'runId', 'manifestSha256', 'approvalId', 'candidateSha256', 'readSetSha256',
+  'evidenceChainHead', 'decision', 'verificationKeyId', 'pid', 'startedAt', 'nonce', 'keyId'
+];
+const chainHeadKeys = ['envelopeSha256', 'sequence'];
+const decisionKeys = ['reasonCode', 'verdict'];
+const attestationKeys = [...attestationBodyKeys, 'signature', 'signatureAlgorithm'];
+const verificationRecordKeys = ['schemaVersion', 'domain', 'runId', 'attestation', 'verificationPublicKey'];
+const verificationPublicKeyKeys = ['algorithm', 'keyId', 'spki'];
+const hex256 = /^[a-f0-9]{64}$/;
 const outcomes = new Set(['anchor', 'budget-inconclusive', 'fail-without-anchor', 'inconclusive-without-anchor']);
 const verdicts = new Set(['PASS', 'FAIL', 'BLOCKED', 'INCONCLUSIVE']);
 const reasonCodeSet = new Set(reasonCodes);
@@ -47,6 +65,216 @@ function assertTime(value, what) {
 function jsonBytes(value) {
   return Buffer.from(String(canonical(value)) + '\n', 'utf8');
 }
+
+// P0-01: домен verification-attestation 0.2.1. Аттестацию подписывает эфемерный ключ
+// Verification, живущий только в памяти процесса. Публичный ключ передаётся отдельно,
+// а привязка к прогону перепроверяется по durable evidence и записи подписанта.
+
+function assertNonce(value) {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) fail('CONTRACT_INVALID', 'nonce аттестации не 32 байта hex');
+}
+
+function coercePublicKey(value) {
+  if (!value) return null;
+  try {
+    if (typeof value === 'object' && typeof value.export === 'function' && value.type === 'public') return value;
+    if (typeof value === 'string') {
+      if (value.includes('BEGIN')) return createPublicKey(value);
+      return createPublicKey({ key: Buffer.from(value, 'base64'), format: 'der', type: 'spki' });
+    }
+    if (Buffer.isBuffer(value) || value instanceof Uint8Array) return createPublicKey({ key: Buffer.from(value), format: 'der', type: 'spki' });
+    if (typeof value === 'object' && typeof value.spki === 'string') return createPublicKey({ key: Buffer.from(value.spki, 'base64'), format: 'der', type: 'spki' });
+  } catch { return null; }
+  return null;
+}
+
+function coercePrivateKey(value) {
+  if (!value) return null;
+  try {
+    if (typeof value === 'object' && typeof value.export === 'function' && value.type === 'private') return value;
+    if (typeof value === 'string') {
+      if (value.includes('BEGIN')) return createPrivateKey(value);
+      return createPrivateKey({ key: Buffer.from(value, 'base64'), format: 'der', type: 'pkcs8' });
+    }
+    if (Buffer.isBuffer(value) || value instanceof Uint8Array) return createPrivateKey({ key: Buffer.from(value), format: 'der', type: 'pkcs8' });
+  } catch { return null; }
+  return null;
+}
+
+export function verificationPublicKeyRecord(publicKey) {
+  const key = coercePublicKey(publicKey);
+  if (!key) fail('CONTRACT_INVALID', 'Публичный ключ Verification не разбирается');
+  return { algorithm: 'Ed25519', keyId: publicKeyId(key), spki: key.export({ type: 'spki', format: 'der' }).toString('base64') };
+}
+
+function verificationPublicKeyObject(record) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) fail('VERIFICATION_ATTESTATION_INVALID', 'Запись публичного ключа Verification не объект');
+  exactKeys(record, verificationPublicKeyKeys, 'verificationPublicKey');
+  if (record.algorithm !== 'Ed25519') fail('VERIFICATION_ATTESTATION_INVALID', 'Алгоритм ключа Verification не Ed25519');
+  assertHash(record.keyId, 'verificationPublicKey.keyId');
+  const key = coercePublicKey(record.spki);
+  if (!key) fail('VERIFICATION_ATTESTATION_INVALID', 'SPKI ключа Verification не разбирается');
+  if (publicKeyId(key) !== record.keyId) fail('VERIFICATION_ATTESTATION_INVALID', 'keyId не совпал с публичным ключом Verification');
+  return key;
+}
+
+// readSetSha256 — digest канонического массива пар {evidenceId, artifact.sha256} фактически
+// выполненных независимых чтений (kind='independent-read') в порядке журнала.
+export function computeReadSetSha256(items) {
+  if (!Array.isArray(items)) throw new TypeError('Нужен журнал evidence');
+  const entries = [];
+  for (const item of items) {
+    const envelope = item && item.envelope;
+    if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) fail('CONTRACT_INVALID', 'Элемент журнала evidence не объект');
+    if (envelope.kind !== 'independent-read') continue;
+    assertId(envelope.evidenceId, 'evidenceId');
+    assertHash(envelope.artifact?.sha256, 'artifact.sha256');
+    entries.push({ evidenceId: envelope.evidenceId, artifactSha256: envelope.artifact.sha256 });
+  }
+  return digest(entries);
+}
+
+function assertAttestationContent(body) {
+  if (body.schemaVersion !== VERIFICATION_ATTESTATION_SCHEMA_VERSION || body.domain !== VERIFICATION_ATTESTATION_DOMAIN) {
+    fail('VERIFICATION_ATTESTATION_INVALID', 'Версия или домен аттестации Verification не 0.2.1/verification-attestation');
+  }
+  assertId(body.runId, 'runId аттестации');
+  assertHash(body.manifestSha256, 'manifestSha256 аттестации');
+  assertId(body.approvalId, 'approvalId аттестации');
+  assertHash(body.candidateSha256, 'candidateSha256 аттестации');
+  assertHash(body.readSetSha256, 'readSetSha256 аттестации');
+  exactKeys(body.evidenceChainHead, chainHeadKeys, 'evidenceChainHead');
+  if (!Number.isSafeInteger(body.evidenceChainHead.sequence) || body.evidenceChainHead.sequence < 1) fail('VERIFICATION_ATTESTATION_INVALID', 'evidenceChainHead.sequence вне границы');
+  assertHash(body.evidenceChainHead.envelopeSha256, 'evidenceChainHead.envelopeSha256');
+  exactKeys(body.decision, decisionKeys, 'decision аттестации');
+  if (!verdicts.has(body.decision.verdict)) fail('VERIFICATION_ATTESTATION_INVALID', 'decision.verdict вне enum 0.1');
+  if (!reasonCodeSet.has(body.decision.reasonCode)) fail('VERIFICATION_ATTESTATION_INVALID', 'decision.reasonCode вне enum 0.1');
+  assertHash(body.verificationKeyId, 'verificationKeyId аттестации');
+  assertHash(body.keyId, 'keyId аттестации');
+  if (body.keyId !== body.verificationKeyId) fail('VERIFICATION_ATTESTATION_INVALID', 'keyId и verificationKeyId аттестации расходятся');
+  if (!Number.isSafeInteger(body.pid) || body.pid < 1) fail('VERIFICATION_ATTESTATION_INVALID', 'pid аттестации не целое от 1');
+  assertTime(body.startedAt, 'startedAt аттестации');
+  assertNonce(body.nonce);
+}
+
+export function buildVerificationAttestation(privateKey, fields = {}) {
+  const key = coercePrivateKey(privateKey);
+  if (!key) fail('CONTRACT_INVALID', 'Приватный ключ Verification не разбирается');
+  const allowed = new Set(['runId', 'manifestSha256', 'approvalId', 'candidateSha256', 'readSetSha256', 'evidenceChainHead', 'decision', 'pid', 'startedAt', 'nonce']);
+  for (const name of Object.keys(fields)) if (!allowed.has(name)) fail('CONTRACT_INVALID', 'Поле аттестации вне контракта: ' + name);
+  const verificationKeyId = publicKeyId(createPublicKey(key));
+  const body = {
+    schemaVersion: VERIFICATION_ATTESTATION_SCHEMA_VERSION,
+    domain: VERIFICATION_ATTESTATION_DOMAIN,
+    runId: fields.runId,
+    manifestSha256: fields.manifestSha256,
+    approvalId: fields.approvalId,
+    candidateSha256: fields.candidateSha256,
+    readSetSha256: fields.readSetSha256,
+    evidenceChainHead: fields.evidenceChainHead,
+    decision: fields.decision,
+    verificationKeyId,
+    pid: fields.pid,
+    startedAt: fields.startedAt,
+    nonce: fields.nonce,
+    keyId: verificationKeyId
+  };
+  exactKeys(body, attestationBodyKeys, 'verification-attestation');
+  assertAttestationContent(body);
+  const signature = cryptoSign(null, Buffer.from(canonical(body), 'utf8'), key).toString('hex');
+  return { ...body, signature, signatureAlgorithm: 'Ed25519' };
+}
+
+export function verifyVerificationAttestation(attestation, options = {}) {
+  if (!attestation || typeof attestation !== 'object' || Array.isArray(attestation)) fail('VERIFICATION_ATTESTATION_INVALID', 'Аттестация Verification не объект');
+  exactKeys(attestation, attestationKeys, 'verification-attestation');
+  if (attestation.signatureAlgorithm !== 'Ed25519') fail('VERIFICATION_ATTESTATION_INVALID', 'Алгоритм подписи аттестации не Ed25519');
+  if (typeof attestation.signature !== 'string' || !/^[a-f0-9]+$/i.test(attestation.signature)) fail('VERIFICATION_ATTESTATION_INVALID', 'Подпись аттестации отсутствует или не hex');
+  const body = { ...attestation };
+  delete body.signature;
+  delete body.signatureAlgorithm;
+  assertAttestationContent(body);
+  const key = coercePublicKey(options.publicKey);
+  if (!key) fail('VERIFICATION_ATTESTATION_INVALID', 'Публичный ключ Verification не передан');
+  if (publicKeyId(key) !== body.verificationKeyId) fail('VERIFICATION_ATTESTATION_INVALID', 'verificationKeyId не совпал с публичным ключом Verification');
+  if (options.expectedKeyId !== undefined && options.expectedKeyId !== body.verificationKeyId) fail('VERIFICATION_ATTESTATION_INVALID', 'verificationKeyId не совпал с зарегистрированным ключом');
+  const ok = cryptoVerify(null, Buffer.from(canonical(body), 'utf8'), key, Buffer.from(attestation.signature, 'hex'));
+  if (!ok) fail('VERIFICATION_ATTESTATION_INVALID', 'Подпись аттестации Verification не сошлась');
+  return body;
+}
+
+export function verificationAttestationSha256(attestation) {
+  if (!attestation || typeof attestation !== 'object' || Array.isArray(attestation)) fail('CONTRACT_INVALID', 'Аттестация Verification не объект');
+  return digest(attestation);
+}
+
+function verificationDirectory(trustRoot) {
+  if (typeof trustRoot !== 'string' || trustRoot.length === 0) throw new TypeError('Нужен каталог trust root');
+  return path.resolve(trustRoot, 'verification');
+}
+
+function verificationFile(trustRoot, runId) {
+  assertId(runId, 'runId');
+  const directory = verificationDirectory(trustRoot);
+  const file = path.resolve(directory, runId + '.json');
+  if (path.dirname(file) !== directory) fail('CONTRACT_INVALID', 'Файл аттестации выходит из каталога verification');
+  return { directory, file };
+}
+
+function validateVerificationRecord(record, runId) {
+  exactKeys(record, verificationRecordKeys, 'verification-attestation-record');
+  if (record.schemaVersion !== VERIFICATION_RECORD_SCHEMA_VERSION || record.domain !== VERIFICATION_RECORD_DOMAIN) {
+    fail('VERIFICATION_ATTESTATION_INVALID', 'Файл аттестации Verification не является записью 0.2.0');
+  }
+  assertId(record.runId, 'runId записи аттестации');
+  if (record.runId !== runId) fail('VERIFICATION_ATTESTATION_INVALID', 'Запись аттестации относится к другому runId');
+  const publicKey = verificationPublicKeyObject(record.verificationPublicKey);
+  const body = verifyVerificationAttestation(record.attestation, { publicKey, expectedKeyId: record.verificationPublicKey.keyId });
+  if (body.runId !== runId) fail('VERIFICATION_ATTESTATION_INVALID', 'Аттестация относятся к другому runId');
+  return { body, publicKey };
+}
+
+// Подписант — единственный писатель trustRoot/verification/<runId>.json.
+export function publishVerificationRecord(trustRoot, { runId, attestation, verificationPublicKey } = {}) {
+  const { directory, file } = verificationFile(trustRoot, runId);
+  const publicKey = coercePublicKey(typeof verificationPublicKey === 'string' || Buffer.isBuffer(verificationPublicKey) ? verificationPublicKey : verificationPublicKey?.spki);
+  if (!publicKey) fail('CONTRACT_INVALID', 'Публичный ключ Verification не передан');
+  const expectedKeyId = publicKeyId(publicKey);
+  const body = verifyVerificationAttestation(attestation, { publicKey, expectedKeyId });
+  if (body.runId !== runId) fail('VERIFICATION_ATTESTATION_INVALID', 'Аттестация относится к другому runId');
+  const record = {
+    schemaVersion: VERIFICATION_RECORD_SCHEMA_VERSION,
+    domain: VERIFICATION_RECORD_DOMAIN,
+    runId,
+    attestation,
+    verificationPublicKey: verificationPublicKeyRecord(publicKey)
+  };
+  const bytes = jsonBytes(record);
+  fs.mkdirSync(directory, { recursive: true });
+  if (fs.existsSync(file)) {
+    let existing;
+    try { existing = JSON.parse(fs.readFileSync(file, 'utf8')); }
+    catch { fail('ANCHOR_CONFLICT', 'Существующая аттестация Verification не читается и не заменяется'); }
+    const previous = validateVerificationRecord(existing, runId);
+    const sameAttestation = digest(existing.attestation) === digest(attestation);
+    if (!sameAttestation || previous.body.verificationKeyId !== body.verificationKeyId) {
+      fail('ANCHOR_CONFLICT', 'Для этого runId уже сохранена другая аттестация Verification');
+    }
+    return { record: existing, attestation: previous.body, created: false };
+  }
+  let fd;
+  try {
+    fd = fs.openSync(file, 'wx', 0o600);
+    fs.writeFileSync(fd, bytes);
+    fs.fsyncSync(fd);
+  } catch (error) {
+    if (error.code !== 'EEXIST') fail('TRUST_STORE_UNAVAILABLE', 'Аттестация Verification не сохранена');
+    return publishVerificationRecord(trustRoot, { runId, attestation, verificationPublicKey });
+  } finally { if (fd !== undefined) fs.closeSync(fd); }
+  if (!fs.readFileSync(file).equals(bytes)) fail('INTEGRITY_ERROR', 'Повторное чтение аттестации Verification не сошлось');
+  return { record, attestation: body, created: true };
+}
+
 
 function assertRunDir(runDir) {
   if (typeof runDir !== 'string' || runDir.length === 0) throw new TypeError('Нужен каталог прогона');
@@ -100,6 +328,8 @@ function validateStatementBody(body) {
   assertHash(body.candidateSha256, 'candidateSha256');
   assertHash(body.inputsHash, 'inputsHash');
   assertHash(body.keyId, 'keyId');
+  assertHash(body.verificationAttestationSha256, 'verificationAttestationSha256');
+  assertHash(body.verificationKeyId, 'verificationKeyId');
   assertTime(body.publishedAt, 'publishedAt');
   if (!verdicts.has(body.verdict)) fail('CONTRACT_INVALID', 'Вердикт анкера вне enum 0.1');
   if (!reasonCodeSet.has(body.reasonCode)) fail('CONTRACT_INVALID', 'reasonCode анкера вне enum 0.1');
@@ -108,6 +338,52 @@ function validateStatementBody(body) {
   if (!Number.isSafeInteger(body.chainHead.sequence) || body.chainHead.sequence < 0) fail('CONTRACT_INVALID', 'sequence цепочки вне границы');
   assertHash(body.chainHead.envelopeSha256, 'envelopeSha256');
   return body;
+}
+
+export function readVerificationRecord(trustRoot, runId) {
+  const { file } = verificationFile(trustRoot, runId);
+  if (!fs.existsSync(file)) return null;
+  let record;
+  try { record = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch { fail('VERIFICATION_ATTESTATION_INVALID', 'Запись аттестации Verification не читается'); }
+  const validated = validateVerificationRecord(record, runId);
+  return {
+    record,
+    attestation: record.attestation,
+    attestationBody: validated.body,
+    verificationPublicKey: record.verificationPublicKey,
+    attestationSha256: digest(record.attestation)
+  };
+}
+
+// Наблюдатель и подписант проверяют аттестацию одинаково: файл в trust root, подпись,
+// привязка keyId к заявлению анкера, runId/manifest/candidate и пересчёт readSet по durable evidence.
+export function assertVerificationAttestation({ trustRoot, runId, manifestSha256, approvalId, candidateSha256, readSetSha256, evidenceChainHead, decision, statement } = {}) {
+  if (!statement || typeof statement !== 'object') fail('CONTRACT_INVALID', 'Нужно заявление анкера');
+  assertHash(statement.verificationAttestationSha256, 'verificationAttestationSha256');
+  assertHash(statement.verificationKeyId, 'verificationKeyId');
+  const loaded = readVerificationRecord(trustRoot, runId);
+  if (!loaded) fail('VERIFICATION_ATTESTATION_MISSING', 'Аттестация Verification для этого прогона отсутствует');
+  if (loaded.attestationSha256 !== statement.verificationAttestationSha256) fail('VERIFICATION_ATTESTATION_INVALID', 'Аттестация Verification не совпала с заявлением анкера');
+  if (loaded.attestationBody.verificationKeyId !== statement.verificationKeyId) fail('VERIFICATION_ATTESTATION_INVALID', 'verificationKeyId анкера и аттестации расходятся');
+  if (loaded.attestationBody.runId !== runId) fail('VERIFICATION_ATTESTATION_INVALID', 'Аттестация относится к другому runId');
+  if (manifestSha256 !== undefined && loaded.attestationBody.manifestSha256 !== manifestSha256) fail('VERIFICATION_ATTESTATION_INVALID', 'Аттестация относится к другому манифесту');
+  if (candidateSha256 !== undefined && loaded.attestationBody.candidateSha256 !== candidateSha256) fail('VERIFICATION_ATTESTATION_INVALID', 'Аттестация подписана на другой candidateSha256');
+  if (readSetSha256 !== undefined && loaded.attestationBody.readSetSha256 !== readSetSha256) fail('VERIFICATION_ATTESTATION_INVALID', 'readSetSha256 не совпал с durable evidence');
+  if (approvalId !== undefined && loaded.attestationBody.approvalId !== approvalId) fail('VERIFICATION_ATTESTATION_INVALID', 'Аттестация относится к другому approvalId');
+  if (evidenceChainHead !== undefined) {
+    if (loaded.attestationBody.evidenceChainHead?.sequence !== evidenceChainHead?.sequence ||
+        loaded.attestationBody.evidenceChainHead?.envelopeSha256 !== evidenceChainHead?.envelopeSha256) {
+      fail('VERIFICATION_ATTESTATION_INVALID', 'evidenceChainHead не совпал с головой цепочки');
+    }
+  }
+  if (decision !== undefined) {
+    if (loaded.attestationBody.decision?.verdict !== decision?.verdict ||
+        loaded.attestationBody.decision?.reasonCode !== decision?.reasonCode) {
+      fail('VERIFICATION_ATTESTATION_INVALID', 'decision аттестации не совпал с candidate');
+    }
+  }
+  return { attestation: loaded.attestationBody, attestationSha256: loaded.attestationSha256, verificationKeyId: loaded.attestationBody.verificationKeyId };
 }
 
 export function loadAnchorBudgetMs(trustRoot) {
@@ -602,6 +878,42 @@ function verifyAnchorAgainstBinding({ trustRoot, trust, statement, binding, verd
   void trust;
 }
 
+function verificationReason(error) {
+  if (error && ['VERIFICATION_ATTESTATION_MISSING', 'VERIFICATION_ATTESTATION_INVALID'].includes(error.code)) return error.code;
+  if (error && ['TRUST_STORE_UNAVAILABLE', 'ANCHOR_CONFLICT', 'ANCHOR_BINDING_REJECTED', 'EVIDENCE_MISSING'].includes(error.code)) return error.code;
+  return 'INTEGRITY_ERROR';
+}
+
+// P0-01/P1-01: доверенный путь обязан иметь паритет с 0.1 по evidence и покрытию verdict.
+// Ошибки не глушатся: вызывающий переводит прогон в inconsistent и PASS не показывает.
+function assertEvidenceParity(items, frozen, { candidate = null, terminal = false } = {}) {
+  if (terminal) { assertTerminalEvidence(items, frozen); return; }
+  assertEvidenceRefs(items, frozen, { requireMutation: true });
+  const reads = items.filter(item => item.envelope.kind === 'independent-read');
+  if (candidate) {
+    validateVerdictCoverage(candidate, frozen.operation, reads);
+    if (['PASS', 'FAIL'].includes(candidate.verdict)) {
+      const response = items.find(item => item.envelope.kind === 'response');
+      if (!response || reads.length === 0) fail('INTEGRITY_ERROR', 'PASS/FAIL без подтверждённого ответа и независимых чтений не публикуется');
+    }
+  }
+}
+
+function assertVerificationLink({ trustRoot, statement, binding, items }) {
+  const readSetSha256 = computeReadSetSha256(items);
+  return assertVerificationAttestation({
+    trustRoot,
+    runId: binding.frozen.manifest.runId,
+    manifestSha256: binding.frozen.manifestSha256,
+    approvalId: binding.approval.approvalId,
+    candidateSha256: binding.candidate.candidateSha256,
+    readSetSha256,
+    evidenceChainHead: binding.chainHead,
+    decision: { verdict: binding.candidate.candidate.verdict, reasonCode: binding.candidate.candidate.reasonCode },
+    statement
+  });
+}
+
 function analyze({ store, runDir, frozen, trust, trustRoot }) {
   const result = { state: 'collecting', trusted: false, verdict: null, choice: null, candidate: null, head: null, anchorId: null, anchorStatement: null, anchorStatus: null, reasonCode: null, unlinkedAnchorId: null };
   if (!store || typeof store.readEvidence !== 'function') throw new TypeError('Нужен RunStore');
@@ -635,6 +947,15 @@ function analyze({ store, runDir, frozen, trust, trustRoot }) {
       result.anchorStatement = statement;
       const binding = inspectEvidenceBinding({ trust, trustRoot, runDir, approvalId: body.approvalId, mode: 'pre-verdict' });
       verifyAnchorAgainstBinding({ trustRoot, trust, statement: body, binding, verdictItem: null });
+      try {
+        assertEvidenceParity(binding.evidence, current, { candidate: binding.candidate.candidate });
+        result.verification = assertVerificationLink({ trustRoot, statement: body, binding, items: binding.evidence });
+      } catch (error) {
+        result.state = 'inconsistent';
+        result.reasonCode = verificationReason(error);
+        result.anchorStatus = result.reasonCode;
+        return result;
+      }
       result.head = binding.chainHead;
       result.state = 'anchor-held';
       result.reasonCode = 'PUBLICATION_PENDING';
@@ -686,6 +1007,16 @@ function analyze({ store, runDir, frozen, trust, trustRoot }) {
     catch (error) { result.state = 'inconsistent'; result.reasonCode = error.code === 'TRUST_STORE_UNAVAILABLE' ? 'TRUST_STORE_UNAVAILABLE' : (error.code === 'ANCHOR_BINDING_REJECTED' ? 'ANCHOR_BINDING_REJECTED' : (error.code === 'APPROVAL_MISSING' ? 'ANCHOR_MISSING' : 'ANCHOR_BINDING_REJECTED')); result.anchorStatus = result.reasonCode; result.verdict = null; return result; }
     try { verifyAnchorAgainstBinding({ trustRoot, trust, statement: body, binding, verdictItem }); }
     catch (error) { result.state = 'inconsistent'; result.reasonCode = error.code === 'ANCHOR_CONFLICT' ? 'ANCHOR_CONFLICT' : 'INTEGRITY_ERROR'; result.anchorStatus = result.reasonCode; result.verdict = null; return result; }
+    try {
+      assertEvidenceParity(items, current, { terminal: true });
+      result.verification = assertVerificationLink({ trustRoot, statement: body, binding, items });
+    } catch (error) {
+      result.state = 'inconsistent';
+      result.reasonCode = verificationReason(error);
+      result.anchorStatus = result.reasonCode;
+      result.verdict = null;
+      return result;
+    }
     result.state = 'terminal';
     result.trusted = true;
     result.anchorStatus = 'ANCHOR_OK';
@@ -745,15 +1076,17 @@ export function observeTrustedVerdict({ store, runDir, frozen, trust, trustRoot 
     anchor: analysis.anchorStatement,
     anchorStatus: analysis.anchorStatus,
     reasonCode: analysis.reasonCode,
-    unlinkedAnchorId: analysis.unlinkedAnchorId
+    unlinkedAnchorId: analysis.unlinkedAnchorId,
+    // P0-01: сведения об аттестации Verification добавляются только в конец результата.
+    verification: analysis.verification || null
   };
 }
 
-export function anchorWithinBudget({ signer, trustRoot, runDir, approvalId, anchorId } = {}) {
+export function anchorWithinBudget({ signer, trustRoot, runDir, approvalId, anchorId, attestation = null } = {}) {
   if (!signer || typeof signer.sign !== 'function') throw new TypeError('Нужен подключённый подписант');
   if (!trustRoot || !runDir || !approvalId || !anchorId) throw new TypeError('Нужны trustRoot, runDir, approvalId и anchorId');
   const budgetMs = loadAnchorBudgetMs(trustRoot);
-  const request = signer.sign({ runDir, approvalId, anchorId });
+  const request = signer.sign(attestation ? { runDir, approvalId, anchorId, attestation } : { runDir, approvalId, anchorId });
   let timer;
   const timeout = new Promise(resolve => { timer = setTimeout(() => resolve({ timeout: true }), budgetMs); });
   return Promise.race([request.then(statement => ({ statement })).catch(error => ({ error })), timeout]).then(async outcome => {

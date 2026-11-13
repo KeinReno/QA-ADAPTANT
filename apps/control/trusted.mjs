@@ -5,20 +5,26 @@
 // Второго исполнителя мутаций нет: оба входа сходятся в одном run().
 import fs from 'node:fs';
 import path from 'node:path';
+import { fork } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { RunStore } from '../../packages/core/store.mjs';
 import { digest } from '../../packages/core/canonical.mjs';
 import { verifyFrozenBundle } from '../../packages/core/bundle.mjs';
 import { assertApprovedOperation } from '../../packages/core/approved-registry.mjs';
+import { assertEvidenceRefs } from '../../packages/core/evidence-policy.mjs';
+import { validateVerdictCoverage } from '../../packages/contracts/index.mjs';
 import { loadTrustRoot } from '../../packages/trust/identity.mjs';
 import { consumeDispatch } from '../../packages/trust/approval.mjs';
 import { attestLiveEnvironment } from '../../packages/trust/environment.mjs';
+import * as environment from '../../packages/trust/environment.mjs';
 import { decide, projectToVerdict } from '../../packages/trust/policy.mjs';
 import {
   anchorWithinBudget, observeTrustedVerdict, publishBudgetInconclusiveOutcome, publishCandidate,
-  publishTerminalChoice, publishTerminalVerdict, readTerminalChoice, verifyAnchorStatement
+  publishTerminalChoice, publishTerminalVerdict, readTerminalChoice, verifyAnchorStatement,
+  verifyVerificationAttestation, computeReadSetSha256, verificationPublicKeyRecord
 } from '../../packages/trust/anchor.mjs';
-import { connectAnchorSigner } from '../../packages/trust/anchor-signer.mjs';
+import { connectAnchorSigner, spawnAnchorSigner } from '../../packages/trust/anchor-signer.mjs';
 import { currentUserSid } from '../../packages/trust/windows-sid.mjs';
 import { approvalFact, buildFacts, environmentFact, expectedFromFrozen, principalFact } from '../../packages/trust/facts.mjs';
 import { cancel, observe, reconcile, start } from './run.mjs';
@@ -78,8 +84,95 @@ function persistDecision(runDir, decision) {
   finally { if (fd !== undefined) fs.closeSync(fd); }
 }
 
+function standChannelAvailable() {
+  return typeof environment.attestationVerifiedReads === 'function';
+}
+
+// Control запускает доверенный Verification Worker как дочерний процесс и принимает
+// аттестацию и публичный ключ только по fork IPC. Приватный ключ Verification по IPC
+// не передаётся: Worker подписывает аттестацию у себя и отдаёт только результат.
+export async function verifyWithTrustedWorker({ runDir, frozen, trustRoot, approvalId, fixtureToken = '', standPublicKey = null, timeoutMs } = {}) {
+  if (!runDir || !frozen || !trustRoot || !approvalId) throw new TypeError('Нужны runDir, frozen, trustRoot и approvalId');
+  const store = new RunStore(path.dirname(path.dirname(path.resolve(runDir))));
+  const entry = fileURLToPath(new URL('../verification/trusted-worker.mjs', import.meta.url));
+  const allowUnsigned = !standChannelAvailable();
+  const env = {
+    QA_ADAPTANT_FIXTURE_TOKEN: fixtureToken,
+    QA_TRUST_ROOT: trustRoot,
+    QA_TRUSTED_APPROVAL_ID: approvalId,
+    QA_TRUSTED_ALLOW_UNSIGNED_STAND: allowUnsigned ? '1' : '0'
+  };
+  if (standPublicKey) env.QA_STAND_PUBLIC_KEY = typeof standPublicKey === 'string' ? standPublicKey : Buffer.from(standPublicKey?.export ? standPublicKey.export({ type: 'spki', format: 'der' }) : standPublicKey).toString('base64');
+  const child = fork(entry, [runDir, frozen.manifestSha256], {
+    stdio: ['ignore', 'ignore', process.env.QA_ADAPTANT_DEBUG === '1' ? 'inherit' : 'ignore', 'ipc'],
+    env: { ...process.env, ...env }
+  });
+  const budget = Number.isSafeInteger(timeoutMs) && timeoutMs > 0 ? timeoutMs : Math.max(15000, (frozen.manifest.budget?.deadlineMs || 5000) + 5000);
+  let workerPid = child.pid;
+  const close = async () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    try { child.send({ type: 'STOP' }); } catch { /* канал уже закрыт */ }
+    await new Promise(resolve => {
+      const timer = setTimeout(() => { try { child.kill(); } catch { /* уже завершён */ } resolve(); }, 1500);
+      child.once('exit', () => { clearTimeout(timer); resolve(); });
+    });
+  };
+  try {
+    const message = await new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (value, error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (error) reject(error); else resolve(value);
+      };
+      const timer = setTimeout(() => { try { child.kill(); } catch { /* уже завершён */ } finish(null, fail('WORKER_LOST', 'Доверенный Verification Worker не прислал результат')); }, budget);
+      child.on('message', value => {
+        if (!value || typeof value !== 'object') return;
+        if (value.type === 'RESULT') finish(value);
+        else if (value.type === 'ERROR') finish(null, fail(value.code || 'WORKER_LOST', value.message || 'Доверенный Verification Worker отказал'));
+      });
+      child.once('error', error => finish(null, error));
+      child.once('exit', code => { if (code !== null && !settled) finish(null, fail('WORKER_LOST', 'Доверенный Verification Worker завершился без результата: exit=' + code)); });
+    });
+    if (message.runId !== frozen.manifest.runId) fail('INTEGRITY_ERROR', 'Доверенный Verification Worker вернул другой runId');
+    const payload = message.payload || {};
+    const publicKey = verificationPublicKeyRecord(payload.verificationPublicKey);
+    const attestationBody = verifyVerificationAttestation(payload.attestation, { publicKey, expectedKeyId: publicKey.keyId });
+    const items = store.readEvidence(runDir);
+    if (attestationBody.runId !== frozen.manifest.runId || attestationBody.manifestSha256 !== frozen.manifestSha256) fail('INTEGRITY_ERROR', 'Аттестация Verification относится к другому прогону');
+    if (attestationBody.approvalId !== approvalId) fail('INTEGRITY_ERROR', 'Аттестация Verification относится к другому approvalId');
+    if (digest(payload.verdict) !== attestationBody.candidateSha256) fail('INTEGRITY_ERROR', 'candidateSha256 не совпал с байтами candidate Verification');
+    const readSetSha256 = computeReadSetSha256(items);
+    if (attestationBody.readSetSha256 !== readSetSha256) fail('INTEGRITY_ERROR', 'readSetSha256 аттестации не совпал с durable evidence');
+    const head = items.at(-1)?.envelope;
+    if (!head || attestationBody.evidenceChainHead?.sequence !== head.sequence || attestationBody.evidenceChainHead?.envelopeSha256 !== digest(head)) {
+      fail('INTEGRITY_ERROR', 'evidenceChainHead аттестации не совпал с головой цепочки');
+    }
+    if (attestationBody.decision?.verdict !== payload.verdict?.verdict || attestationBody.decision?.reasonCode !== payload.verdict?.reasonCode) {
+      fail('INTEGRITY_ERROR', 'decision аттестации не совпал с verdict Verification');
+    }
+    if (!Array.isArray(payload.reads)) fail('INTEGRITY_ERROR', 'Verification Worker не вернул независимые чтения');
+    for (const returned of payload.reads) {
+      const durable = items.find(item => item.envelope.evidenceId === returned?.envelope?.evidenceId);
+      if (!durable || digest(durable.artifact) !== digest(returned.artifact)) fail('INTEGRITY_ERROR', 'IPC read не совпал с durable evidence');
+    }
+    const durableReads = items.filter(item => item.envelope.kind === 'independent-read');
+    validateVerdictCoverage(payload.verdict, frozen.operation, durableReads);
+    assertEvidenceRefs(items, frozen, { requireMutation: true });
+    if (payload.verdict.verdict === 'PASS' && durableReads.length === 0) fail('INTEGRITY_ERROR', 'PASS Verification без независимых чтений');
+    return { payload, attestation: payload.attestation, verificationPublicKey: publicKey, verificationPid: workerPid, close };
+  } catch (error) {
+    await close();
+    throw error;
+  }
+}
+
 export function createTrustContext(options = {}) {
-  const { trust, trustRoot, approvalId, approval = null, issuer, subject, sid, standPublicKey, signer = null } = options;
+  const {
+    trust, trustRoot, approvalId, approval = null, issuer, subject, sid, standPublicKey,
+    signer = null, anchorKeyPath = null, fixtureToken = '', workerTimeoutMs
+  } = options;
   if (!trust || !trustRoot || !approvalId) throw new TypeError('Нужны trust, trustRoot и approvalId');
   let currentEnvironment = null;
   let trustStoreUnavailable = false;
@@ -130,6 +223,14 @@ export function createTrustContext(options = {}) {
 
   function approvalState(expected) {
     return approvalFact({ trust, trustRoot, approvalId, approval, issuer, subject, windowsSid: sid, expected, runId: null });
+  }
+
+  // Доверенная топология: если пайплайн не передал готового клиента, Control сам запускает
+  // подписанта дочерним процессом с приватным fork IPC. Путь к anchor.key идёт только в env ребёнка.
+  async function openSigner(existingSigner, anchorKeyPath, root) {
+    if (existingSigner) return existingSigner;
+    if (!anchorKeyPath) return null;
+    return spawnAnchorSigner({ trustRoot: root, anchorKeyPath });
   }
 
   return {
@@ -189,51 +290,74 @@ export function createTrustContext(options = {}) {
 
     async publish({ store, runDir, frozen, verdict }) {
       const existing = readTerminalChoice(runDir);
-      if (!existing) {
-        publishCandidate(runDir, verdict);
-        if (verdict.verdict === 'PASS') {
-          let anchored = null;
-          if (signer) {
-            const anchorId = 'anchor-' + randomUUID();
-            const outcome = await anchorWithinBudget({ signer, trustRoot, runDir, approvalId, anchorId });
-            if (outcome.ok) {
-              try {
-                const body = verifyAnchorStatement(trust, outcome.statement);
-                if (body.candidateSha256 !== digest(verdict)) fail('ANCHOR_BINDING_REJECTED', 'Анкер относится к другому candidate');
-                anchored = { anchorId: body.anchorId };
-              } catch { anchored = null; }
+      let worker = null;
+      let signerHandle = null;
+      try {
+        let chosen = verdict;
+        if (!existing && verdict.verdict === 'PASS') {
+          // P0-01: кандидат PASS принимается только вместе с подписанной аттестацией доверенного Verification.
+          worker = await verifyWithTrustedWorker({
+            runDir, frozen, trustRoot, approvalId, fixtureToken, standPublicKey,
+            timeoutMs: workerTimeoutMs
+          });
+          chosen = worker.payload.verdict;
+        }
+        if (!existing) {
+          publishCandidate(runDir, chosen);
+          if (chosen.verdict === 'PASS') {
+            let anchored = null;
+            signerHandle = await openSigner(signer, anchorKeyPath, trustRoot);
+            // Подписант без регистрации ключа Verification не может подтвердить происхождение: анкера нет.
+            if (signerHandle && worker && typeof signerHandle.registerVerificationKey === 'function') {
+              // Ключ Verification регистрируется только по приватному каналу Control→подписант,
+              // вместе с pid процесса, происхождение которого подписант подтверждает сам.
+              await signerHandle.registerVerificationKey(frozen.manifest.runId, worker.verificationPublicKey, worker.verificationPid);
+              const anchorId = 'anchor-' + randomUUID();
+              const outcome = await anchorWithinBudget({
+                signer: signerHandle, trustRoot, runDir, approvalId, anchorId, attestation: worker.attestation
+              });
+              if (outcome.ok) {
+                try {
+                  const body = verifyAnchorStatement(trust, outcome.statement);
+                  if (body.candidateSha256 !== digest(chosen)) fail('ANCHOR_BINDING_REJECTED', 'Анкер относится к другому candidate');
+                  anchored = { anchorId: body.anchorId };
+                } catch { anchored = null; }
+              }
             }
-          }
-          if (anchored) {
+            if (anchored) {
+              publishTerminalChoice(runDir, {
+                schemaVersion: '0.2.0', domain: 'terminal-choice', outcome: 'anchor',
+                candidateSha256: digest(chosen), discardedCandidateSha256: null, anchorId: anchored.anchorId, createdAt: nowIso()
+              });
+            } else {
+              publishBudgetInconclusiveOutcome({ runDir, frozen });
+            }
+          } else if (chosen.verdict === 'FAIL') {
             publishTerminalChoice(runDir, {
-              schemaVersion: '0.2.0', domain: 'terminal-choice', outcome: 'anchor',
-              candidateSha256: digest(verdict), discardedCandidateSha256: null, anchorId: anchored.anchorId, createdAt: nowIso()
+              schemaVersion: '0.2.0', domain: 'terminal-choice', outcome: 'fail-without-anchor',
+              candidateSha256: digest(chosen), discardedCandidateSha256: null, anchorId: null, createdAt: nowIso()
             });
           } else {
-            publishBudgetInconclusiveOutcome({ runDir, frozen });
+            publishTerminalChoice(runDir, {
+              schemaVersion: '0.2.0', domain: 'terminal-choice', outcome: 'inconclusive-without-anchor',
+              candidateSha256: digest(chosen), discardedCandidateSha256: null, anchorId: null, createdAt: nowIso()
+            });
           }
-        } else if (verdict.verdict === 'FAIL') {
-          publishTerminalChoice(runDir, {
-            schemaVersion: '0.2.0', domain: 'terminal-choice', outcome: 'fail-without-anchor',
-            candidateSha256: digest(verdict), discardedCandidateSha256: null, anchorId: null, createdAt: nowIso()
-          });
-        } else {
-          publishTerminalChoice(runDir, {
-            schemaVersion: '0.2.0', domain: 'terminal-choice', outcome: 'inconclusive-without-anchor',
-            candidateSha256: digest(verdict), discardedCandidateSha256: null, anchorId: null, createdAt: nowIso()
-          });
         }
+        // Проверка анкера для исхода anchor выполняется внутри publishTerminalVerdict (WP-05 D-01).
+        const published = publishTerminalVerdict({ store, runDir, frozen, trust, trustRoot });
+        store.appendEvent(runDir, { type: 'TRUST_VERDICT_DURABLE', evidenceId: published.evidenceId, verdict: published.verdict.verdict, anchorId: readTerminalChoice(runDir)?.anchorId || null });
+        store.appendEvent(runDir, { type: 'STATE', state: 'FINISHED', verdict: published.verdict.verdict, reasonCode: published.verdict.reasonCode });
+        return {
+          runId: frozen.manifest.runId,
+          runDir,
+          verdict: published.verdict,
+          evidenceIds: store.readEvidence(runDir).map(item => item.envelope.evidenceId)
+        };
+      } finally {
+        if (signerHandle && signerHandle !== signer && typeof signerHandle.close === 'function') await signerHandle.close();
+        if (worker && typeof worker.close === 'function') await worker.close();
       }
-      // Проверка анкера для исхода anchor выполняется внутри publishTerminalVerdict (WP-05 D-01).
-      const published = publishTerminalVerdict({ store, runDir, frozen, trust, trustRoot });
-      store.appendEvent(runDir, { type: 'TRUST_VERDICT_DURABLE', evidenceId: published.evidenceId, verdict: published.verdict.verdict, anchorId: readTerminalChoice(runDir)?.anchorId || null });
-      store.appendEvent(runDir, { type: 'STATE', state: 'FINISHED', verdict: published.verdict.verdict, reasonCode: published.verdict.reasonCode });
-      return {
-        runId: frozen.manifest.runId,
-        runDir,
-        verdict: published.verdict,
-        evidenceIds: store.readEvidence(runDir).map(item => item.envelope.evidenceId)
-      };
     }
   };
 }
@@ -266,7 +390,13 @@ export async function startTrusted(bundle, options = {}) {
   const trust = loadTrustRoot(options.trustRoot);
   const sid = currentUserSid();
   const signer = await signerFor(options);
-  const context = createTrustContext({ trust, trustRoot: options.trustRoot, approvalId: options.approvalId, approval: options.approval || null, issuer: options.issuer, subject: options.subject, sid, standPublicKey: options.standPublicKey || null, signer });
+  const context = createTrustContext({
+    trust, trustRoot: options.trustRoot, approvalId: options.approvalId, approval: options.approval || null,
+    issuer: options.issuer, subject: options.subject, sid, standPublicKey: options.standPublicKey || null,
+    signer, anchorKeyPath: options.anchorKeyPath || null,
+    fixtureToken: options.fixtureToken || process.env.QA_ADAPTANT_FIXTURE_TOKEN || '',
+    workerTimeoutMs: options.workerTimeoutMs
+  });
   try {
     const result = await start(bundle, { root: options.root, headed: options.headed || false, fault: options.fault || null, fixtureToken: options.fixtureToken || process.env.QA_ADAPTANT_FIXTURE_TOKEN || '', trust: context });
     return assertTrustedPass(result, { root: options.root, trustRoot: options.trustRoot, trust });
@@ -305,12 +435,12 @@ export async function cancelTrusted({ root, trustRoot, runId, subject } = {}) {
   return cancel({ root, runId });
 }
 
-export async function reconcileTrusted({ root, trustRoot, approvalId, approval = null, issuer, subject, standPublicKey = null, signerPipe = null, runId, fault = null } = {}) {
+export async function reconcileTrusted({ root, trustRoot, approvalId, approval = null, issuer, subject, standPublicKey = null, signerPipe = null, anchorKeyPath = null, fixtureToken = '', workerTimeoutMs, runId, fault = null } = {}) {
   assertTrustedOptions({ root, trustRoot, approvalId, issuer, subject, runId }, ['root', 'trustRoot', 'approvalId', 'issuer', 'subject', 'runId']);
   const trust = loadTrustRoot(trustRoot);
   const sid = currentUserSid();
   const signer = await signerFor({ signerPipe });
-  const context = createTrustContext({ trust, trustRoot, approvalId, approval, issuer, subject, sid, standPublicKey, signer });
+  const context = createTrustContext({ trust, trustRoot, approvalId, approval, issuer, subject, sid, standPublicKey, signer, anchorKeyPath, fixtureToken, workerTimeoutMs });
   try {
     const result = await reconcile({ root, runId, trust: context, fault });
     return assertTrustedPass(result, { root, trustRoot, trust });
