@@ -254,3 +254,43 @@ test('T-10: отказ на T-A не запускает Browser и не выда
   assert.equal(items.filter(item => item.envelope.kind === 'verdict').length, 1);
   assert.equal(fs.existsSync(path.join(w.trustRoot, 'consumption', approval.approvalId + '.json')), false);
 });
+test('T-11: старый PASS, принятый через startTrusted, не показывается как доверенный', { timeout: 90000 }, async t => {
+  const w = await world(t);
+  const { bundle, contract } = prepare(w);
+  const legacy = await start(bundle, { root: w.root, fixtureToken: w.stand.authToken });
+  assert.equal(legacy.verdict.verdict, 'PASS');
+  assert.equal(w.stand.mutationCount, 1);
+  const approval = signApproval(w.ownerKey, approvalFields(w, { bundle, contract }), w.trust, w.trustRoot);
+  await assert.rejects(
+    () => startTrusted(bundle, trustedOptions(w, approval)),
+    error => error.code === 'INTEGRITY_ERROR'
+  );
+  assert.equal(w.stand.mutationCount, 1);
+  const observed = await observeTrusted({ root: w.root, trustRoot: w.trustRoot, runId: bundle.manifest.runId });
+  assert.equal(observed.passed, false);
+});
+
+test('T-12: потеря анкера закрывает доверенный PASS для start и reconcile', { timeout: 90000 }, async t => {
+  const w = await world(t);
+  const { bundle, contract } = prepare(w);
+  const approval = signApproval(w.ownerKey, approvalFields(w, { bundle, contract }), w.trust, w.trustRoot);
+  const first = await startTrusted(bundle, trustedOptions(w, approval));
+  assert.equal(first.verdict.verdict, 'PASS');
+  const choice = readTerminalChoice(first.runDir);
+  fs.rmSync(path.join(w.trustRoot, 'anchors', choice.anchorId + '.json'));
+  await assert.rejects(
+    () => startTrusted(bundle, trustedOptions(w, approval)),
+    error => error.code === 'INTEGRITY_ERROR'
+  );
+  await assert.rejects(
+    () => import('../apps/control/trusted.mjs').then(module => module.reconcileTrusted({
+      root: w.root, trustRoot: w.trustRoot, approvalId: approval.approvalId, approval,
+      issuer: w.owner, subject: w.operator, signerPipe: w.signer.pipePath,
+      standPublicKey: w.stand.standPublicKey, runId: bundle.manifest.runId
+    })),
+    error => error.code === 'INTEGRITY_ERROR'
+  );
+  assert.equal(w.stand.mutationCount, 1);
+  const observed = await observeTrusted({ root: w.root, trustRoot: w.trustRoot, runId: bundle.manifest.runId });
+  assert.equal(observed.passed, false);
+});

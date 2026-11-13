@@ -83,7 +83,6 @@ export function createTrustContext(options = {}) {
   if (!trust || !trustRoot || !approvalId) throw new TypeError('Нужны trust, trustRoot и approvalId');
   let currentEnvironment = null;
   let lastDecision = null;
-  let dispatchApproved = false;
 
   async function refreshEnvironment(runId, frozen) {
     const expected = expectedFromFrozen(frozen);
@@ -167,7 +166,6 @@ export function createTrustContext(options = {}) {
       } catch (error) {
         return { allow: false, denial: errorDenial(error, 'dispatch') };
       }
-      dispatchApproved = true;
       return { allow: true, decision };
     },
 
