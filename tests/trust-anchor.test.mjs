@@ -21,7 +21,7 @@ import {
   observeTrustedVerdict, publicationState, publishBudgetInconclusiveOutcome, publishCandidate, publishCandidateBody,
   publishTerminalChoice, publishTerminalVerdict, readCandidate, readCandidateBody, readTerminalChoice, verifyAnchorStatement
 } from '../packages/trust/anchor.mjs';
-import { connectAnchorSigner, spawnAnchorSigner, startAnchorSigner } from '../packages/trust/anchor-signer.mjs';
+import { connectAnchorSigner, startAnchorSigner } from '../packages/trust/anchor-signer.mjs';
 import { verifyWithTrustedWorker } from '../apps/control/trusted.mjs';
 
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-anchor-'));
@@ -42,12 +42,15 @@ await commitEnvironmentRecord(trust, trustRoot, signEnvironmentRecord(ownerKey, 
   origin: stand.baseUrl, standKeyId: stand.standKeyId, credentialRef: 'local:fixture-token'
 }));
 // Подписант — дочерний процесс Control (тестовый harness) с приватным fork IPC.
-const signer = spawnAnchorSigner({ trustRoot, anchorKeyPath: path.join(secretsDir, 'anchor.key') });
+const signerServer = startAnchorSigner({ trustRoot, secretsDir });
+await signerServer.ready;
+const signer = connectAnchorSigner(signerServer.pipePath);
 const client = signer;
 const openWorkers = [];
 after(async () => {
   for (const worker of openWorkers) { try { await worker.close(); } catch { /* уже закрыт */ } }
   await signer.close();
+  await signerServer.close();
   await stand.close();
   fs.rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });

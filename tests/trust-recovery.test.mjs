@@ -17,11 +17,10 @@ import { serveLocalFixture } from '../adapters/local/server.mjs';
 import { createTrustRoot, loadTrustRoot, signTrustedDocument, unwrapPrivateKey } from '../packages/trust/identity.mjs';
 import { signApproval } from '../packages/trust/approval.mjs';
 import { commitEnvironmentRecord, signEnvironmentRecord } from '../packages/trust/environment.mjs';
-import { startAnchorSigner } from '../packages/trust/anchor-signer.mjs';
-import { readCandidate, readTerminalChoice } from '../packages/trust/anchor.mjs';
+import { buildTerminalChoice, publishTerminalChoice, readCandidate, readTerminalChoice } from '../packages/trust/anchor.mjs';
 import { currentUserSid } from '../packages/trust/windows-sid.mjs';
 import { observe } from '../apps/control/run.mjs';
-import { reconcileTrusted } from '../apps/control/trusted.mjs';
+import { cancelTrusted, observeTrusted, reconcileTrusted } from '../apps/control/trusted.mjs';
 
 const REPO = path.resolve('.');
 const CREDENTIAL_REF = 'local:fixture-token';
@@ -41,8 +40,6 @@ async function crashWorld(prefix) {
     origin: stand.baseUrl, standKeyId: stand.standKeyId, credentialRef: CREDENTIAL_REF
   });
   commitEnvironmentRecord(trust, trustRoot, record);
-  const signer = startAnchorSigner({ trustRoot, secretsDir });
-  await signer.ready;
   const sid = currentUserSid();
   const owner = signTrustedDocument(ownerKey, {
     schemaVersion: '0.2.0', domain: 'principal', principalId: 'local-owner', roles: ['owner'],
@@ -75,14 +72,13 @@ async function crashWorld(prefix) {
   const store = new RunStore(root);
   const options = {
     root, trustRoot, approvalId, approval, issuer: owner, subject: operator,
-    signerPipe: signer.pipePath, standPublicKey: stand.standPublicKey,
+    anchorKeyPath: path.join(secretsDir, 'anchor.key'), standPublicKey: stand.standPublicKey,
     fixtureToken: stand.authToken, credentials: { [CREDENTIAL_REF]: stand.authToken }
   };
   return {
-    base, root, secretsDir, trustRoot, trust, stand, signer, store, bundle, approval, approvalId,
+    base, root, secretsDir, trustRoot, trust, stand, store, bundle, approval, approvalId,
     owner, operator, runId, runDir: store.runPath(runId),
     async cleanup() {
-      try { await signer.close(); } catch { /* канал закрыт */ }
       try { await stand.close(); } catch { /* стенд закрыт */ }
       try { fs.rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* временный каталог */ }
     }
@@ -99,7 +95,7 @@ function verdictItems(w) {
 }
 
 // Запускает Control в дочернем процессе и убивает его сразу после выполнения predicate.
-async function runAndKillAfter(w, predicate) {
+async function runAndKillAfter(w, predicate, { onObserved = null, kill = true } = {}) {
   const bundleFile = path.join(w.base, 'bundle.json');
   const optionsFile = path.join(w.base, 'options.json');
   fs.writeFileSync(bundleFile, JSON.stringify(w.bundle));
@@ -129,21 +125,76 @@ async function runAndKillAfter(w, predicate) {
     try { if (predicate()) { observed = true; break; } } catch { /* каталог ещё пишется */ }
     if (child.exitCode !== null) break;
   }
-  const killed = observed ? child.kill('SIGKILL') : false;
+  if (observed && onObserved) await onObserved();
+  const killed = observed && kill ? child.kill('SIGKILL') : false;
   await new Promise(resolve => { if (child.exitCode !== null) resolve(); else child.once('exit', resolve); });
   await sleep(400);
-  return { observed, killed, childCode: child.exitCode };
+  let childResult = null;
+  try { childResult = JSON.parse(fs.readFileSync(resultFile, 'utf8')); } catch { /* SIGKILL до записи результата */ }
+  return { observed, killed, childCode: child.exitCode, childResult };
 }
 
 function reconcileOptions(w, extra = {}) {
   return {
     root: w.root, trustRoot: w.trustRoot, approvalId: w.approvalId,
-    issuer: w.owner, subject: w.operator, signerPipe: w.signer.pipePath,
+    issuer: w.owner, subject: w.operator, anchorKeyPath: path.join(w.secretsDir, 'anchor.key'),
     standPublicKey: w.stand.standPublicKey, runId: w.runId,
     fixtureToken: w.stand.authToken, credentials: { [CREDENTIAL_REF]: w.stand.authToken },
     ...extra
   };
 }
+
+test('WP-08 recovery: SIGKILL после receipt до candidate восстанавливает те же байты без мутации', { timeout: 180000 }, async () => {
+  const w = await crashWorld('receipt-before-candidate');
+  try {
+    w.bundleOptions = {
+      root: w.root, trustRoot: w.trustRoot, approvalId: w.approvalId, approval: null,
+      issuer: w.owner, subject: w.operator, anchorKeyPath: path.join(w.secretsDir, 'anchor.key'),
+      standPublicKey: w.stand.standPublicKey, fixtureToken: w.stand.authToken,
+      credentials: { [CREDENTIAL_REF]: w.stand.authToken }, fault: 'afterVerificationReceiptBeforeCandidate'
+    };
+    const crash = await runAndKillAfter(w, () => w.store.readEvents(w.runDir).some(event => event.state === 'RECEIPT_DURABLE_BEFORE_CANDIDATE'));
+    assert.equal(crash.observed, true, 'Control должен был оставить durable receipt до candidate: ' + JSON.stringify(crash));
+    const receiptFile = path.join(w.trustRoot, 'verification-receipts', w.runId + '.json');
+    assert.equal(fs.existsSync(receiptFile), true);
+    assert.equal(fs.existsSync(path.join(w.runDir, 'trust', 'candidate.json')), false);
+    const receipt = JSON.parse(fs.readFileSync(receiptFile, 'utf8'));
+    const result = await reconcileTrusted(reconcileOptions(w));
+    assert.equal(result.verdict.verdict, 'PASS');
+    assert.equal(digest(result.verdict), receipt.candidateSha256, 'восстановлены точные байты candidate из receipt');
+    assert.equal(w.stand.mutationCount, 1, 'второго POST нет');
+    assert.equal(verdictItems(w).length, 1);
+    assert.equal(anchorFiles(w).length, 1);
+  } finally {
+    await w.cleanup();
+  }
+});
+
+test('WP-08 recovery: non-anchor terminal-choice не завершает PASS при наличии signed receipt', { timeout: 180000 }, async () => {
+  const w = await crashWorld('receipt-choice-conflict');
+  try {
+    w.bundleOptions = {
+      root: w.root, trustRoot: w.trustRoot, approvalId: w.approvalId, approval: null,
+      issuer: w.owner, subject: w.operator, anchorKeyPath: path.join(w.secretsDir, 'anchor.key'),
+      standPublicKey: w.stand.standPublicKey, fixtureToken: w.stand.authToken,
+      credentials: { [CREDENTIAL_REF]: w.stand.authToken }, fault: 'afterVerificationReceiptBeforeCandidate'
+    };
+    const crash = await runAndKillAfter(w, () => w.store.readEvents(w.runDir).some(event => event.state === 'RECEIPT_DURABLE_BEFORE_CANDIDATE'));
+    assert.equal(crash.observed, true, JSON.stringify(crash));
+    const receipt = JSON.parse(fs.readFileSync(path.join(w.trustRoot, 'verification-receipts', w.runId + '.json'), 'utf8'));
+    publishTerminalChoice(w.runDir, buildTerminalChoice({
+      outcome: 'inconclusive-without-anchor', candidateSha256: receipt.candidateSha256
+    }));
+    await assert.rejects(
+      () => reconcileTrusted(reconcileOptions(w)),
+      error => error.code === 'PUBLICATION_PENDING'
+    );
+    assert.equal(verdictItems(w).length, 0, 'конфликтный terminal-choice не публикует verdict');
+    assert.equal(w.stand.mutationCount, 1, 'recovery не повторяет POST');
+  } finally {
+    await w.cleanup();
+  }
+});
 
 // V-06/P2-03: авария после durable PASS-candidate и до анкера. Reconcile с доступным подписантом
 // обязан дойти до PASS, а не всегда возвращать INCONCLUSIVE/WORKER_LOST.
@@ -152,14 +203,16 @@ test('V-06: reconcile после аварии с durable PASS-candidate дохо
   try {
     w.bundleOptions = {
       root: w.root, trustRoot: w.trustRoot, approvalId: w.approvalId, approval: null,
-      issuer: w.owner, subject: w.operator, signerPipe: w.signer.pipePath,
+      issuer: w.owner, subject: w.operator, anchorKeyPath: path.join(w.secretsDir, 'anchor.key'),
       standPublicKey: w.stand.standPublicKey, fixtureToken: w.stand.authToken,
       credentials: { [CREDENTIAL_REF]: w.stand.authToken }
     };
     const crash = await runAndKillAfter(w, () => fs.existsSync(path.join(w.runDir, 'trust', 'candidate.json')));
-    assert.equal(crash.observed, true, 'Control должен был записать durable candidate до аварии');
+    assert.equal(crash.observed, true, 'Control должен был записать durable candidate до аварии: ' + JSON.stringify(crash));
     const beforeCandidate = readCandidate(w.runDir);
     assert.equal(beforeCandidate?.candidate.verdict, 'PASS', 'durable candidate PASS');
+    const candidateBodyPath = path.join(w.runDir, 'trust', 'candidates', beforeCandidate.candidateSha256 + '.json');
+    fs.rmSync(candidateBodyPath, { force: true }); // crash after durable pointer, before hash-addressed body
     const anchorsBefore = anchorFiles(w);
     const result = await reconcileTrusted(reconcileOptions(w));
     assert.equal(result.verdict.verdict, 'PASS', 'reconcile обязан дойти до PASS, а не WORKER_LOST/INCONCLUSIVE');
@@ -190,11 +243,11 @@ test('P1-02: reconcile переиспользует уже выданный ан
   try {
     w.bundleOptions = {
       root: w.root, trustRoot: w.trustRoot, approvalId: w.approvalId, approval: null,
-      issuer: w.owner, subject: w.operator, signerPipe: w.signer.pipePath,
+      issuer: w.owner, subject: w.operator, anchorKeyPath: path.join(w.secretsDir, 'anchor.key'),
       standPublicKey: w.stand.standPublicKey, fixtureToken: w.stand.authToken,
-      credentials: { [CREDENTIAL_REF]: w.stand.authToken }
+      credentials: { [CREDENTIAL_REF]: w.stand.authToken }, fault: 'afterAnchorBeforeTerminalChoice'
     };
-    const crash = await runAndKillAfter(w, () => anchorFiles(w).length > 0);
+    const crash = await runAndKillAfter(w, () => w.store.readEvents(w.runDir).some(event => event.state === 'ANCHOR_DURABLE_BEFORE_TERMINAL_CHOICE'));
     assert.equal(crash.observed, true, 'Control должен был записать анкер до аварии');
     const anchorsBefore = anchorFiles(w);
     assert.equal(anchorsBefore.length, 1);
@@ -212,8 +265,61 @@ test('P1-02: reconcile переиспользует уже выданный ан
     assert.equal(choice.outcome, 'anchor');
     assert.equal(choice.anchorId, existingAnchorId, 'выбор связан с уже выданным анкером');
     assert.equal(w.stand.mutationCount, 1);
-    const old = await observe({ root: w.root, runId: w.runId });
-    assert.equal(old.verdict.verdict, 'PASS');
+    await assert.rejects(() => observe({ root: w.root, runId: w.runId }),
+      error => error.code === 'TRUSTED_RUN_REQUIRES_TRUSTED_ENTRY');
+    const observed = await observeTrusted({ root: w.root, trustRoot: w.trustRoot, runId: w.runId });
+    assert.equal(observed.verdict.verdict, 'PASS');
+  } finally {
+    await w.cleanup();
+  }
+});
+
+test('отмена после finalize и до terminal-choice не выпускает trusted PASS', { timeout: 90000 }, async () => {
+  const w = await crashWorld('cancel-finalize-race');
+  try {
+    w.bundleOptions = {
+      root: w.root, trustRoot: w.trustRoot, approvalId: w.approvalId, approval: null,
+      issuer: w.owner, subject: w.operator, anchorKeyPath: path.join(w.secretsDir, 'anchor.key'),
+      standPublicKey: w.stand.standPublicKey, fixtureToken: w.stand.authToken,
+      credentials: { [CREDENTIAL_REF]: w.stand.authToken }, fault: 'pauseAfterAnchorBeforeTerminalChoiceForCancelTest'
+    };
+    const attempt = await runAndKillAfter(w,
+      () => w.store.readEvents(w.runDir).some(event => event.state === 'ANCHOR_DURABLE_BEFORE_TERMINAL_CHOICE'),
+      { kill: false, onObserved: () => cancelTrusted({ root: w.root, trustRoot: w.trustRoot, runId: w.runId, subject: w.operator }) });
+    assert.equal(attempt.observed, true, 'тест должен попасть в окно между finalize и terminal-choice');
+    assert.equal(attempt.childResult?.ok, false, 'отмена должна остановить trusted PASS публикацию');
+    assert.equal(fs.existsSync(path.join(w.runDir, 'cancel.request')), true);
+    assert.equal(readTerminalChoice(w.runDir), null);
+    const observed = await observeTrusted({ root: w.root, trustRoot: w.trustRoot, runId: w.runId });
+    assert.equal(observed.passed, false);
+  } finally {
+    await w.cleanup();
+  }
+});
+
+test('reconcile завершает выбранный anchor после crash до записи verdict', { timeout: 180000 }, async () => {
+  const w = await crashWorld('terminal-choice-before-verdict');
+  try {
+    w.bundleOptions = {
+      root: w.root, trustRoot: w.trustRoot, approvalId: w.approvalId, approval: null,
+      issuer: w.owner, subject: w.operator, anchorKeyPath: path.join(w.secretsDir, 'anchor.key'),
+      standPublicKey: w.stand.standPublicKey, fixtureToken: w.stand.authToken,
+      credentials: { [CREDENTIAL_REF]: w.stand.authToken }, fault: 'afterTerminalChoiceBeforeVerdict'
+    };
+    const crash = await runAndKillAfter(w,
+      () => w.store.readEvents(w.runDir).some(event => event.state === 'TERMINAL_CHOICE_DURABLE_BEFORE_VERDICT'));
+    assert.equal(crash.observed, true, JSON.stringify(crash));
+    assert.equal(readTerminalChoice(w.runDir)?.outcome, 'anchor');
+    assert.equal(verdictItems(w).length, 0);
+    const candidate = readCandidate(w.runDir);
+    const anchorsBefore = anchorFiles(w);
+    assert.equal(anchorsBefore.length, 1);
+    const result = await reconcileTrusted(reconcileOptions(w));
+    assert.equal(result.verdict.verdict, 'PASS');
+    assert.equal(digest(result.verdict), candidate.candidateSha256);
+    assert.equal(anchorFiles(w).length, 1);
+    assert.equal(verdictItems(w).length, 1);
+    assert.equal(w.stand.mutationCount, 1);
   } finally {
     await w.cleanup();
   }

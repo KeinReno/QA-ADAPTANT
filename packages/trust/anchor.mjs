@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createPrivateKey, createPublicKey, sign as cryptoSign, verify as cryptoVerify } from 'node:crypto';
+import { createPrivateKey, createPublicKey, randomUUID, sign as cryptoSign, verify as cryptoVerify } from 'node:crypto';
 import { digest, canonical, scenarioApprovalHash } from '../core/canonical.mjs';
 import { validate, reasonCodes, validateVerdictCoverage } from '../contracts/index.mjs';
 import { RunStore } from '../core/store.mjs';
@@ -64,6 +64,37 @@ function assertTime(value, what) {
 
 function jsonBytes(value) {
   return Buffer.from(String(canonical(value)) + '\n', 'utf8');
+}
+
+// Publish immutable files only after a complete, flushed temporary file exists.
+// Linking within the same directory gives CREATE_NEW semantics without exposing
+// a partially written final path if the process is interrupted.
+function atomicCreateNew(file, bytes, code, description) {
+  const directory = path.dirname(file);
+  fs.mkdirSync(directory, { recursive: true });
+  const temp = path.join(directory, `.${path.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+  let fd;
+  try {
+    fd = fs.openSync(temp, 'wx', 0o600);
+    fs.writeFileSync(fd, bytes);
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.linkSync(temp, file);
+    let dirFd;
+    try {
+      dirFd = fs.openSync(directory, 'r');
+      fs.fsyncSync(dirFd);
+    } catch { /* Directory fsync is not supported on every platform. */ }
+    finally { if (dirFd !== undefined) fs.closeSync(dirFd); }
+    return true;
+  } catch (error) {
+    if (error.code === 'EEXIST') return false;
+    fail(code, description);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+    try { fs.unlinkSync(temp); } catch {}
+  }
 }
 
 // P0-01: домен verification-attestation 0.2.1. Аттестацию подписывает эфемерный ключ
@@ -250,7 +281,6 @@ export function publishVerificationRecord(trustRoot, { runId, attestation, verif
     verificationPublicKey: verificationPublicKeyRecord(publicKey)
   };
   const bytes = jsonBytes(record);
-  fs.mkdirSync(directory, { recursive: true });
   if (fs.existsSync(file)) {
     let existing;
     try { existing = JSON.parse(fs.readFileSync(file, 'utf8')); }
@@ -262,15 +292,9 @@ export function publishVerificationRecord(trustRoot, { runId, attestation, verif
     }
     return { record: existing, attestation: previous.body, created: false };
   }
-  let fd;
-  try {
-    fd = fs.openSync(file, 'wx', 0o600);
-    fs.writeFileSync(fd, bytes);
-    fs.fsyncSync(fd);
-  } catch (error) {
-    if (error.code !== 'EEXIST') fail('TRUST_STORE_UNAVAILABLE', 'Аттестация Verification не сохранена');
+  if (!atomicCreateNew(file, bytes, 'TRUST_STORE_UNAVAILABLE', 'Аттестация Verification не сохранена')) {
     return publishVerificationRecord(trustRoot, { runId, attestation, verificationPublicKey });
-  } finally { if (fd !== undefined) fs.closeSync(fd); }
+  }
   if (!fs.readFileSync(file).equals(bytes)) fail('INTEGRITY_ERROR', 'Повторное чтение аттестации Verification не сошлось');
   return { record, attestation: body, created: true };
 }
@@ -462,19 +486,12 @@ export function publishCandidateBody(runDir, candidate) {
   const validated = validateVerdictBody(candidate);
   const candidateSha256 = digest(validated);
   const { directory, file } = candidateBodyFile(runDir, candidateSha256);
-  fs.mkdirSync(directory, { recursive: true });
   const bytes = jsonBytes(validated);
-  let fd;
-  try { fd = fs.openSync(file, 'wx', 0o600); }
-  catch (error) {
-    if (error.code !== 'EEXIST') fail('CANDIDATE_INCOMPLETE', 'Тело candidate не создано');
+  if (!atomicCreateNew(file, bytes, 'CANDIDATE_INCOMPLETE', 'Тело candidate не создано')) {
     const existing = readCandidateBody(runDir, candidateSha256);
     if (existing) return { candidateSha256, created: false };
     fail('CANDIDATE_INCOMPLETE', 'Занятое имя тела candidate не подтвердилось');
   }
-  try { fs.writeFileSync(fd, bytes); fs.fsyncSync(fd); }
-  catch { fail('CANDIDATE_INCOMPLETE', 'Запись тела candidate оборвана'); }
-  finally { fs.closeSync(fd); }
   if (!fs.readFileSync(file).equals(bytes)) fail('INTEGRITY_ERROR', 'Повторное чтение тела candidate не сошлось');
   return { candidateSha256, created: true };
 }
@@ -531,27 +548,15 @@ export function publishCandidate(runDir, candidate) {
   if (validated.runId !== manifest.runId || validated.manifestSha256 !== digest(manifest)) fail('CONTRACT_INVALID', 'Candidate не принадлежит этому прогону');
   const candidateSha256 = digest(validated);
   const directory = trustDir(runDir);
-  fs.mkdirSync(directory, { recursive: true });
   const file = path.join(directory, 'candidate.json');
   const bytes = jsonBytes(validated);
-  let fd;
-  try { fd = fs.openSync(file, 'wx', 0o600); }
-  catch (error) {
-    if (error.code !== 'EEXIST') fail('CANDIDATE_INCOMPLETE', 'Durable candidate не создан');
+  if (!atomicCreateNew(file, bytes, 'CANDIDATE_INCOMPLETE', 'Durable candidate не создан')) {
     const existing = readCandidate(runDir);
     if (existing && existing.candidateSha256 === candidateSha256) {
       publishCandidateBody(runDir, validated);
       return { candidateSha256, created: false };
     }
     fail('CANDIDATE_CONFLICT', 'Durable candidate уже занят другим телом и не заменяется');
-  }
-  try {
-    fs.writeFileSync(fd, bytes);
-    fs.fsyncSync(fd);
-  } catch {
-    fail('CANDIDATE_INCOMPLETE', 'Запись durable candidate оборвана');
-  } finally {
-    fs.closeSync(fd);
   }
   const reread = fs.readFileSync(file);
   if (!reread.equals(bytes)) fail('INTEGRITY_ERROR', 'Повторное чтение durable candidate не сошлось');
@@ -590,24 +595,12 @@ export function publishTerminalChoice(runDir, choice) {
   assertRunDir(runDir);
   const validated = validateChoice(choice);
   const directory = trustDir(runDir);
-  fs.mkdirSync(directory, { recursive: true });
   const file = path.join(directory, 'terminal-choice.json');
   const bytes = jsonBytes(validated);
-  let fd;
-  try { fd = fs.openSync(file, 'wx', 0o600); }
-  catch (error) {
-    if (error.code !== 'EEXIST') fail('TERMINAL_CHOICE_INCOMPLETE', 'terminal-choice не создан');
+  if (!atomicCreateNew(file, bytes, 'TERMINAL_CHOICE_INCOMPLETE', 'terminal-choice не создан')) {
     const existing = readTerminalChoice(runDir);
     if (!existing) fail('TERMINAL_CHOICE_INCOMPLETE', 'Занятое имя terminal-choice не подтвердилось');
     return { choice: existing, created: false };
-  }
-  try {
-    fs.writeFileSync(fd, bytes);
-    fs.fsyncSync(fd);
-  } catch {
-    fail('TERMINAL_CHOICE_INCOMPLETE', 'Запись terminal-choice оборвана');
-  } finally {
-    fs.closeSync(fd);
   }
   const reread = fs.readFileSync(file);
   if (!reread.equals(bytes)) fail('INTEGRITY_ERROR', 'Повторное чтение terminal-choice не сошлось');
@@ -820,7 +813,7 @@ function readRevocationForSigner(trust, trustRoot, approvalId) {
 }
 
 // Подписант и наблюдатель читают связку сами: хеш или verdict от вызывающего здесь не принимается.
-export function inspectEvidenceBinding({ trust, trustRoot, runDir, approvalId, mode = 'pre-verdict' } = {}) {
+export function inspectEvidenceBinding({ trust, trustRoot, runDir, approvalId, mode = 'pre-verdict', candidate: suppliedCandidate = null } = {}) {
   assertRunDir(runDir);
   if (!trustRoot) throw new TypeError('Нужен каталог trust root');
   if (mode !== 'pre-verdict' && mode !== 'terminal') throw new TypeError('Неизвестный режим проверки связки');
@@ -832,7 +825,9 @@ export function inspectEvidenceBinding({ trust, trustRoot, runDir, approvalId, m
   if (revocation && Date.parse(revocation.revokedAt) <= Date.parse(consumption.consumedAt)) fail('APPROVAL_REVOKED', 'Отзыв подтверждён до расхода approval');
   if (Date.parse(consumption.consumedAt) < Date.parse(approval.issuedAt) || Date.parse(consumption.consumedAt) >= Date.parse(approval.expiresAt)) fail('CONSUMPTION_INCOMPLETE', 'Расход не укладывается в срок approval');
   assertSnapshots(store, runDir, frozen, approval, consumption);
-  const candidateRecord = readCandidate(runDir);
+  const candidateRecord = suppliedCandidate
+    ? { candidate: validateVerdictBody(suppliedCandidate), candidateSha256: digest(validateVerdictBody(suppliedCandidate)) }
+    : readCandidate(runDir);
   if (!candidateRecord) fail('ANCHOR_BINDING_REJECTED', 'Durable candidate отсутствует');
   if (candidateRecord.candidate.runId !== frozen.manifest.runId || candidateRecord.candidate.manifestSha256 !== frozen.manifestSha256) fail('APPROVAL_MISMATCH', 'Candidate принадлежит другому прогону');
   const items = store.readEvidence(runDir);
@@ -1082,11 +1077,11 @@ export function observeTrustedVerdict({ store, runDir, frozen, trust, trustRoot 
   };
 }
 
-export function anchorWithinBudget({ signer, trustRoot, runDir, approvalId, anchorId, attestation = null } = {}) {
+export function anchorWithinBudget({ signer, trustRoot, runDir, approvalId, anchorId, attestation = null, lease = null } = {}) {
   if (!signer || typeof signer.sign !== 'function') throw new TypeError('Нужен подключённый подписант');
   if (!trustRoot || !runDir || !approvalId || !anchorId) throw new TypeError('Нужны trustRoot, runDir, approvalId и anchorId');
   const budgetMs = loadAnchorBudgetMs(trustRoot);
-  const request = signer.sign(attestation ? { runDir, approvalId, anchorId, attestation } : { runDir, approvalId, anchorId });
+  const request = signer.sign({ runDir, approvalId, anchorId, ...(attestation ? { attestation } : {}), ...(lease ? { lease } : {}) });
   let timer;
   const timeout = new Promise(resolve => { timer = setTimeout(() => resolve({ timeout: true }), budgetMs); });
   return Promise.race([request.then(statement => ({ statement })).catch(error => ({ error })), timeout]).then(async outcome => {

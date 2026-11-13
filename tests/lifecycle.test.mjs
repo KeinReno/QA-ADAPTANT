@@ -88,6 +88,23 @@ test('CANCEL после dispatch сохраняет неизвестность �
   assert.equal(fixture.mutationCount, 1);
 });
 
+test('CANCEL до HTTP ACK сериализуется с разрешением POST', async t => {
+  const { root, fixture, bundle, runId } = await setup(t);
+  const pending = start(bundle, { root, fault: 'pauseBeforeRequestAck', fixtureToken: fixture.authToken });
+  const store = new RunStore(root);
+  await waitUntil(() => {
+    try { return store.readEvents(store.runPath(runId)).some(event => event.state === 'REQUEST_ACK_PAUSED'); }
+    catch { return false; }
+  });
+  const requested = await cancel({ root, runId });
+  assert.equal(requested.state, 'CANCEL_REQUESTED');
+  const result = await pending;
+  assert.equal(result.verdict.verdict, 'INCONCLUSIVE');
+  assert.equal(result.verdict.reasonCode, 'CANCELED');
+  assert.equal(fixture.mutationCount, 0);
+  assert.equal(store.readEvents(store.runPath(runId)).some(event => event.type === 'REQUEST_DURABLE'), false);
+});
+
 test('durable lock блокирует второй прогон того же fixture', async t => {
   const first = await setup(t, { fault: 'pauseBeforeIntent', runId: 'lock-owner' });
   const pending = start(first.bundle, { root: first.root, fault: 'pauseBeforeIntent', fixtureToken: first.fixture.authToken });

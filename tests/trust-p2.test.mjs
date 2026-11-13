@@ -16,10 +16,8 @@ import { commitEnvironmentRecord, signEnvironmentRecord } from '../packages/trus
 import { serveLocalFixture } from '../adapters/local/server.mjs';
 import { currentUserSid } from '../packages/trust/windows-sid.mjs';
 import { createTrustContext, startTrusted } from '../apps/control/trusted.mjs';
-import { reconcile, run } from '../apps/control/run.mjs';
-import {
-  buildTerminalChoice, publishBudgetInconclusiveOutcome, publishCandidate, publishTerminalChoice, publishTerminalVerdict
-} from '../packages/trust/anchor.mjs';
+import { reconcileTrusted } from '../apps/control/trusted.mjs';
+import { cancel, observe, reconcile } from '../apps/control/run.mjs';
 
 const KEYGEN = path.resolve('packages/trust/keygen.mjs');
 
@@ -268,7 +266,7 @@ test('E-04: доверенный прогон с чужим credentialRef отк
     const result = await startTrusted(w.run.bundle, {
       root: w.store.root, trustRoot: w.trustRoot, approvalId: w.approvalId, approval: w.approval,
       issuer: w.issuer, subject: w.subject, standPublicKey: w.stand.standPublicKey,
-      signerPipe: null, fixtureToken: w.stand.authToken,
+      anchorKeyPath: path.join(w.secretsDir, 'anchor.key'), signerPipe: null, fixtureToken: w.stand.authToken,
       credentials: { 'local:fixture-token': w.stand.authToken }
     });
     assert.equal(result.verdict.verdict, 'BLOCKED');
@@ -285,17 +283,17 @@ test('E-04: доверенный прогон с чужим credentialRef отк
 });
 
 // P2-02 (E2E): полный доверенный прогон только по approvalId, документ читается из trust root.
-test('P2-02: startTrusted без документа approval доходит до PASS', { timeout: 120000 }, async () => {
+test('P2-02: startTrusted без документа approval доходит до PASS с настроенным подписантом', { timeout: 120000 }, async () => {
   const w = await e04World('p2-approval-e2e', 'local:fixture-token');
   try {
     const result = await startTrusted(w.run.bundle, {
       root: w.store.root, trustRoot: w.trustRoot, approvalId: w.approvalId,
       issuer: w.issuer, subject: w.subject, standPublicKey: w.stand.standPublicKey,
-      signerPipe: null, fixtureToken: w.stand.authToken,
+      anchorKeyPath: path.join(w.secretsDir, 'anchor.key'), signerPipe: null, fixtureToken: w.stand.authToken,
       credentials: { 'local:fixture-token': w.stand.authToken }
     });
-    assert.equal(result.verdict.verdict, 'INCONCLUSIVE', 'без подписанта PASS не публикуется, но прогон проходит PEP');
-    assert.equal(result.verdict.reasonCode, 'EVIDENCE_MISSING');
+    assert.equal(result.verdict.verdict, 'PASS');
+    assert.equal(result.verdict.reasonCode, 'NONE');
     assert.equal(w.stand.mutationCount, 1, 'мутация выполнена ровно один раз');
     assert.equal(fs.existsSync(path.join(w.trustRoot, 'consumption', w.approvalId + '.json')), true);
   } finally {
@@ -308,16 +306,14 @@ test('P2-04: ошибка publish оставляет PUBLICATION_PENDING и по
   const w = await e04World('p2-publication', 'local:fixture-token');
   const store = new RunStore(w.store.root);
   try {
-    const refusing = {
-      preflight: async () => ({ allow: true }),
-      dispatch: async () => ({ allow: true }),
-      beforeRequestAck: async () => ({ allow: true }),
-      publish: async () => { throw Object.assign(new Error('публикация отклонена тестом'), { code: 'ANCHOR_CONFLICT' }); }
+    const trustedOptions = {
+      root: w.store.root, trustRoot: w.trustRoot, approvalId: w.approvalId, approval: w.approval,
+      issuer: w.issuer, subject: w.subject, standPublicKey: w.stand.standPublicKey,
+      anchorKeyPath: path.join(w.secretsDir, 'anchor.key'), fixtureToken: w.stand.authToken,
+      credentials: { 'local:fixture-token': w.stand.authToken }, fault: 'throwAfterVerificationReceiptBeforeCandidate'
     };
-    await assert.rejects(
-      () => run(w.run.bundle, { root: w.store.root, fixtureToken: w.stand.authToken, trust: refusing }),
-      error => error.code === 'ANCHOR_CONFLICT'
-    );
+    const first = await startTrusted(w.run.bundle, trustedOptions).then(value => ({ value }), error => ({ error: { code: error.code, message: error.message } }));
+    assert.equal(first.error?.code, 'ANCHOR_CONFLICT');
     const runDir = store.runPath(w.run.runId);
     const before = store.readEvidence(runDir);
     assert.equal(w.stand.mutationCount, 1, 'мутация была ровно одна');
@@ -325,29 +321,22 @@ test('P2-04: ошибка publish оставляет PUBLICATION_PENDING и по
     assert.equal(fs.existsSync(path.join(runDir, 'trust', 'terminal-choice.json')), false);
     const events = store.readEvents(runDir);
     assert.equal(events.some(event => event.state === 'PUBLICATION_PENDING'), true, 'состояние зафиксировано как PUBLICATION_PENDING');
-    // Оператор устранил причину: повторный reconcile дочитывает durable evidence и публикует терминальный результат.
-    const recovering = {
-      preflight: async () => ({ allow: true }),
-      dispatch: async () => ({ allow: true }),
-      beforeRequestAck: async () => ({ allow: true }),
-      async publish({ store: s, runDir: dir, frozen, verdict }) {
-        publishCandidate(dir, verdict);
-        if (verdict.verdict === 'PASS') {
-          publishBudgetInconclusiveOutcome({ runDir: dir, frozen });
-        } else {
-          publishTerminalChoice(dir, buildTerminalChoice({
-            outcome: verdict.verdict === 'FAIL' ? 'fail-without-anchor' : 'inconclusive-without-anchor',
-            candidateSha256: digest(verdict)
-          }));
-        }
-        return publishTerminalVerdict({ store: s, runDir: dir, frozen });
-      }
-    };
-    const result = await reconcile({ root: w.store.root, runId: w.run.runId, fixtureToken: w.stand.authToken, trust: recovering });
-    assert.equal(result.verdict.verdict !== 'PASS', true, 'без подписанта PASS не публикуется');
+    await assert.rejects(() => reconcile({ root: w.store.root, runId: w.run.runId }),
+      error => error.code === 'TRUSTED_RUN_REQUIRES_TRUSTED_ENTRY');
+    await assert.rejects(() => observe({ root: w.store.root, runId: w.run.runId }),
+      error => error.code === 'TRUSTED_RUN_REQUIRES_TRUSTED_ENTRY');
+    await assert.rejects(() => cancel({ root: w.store.root, runId: w.run.runId }),
+      error => error.code === 'TRUSTED_RUN_REQUIRES_TRUSTED_ENTRY');
+    assert.equal(fs.existsSync(path.join(runDir, 'cancel.request')), false, 'generic cancel не должен менять trusted run');
+    // Повторный reconcile проверяет receipt подписанта и финализирует тот же candidate.
+    const { fault, ...reconcileInput } = trustedOptions;
+    const result = await reconcileTrusted({ ...reconcileInput, runId: w.run.runId });
+    assert.equal(result.verdict.verdict, 'PASS');
     assert.equal(store.readEvidence(runDir).filter(item => item.envelope.kind === 'verdict').length, 1);
     assert.equal(fs.existsSync(path.join(runDir, 'trust', 'terminal-choice.json')), true);
     assert.equal(w.stand.mutationCount, 1, 'второго POST нет');
+    await assert.rejects(() => observe({ root: w.store.root, runId: w.run.runId }),
+      error => error.code === 'TRUSTED_RUN_REQUIRES_TRUSTED_ENTRY');
   } finally {
     await w.stand.close();
     w.cleanup();

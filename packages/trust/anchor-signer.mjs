@@ -15,6 +15,8 @@ import { execFile, fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { digest } from '../core/canonical.mjs';
+import { withFileMutex } from '../core/file-mutex.mjs';
+import { RunStore } from '../core/store.mjs';
 import { assertEvidenceRefs } from '../core/evidence-policy.mjs';
 import { validateVerdictCoverage } from '../contracts/index.mjs';
 import {
@@ -25,7 +27,9 @@ import { loadTrustRoot, signTrustedDocument, unwrapPrivateKey, verifyTrustedDocu
 
 const MAX_REQUEST_BYTES = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 15000;
-const signRequestKeys = new Set(['type', 'runDir', 'approvalId', 'anchorId', 'attestation', 'id']);
+const signRequestKeys = new Set(['type', 'runDir', 'approvalId', 'anchorId', 'attestation', 'lease', 'id']);
+const receiptRequestKeys = new Set(['type', 'runDir', 'approvalId', 'anchorId', 'candidate', 'publicKey', 'verificationPid', 'sessionNonce', 'attestation', 'processIdentity', 'lease', 'id']);
+const statusRequestKeys = new Set(['type', 'runDir', 'runId', 'lease', 'id']);
 const registerRequestKeys = new Set(['type', 'runId', 'publicKey', 'verificationPid', 'sessionNonce', 'id']);
 const TRUSTED_WORKER_SUFFIX = 'apps' + path.sep + 'verification' + path.sep + 'trusted-worker.mjs';
 
@@ -43,7 +47,7 @@ function processAlive(pid) {
 // Происхождение процесса Verification: WMI даёт ParentProcessId/CommandLine без отладки и инъекций.
 function queryProcess(pid) {
   if (!Number.isSafeInteger(pid) || pid < 1) return Promise.resolve(null);
-  const script = '$p = Get-CimInstance Win32_Process -Filter "ProcessId=' + String(pid) + '"; if ($p) { $p | Select-Object ProcessId,ParentProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress }';
+  const script = '$p = Get-CimInstance Win32_Process -Filter "ProcessId=' + String(pid) + '"; if ($p) { $p | Select-Object ProcessId,ParentProcessId,CreationDate,ExecutablePath,CommandLine | ConvertTo-Json -Compress }';
   return new Promise(resolve => {
     execFile(powershellPath(), ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 5000 }, (error, stdout) => {
       if (error) return resolve(null);
@@ -56,6 +60,21 @@ function queryProcess(pid) {
 function normalizedCommandLine(info) {
   const value = String(info?.CommandLine || '').replace(/\//g, '\\');
   return value.toLowerCase();
+}
+
+export async function queryTrustedProcessIdentity(pid) {
+  const info = await queryProcess(pid);
+  if (!info) return null;
+  const creationTimeUtc = typeof info.CreationDate === 'string' ? info.CreationDate : '';
+  const commandLine = normalizedCommandLine(info);
+  if (!creationTimeUtc || !commandLine) return null;
+  return {
+    pid: Number(info.ProcessId),
+    creationTimeUtc,
+    parentPid: Number(info.ParentProcessId),
+    executablePath: String(info.ExecutablePath || ''),
+    commandLineSha256: digest(commandLine)
+  };
 }
 
 function fail(code, message) {
@@ -79,6 +98,14 @@ function anchorFile(trustRoot, anchorId) {
   const directory = path.resolve(trustRoot, 'anchors');
   const file = path.resolve(directory, anchorId + '.json');
   if (path.dirname(file) !== directory) fail('CONTRACT_INVALID', 'Файл анкера выходит из каталога');
+  return { directory, file };
+}
+
+function receiptFile(trustRoot, runId) {
+  assertId(runId, 'runId');
+  const directory = path.resolve(trustRoot, 'verification-receipts');
+  const file = path.resolve(directory, runId + '.json');
+  if (path.dirname(file) !== directory) fail('CONTRACT_INVALID', 'Файл receipt выходит из каталога');
   return { directory, file };
 }
 
@@ -163,6 +190,148 @@ function createSignerSession({ trustRoot, privateKeyPath, privateKey, inProcess 
     if (fs.existsSync(path.join(runDir, 'trust', 'terminal-choice.json'))) fail('ANCHOR_BINDING_REJECTED', 'terminal-choice.json уже существует: новая подпись PASS не выпускается');
   }
 
+  async function withFinalizeLock(runDir, action) {
+    const lockFile = path.join(runDir, 'trust', 'publication.lock');
+    fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+    return withFileMutex(lockFile, () => {
+      try { fs.lstatSync(path.join(runDir, 'cancel.request')); fail('CANCEL_REQUESTED', 'Отменённый run не может получить PASS anchor'); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      return action();
+    });
+  }
+
+  function assertCurrentCommandLease(runDir, runId, lease) {
+    if (!lease || lease.runId !== runId || !Number.isSafeInteger(lease.pid) || lease.pid < 1 ||
+        typeof lease.token !== 'string' || lease.token.length < 16) fail('ANCHOR_BINDING_REJECTED', 'Current command lease невалиден');
+    const storeRoot = path.dirname(path.dirname(path.resolve(runDir)));
+    const store = new RunStore(storeRoot);
+    const frozen = store.readSnapshot(runDir, 'manifest').value;
+    const fixture = store.readSnapshot(runDir, 'fixture').value;
+    const file = path.join(storeRoot, 'leases', `${digest({ environmentId: frozen.environment.id, fixtureId: fixture.fixtureId })}.json`);
+    let current;
+    try { current = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { current = null; }
+    const expectedParentPid = inProcess ? process.pid : process.ppid;
+    if (!current || current.runId !== runId || current.pid !== lease.pid || current.token !== lease.token || lease.pid !== expectedParentPid) {
+      fail('ANCHOR_BINDING_REJECTED', 'Current command lease не совпадает с durable lease или signer parent');
+    }
+    return lease;
+  }
+
+  function readReceipt(runId) {
+    const { file } = receiptFile(resolvedTrust, runId);
+    try { fs.lstatSync(file); }
+    catch (error) {
+      if (error.code === 'ENOENT') return null;
+      fail('PUBLICATION_PENDING', 'Не удалось проверить durable verification receipt');
+    }
+    let document;
+    try { document = JSON.parse(fs.readFileSync(file, 'utf8')); }
+    catch { fail('INTEGRITY_ERROR', 'Verification receipt не читается'); }
+    const body = verifyTrustedDocument(loadTrustRoot(resolvedTrust), document);
+    if (body.schemaVersion !== '0.2.2' || body.domain !== 'verification-recovery-receipt' || body.runId !== runId ||
+        body.receiptId !== digest({ runId: body.runId, approvalId: body.approvalId, anchorId: body.anchorId })) {
+      fail('INTEGRITY_ERROR', 'Verification receipt имеет неверную схему или binding');
+    }
+    return { document, body };
+  }
+
+  async function prepareVerificationReceipt(request) {
+    if (inProcess) fail('ANCHOR_BINDING_REJECTED', 'Receipt разрешён только в приватной fork IPC топологии');
+    const trust = loadTrustRoot(resolvedTrust);
+    const key = await loadPrivateKey();
+    const runId = request.candidate?.runId;
+    assertId(runId, 'runId');
+    assertId(request.anchorId, 'anchorId');
+    const binding = inspectEvidenceBinding({ trust, trustRoot: resolvedTrust, runDir: request.runDir, approvalId: request.approvalId, mode: 'pre-verdict', candidate: request.candidate });
+    const lease = assertCurrentCommandLease(request.runDir, runId, request.lease);
+    if (lease.pid !== process.ppid) fail('ANCHOR_BINDING_REJECTED', 'Prepare lease Control PID не является signer parent');
+    const publicKey = verificationPublicKeyRecord(request.publicKey);
+    const attested = verifyVerificationAttestation(request.attestation, { publicKey, expectedKeyId: publicKey.keyId });
+    if (attested.pid !== request.verificationPid || request.processIdentity?.pid !== request.verificationPid ||
+        request.processIdentity?.parentPid !== lease.pid || attested.verificationKeyId !== publicKey.keyId || attested.nonce !== request.sessionNonce) {
+      fail('ANCHOR_BINDING_REJECTED', 'Receipt PID, ключ или session nonce не связан');
+    }
+    const observedIdentity = await queryTrustedProcessIdentity(request.verificationPid);
+    if (!observedIdentity || digest(observedIdentity) !== digest(request.processIdentity) || !processAlive(request.verificationPid)) {
+      fail('ANCHOR_BINDING_REJECTED', 'Receipt process identity не подтверждён ОС');
+    }
+    const commandLineInfo = await queryProcess(request.verificationPid);
+    if (path.win32.basename(String(commandLineInfo?.ExecutablePath || '')).toLowerCase() !== 'node.exe' ||
+        !normalizedCommandLine(commandLineInfo).includes(TRUSTED_WORKER_SUFFIX.toLowerCase())) {
+      fail('ANCHOR_BINDING_REJECTED', 'Receipt Verification Worker не доверенный Node.js образ');
+    }
+    const evidence = binding.evidence;
+    const head = binding.chainHead;
+    const readSetSha256 = computeReadSetSha256(evidence);
+    if (attested.runId !== runId || attested.manifestSha256 !== binding.frozen.manifestSha256 ||
+        attested.approvalId !== binding.approval.approvalId || attested.candidateSha256 !== binding.candidate.candidateSha256 ||
+        attested.readSetSha256 !== readSetSha256 || attested.evidenceChainHead?.sequence !== head.sequence ||
+        attested.evidenceChainHead?.envelopeSha256 !== head.envelopeSha256 ||
+        attested.decision?.verdict !== binding.candidate.candidate.verdict ||
+        attested.decision?.reasonCode !== binding.candidate.candidate.reasonCode) {
+      fail('ANCHOR_BINDING_REJECTED', 'Receipt attestation не совпадает с approval, candidate или evidence');
+    }
+    const reads = evidence.filter(item => item.envelope.kind === 'independent-read');
+    assertEvidenceRefs(evidence, binding.frozen, { requireMutation: true });
+    validateVerdictCoverage(binding.candidate.candidate, binding.frozen.operation, reads);
+    if (['PASS', 'FAIL'].includes(binding.candidate.candidate.verdict) && (!evidence.some(item => item.envelope.kind === 'response') || reads.length === 0)) {
+      fail('INTEGRITY_ERROR', 'Receipt PASS/FAIL без ответа и независимых чтений запрещён');
+    }
+    const body = {
+      schemaVersion: '0.2.2', domain: 'verification-recovery-receipt',
+      receiptId: digest({ runId, approvalId: request.approvalId, anchorId: request.anchorId }),
+      runId, manifestSha256: binding.frozen.manifestSha256, approvalId: request.approvalId, anchorId: request.anchorId,
+      candidate: binding.candidate.candidate, candidateSha256: binding.candidate.candidateSha256,
+      attestation: request.attestation, verificationPublicKey: publicKey, verificationPid: request.verificationPid,
+      provenance: { prepareControlPid: lease.pid, prepareLeaseToken: lease.token,
+        verificationPid: request.verificationPid, workerCreationTimeUtc: observedIdentity.creationTimeUtc,
+        workerImage: TRUSTED_WORKER_SUFFIX, verifiedAt: new Date().toISOString() },
+      processIdentity: observedIdentity,
+      evidenceChainHead: head, readSetSha256, createdAt: new Date().toISOString(),
+      keyId: trust['anchor-signer'].keyId
+    };
+    const existing = readReceipt(runId);
+    if (existing) {
+      const stableFields = ['receiptId', 'runId', 'manifestSha256', 'approvalId', 'anchorId', 'candidateSha256',
+        'attestation', 'verificationPublicKey', 'verificationPid', 'processIdentity', 'evidenceChainHead', 'readSetSha256'];
+      if (stableFields.some(field => digest(existing.body[field]) !== digest(body[field]))) fail('ANCHOR_CONFLICT', 'Для runId уже существует другой verification receipt');
+      verificationKeys.set(runId, { ...publicKey, verificationPid: request.verificationPid, sessionNonce: request.sessionNonce, processIdentity: observedIdentity });
+      return existing.document;
+    }
+    const signed = signTrustedDocument(key, body);
+    const { directory, file } = receiptFile(resolvedTrust, runId);
+    fs.mkdirSync(directory, { recursive: true });
+    const temporary = file + '.' + randomBytes(12).toString('hex') + '.tmp';
+    let fd;
+    try {
+      fd = fs.openSync(temporary, 'wx', 0o600);
+      fs.writeFileSync(fd, Buffer.from(JSON.stringify(signed) + '\n', 'utf8'));
+      fs.fsyncSync(fd);
+    } catch { fail('TRUST_STORE_UNAVAILABLE', 'Временный verification receipt не записан'); }
+    finally { if (fd !== undefined) fs.closeSync(fd); }
+    try {
+      fs.linkSync(temporary, file);
+      let dirFd;
+      try {
+        dirFd = fs.openSync(directory, 'r');
+        fs.fsyncSync(dirFd);
+      } catch (error) {
+        if (!['EPERM', 'EINVAL', 'EISDIR'].includes(error.code)) throw error;
+      } finally { if (dirFd !== undefined) fs.closeSync(dirFd); }
+      fs.unlinkSync(temporary);
+    } catch (error) {
+      if (error.code !== 'EEXIST') fail('TRUST_STORE_UNAVAILABLE', 'Verification receipt не опубликован атомарно');
+      const winner = readReceipt(runId);
+      try { fs.unlinkSync(temporary); } catch { /* temporary exact path from this request */ }
+      const stableFields = ['receiptId', 'runId', 'manifestSha256', 'approvalId', 'anchorId', 'candidateSha256',
+        'attestation', 'verificationPublicKey', 'verificationPid', 'processIdentity', 'evidenceChainHead', 'readSetSha256'];
+      if (!winner || stableFields.some(field => digest(winner.body[field]) !== digest(body[field]))) fail('ANCHOR_CONFLICT', 'Конкурирующий verification receipt расходится');
+      return winner.document;
+    }
+    verificationKeys.set(runId, { ...publicKey, verificationPid: request.verificationPid, sessionNonce: request.sessionNonce, processIdentity: observedIdentity });
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  }
+
   function reuseOrConflict(file, expectedBody) {
     let existing;
     try { existing = JSON.parse(fs.readFileSync(file, 'utf8')); }
@@ -180,7 +349,18 @@ function createSignerSession({ trustRoot, privateKeyPath, privateKey, inProcess 
     assertNoTerminalChoice(request.runDir);
     const binding = inspectEvidenceBinding({ trust, trustRoot: resolvedTrust, runDir: request.runDir, approvalId: request.approvalId, mode: 'pre-verdict' });
     const runId = binding.frozen.manifest.runId;
-    const registered = verificationKeys.get(runId);
+    if (!inProcess && !request.lease) fail('ANCHOR_BINDING_REJECTED', 'Finalize доверенного подписанта требует lease');
+    if (request.lease) assertCurrentCommandLease(request.runDir, runId, request.lease);
+    const receipt = readReceipt(runId);
+    let registered = verificationKeys.get(runId);
+    if (receipt) {
+      if (receipt.body.anchorId !== request.anchorId || receipt.body.approvalId !== request.approvalId ||
+          receipt.body.candidateSha256 !== binding.candidate.candidateSha256 ||
+          digest(receipt.body.attestation) !== digest(request.attestation)) fail('ANCHOR_BINDING_REJECTED', 'Подписанный receipt не совпадает с finalize запросом');
+      registered = { ...receipt.body.verificationPublicKey, verificationPid: receipt.body.verificationPid,
+        sessionNonce: receipt.body.attestation?.signature ? verifyVerificationAttestation(receipt.body.attestation, { publicKey: receipt.body.verificationPublicKey }).nonce : null,
+        processIdentity: receipt.body.processIdentity };
+    }
     if (!registered) fail('ANCHOR_BINDING_REJECTED', 'Ключ Verification для этого runId не зарегистрирован в сессии подписанта');
     const attestation = request.attestation;
     if (!attestation || typeof attestation !== 'object' || Array.isArray(attestation)) fail('ANCHOR_BINDING_REJECTED', 'Verification-attestation не передана по приватному каналу');
@@ -189,7 +369,7 @@ function createSignerSession({ trustRoot, privateKeyPath, privateKey, inProcess 
     // 2) session nonce: поле nonce аттестации обязано совпасть с nonce из приватного IPC-сеанса Control.
     if (attested.nonce !== registered.sessionNonce) fail('ANCHOR_BINDING_REJECTED', 'session nonce аттестации не совпал с зарегистрированным по приватному каналу');
     // 3) defense-in-depth: происхождение процесса Verification (WMI: родитель/образ/живость).
-    await assertVerificationProvenance(runId, registered);
+    if (!receipt) await assertVerificationProvenance(runId, registered);
     if (attested.runId !== runId) fail('ANCHOR_BINDING_REJECTED', 'Аттестация Verification относится к другому runId');
     if (attested.manifestSha256 !== binding.frozen.manifestSha256) fail('ANCHOR_BINDING_REJECTED', 'Аттестация Verification относится к другому манифесту');
     if (attested.approvalId !== binding.approval.approvalId) fail('ANCHOR_BINDING_REJECTED', 'Аттестация Verification относится к другому approvalId');
@@ -231,32 +411,32 @@ function createSignerSession({ trustRoot, privateKeyPath, privateKey, inProcess 
       verificationAttestationSha256: digest(attestation),
       verificationKeyId: attested.verificationKeyId
     };
-    const target = anchorFile(resolvedTrust, request.anchorId);
-    if (fs.existsSync(target.file)) return reuseOrConflict(target.file, statementBody);
-    for (const item of listAnchors(resolvedTrust)) {
-      if (item.runId === runId && item.anchorId !== request.anchorId) fail('ANCHOR_CONFLICT', 'Для этого runId уже существует другое заявление анкера');
-    }
-    // Подписант — единственный писатель аттестации Verification в trust root.
-    publishVerificationRecord(resolvedTrust, { runId, attestation, verificationPublicKey: registered });
-    assertNoTerminalChoice(request.runDir);
-    const statement = signTrustedDocument(key, statementBody);
-    try {
-      fs.mkdirSync(target.directory, { recursive: true });
-      // D-03: повторная проверка непосредственно перед CREATE_NEW сужает окно гонки с выбором исхода.
+    return await withFinalizeLock(request.runDir, () => {
+      const target = anchorFile(resolvedTrust, request.anchorId);
+      if (fs.existsSync(target.file)) return reuseOrConflict(target.file, statementBody);
+      for (const item of listAnchors(resolvedTrust)) {
+        if (item.runId === runId && item.anchorId !== request.anchorId) fail('ANCHOR_CONFLICT', 'Для этого runId уже существует другое заявление анкера');
+      }
+      // Подписант — единственный писатель аттестации Verification в trust root.
+      publishVerificationRecord(resolvedTrust, { runId, attestation, verificationPublicKey: registered });
       assertNoTerminalChoice(request.runDir);
-      const fd = fs.openSync(target.file, 'wx', 0o600);
-      try { fs.writeFileSync(fd, Buffer.from(JSON.stringify(statement) + '\n', 'utf8')); fs.fsyncSync(fd); }
-      finally { fs.closeSync(fd); }
-    } catch (error) {
-      if (error.code !== 'EEXIST') fail('TRUST_STORE_UNAVAILABLE', 'Заявление анкера не записано');
-      return reuseOrConflict(target.file, statementBody);
-    }
-    // D-03: если выбор исхода появился за время записи, подпись не считается выпущенной.
-    assertNoTerminalChoice(request.runDir);
-    const written = JSON.parse(fs.readFileSync(target.file, 'utf8'));
-    const reloaded = verifyTrustedDocument(loadTrustRoot(resolvedTrust), written);
-    if (digest(reloaded) !== digest(statementBody)) fail('INTEGRITY_ERROR', 'Повторное чтение анкера не сошлось');
-    return written;
+      const statement = signTrustedDocument(key, statementBody);
+      try {
+        fs.mkdirSync(target.directory, { recursive: true });
+        assertNoTerminalChoice(request.runDir);
+        const fd = fs.openSync(target.file, 'wx', 0o600);
+        try { fs.writeFileSync(fd, Buffer.from(JSON.stringify(statement) + '\n', 'utf8')); fs.fsyncSync(fd); }
+        finally { fs.closeSync(fd); }
+      } catch (error) {
+        if (error.code !== 'EEXIST') fail('TRUST_STORE_UNAVAILABLE', 'Заявление анкера не записано');
+        return reuseOrConflict(target.file, statementBody);
+      }
+      assertNoTerminalChoice(request.runDir);
+      const written = JSON.parse(fs.readFileSync(target.file, 'utf8'));
+      const reloaded = verifyTrustedDocument(loadTrustRoot(resolvedTrust), written);
+      if (digest(reloaded) !== digest(statementBody)) fail('INTEGRITY_ERROR', 'Повторное чтение анкера не сошлось');
+      return written;
+    });
   }
 
   async function handleRequest(raw) {
@@ -266,11 +446,26 @@ function createSignerSession({ trustRoot, privateKeyPath, privateKey, inProcess 
     catch { fail('CONTRACT_INVALID', 'Запрос подписанту не JSON'); }
     if (!request || typeof request !== 'object' || Array.isArray(request)) fail('CONTRACT_INVALID', 'Запрос подписанту не объект');
     if (request.id !== undefined && typeof request.id !== 'number' && typeof request.id !== 'string') fail('CONTRACT_INVALID', 'Служебный id запроса имеет неверную форму');
+    if (request.type === 'prepare-verification-receipt') {
+      for (const name of Object.keys(request)) if (!receiptRequestKeys.has(name)) fail('CONTRACT_INVALID', 'Запрос receipt содержит поле вне протокола');
+      if (typeof request.runDir !== 'string' || !path.isAbsolute(request.runDir)) fail('CONTRACT_INVALID', 'runDir должен быть абсолютным путём');
+      assertId(request.approvalId, 'approvalId');
+      assertId(request.anchorId, 'anchorId');
+      return { ok: true, receipt: await prepareVerificationReceipt(request) };
+    }
+    if (request.type === 'verification-receipt-status') {
+      for (const name of Object.keys(request)) if (!statusRequestKeys.has(name)) fail('CONTRACT_INVALID', 'Receipt status содержит поле вне протокола');
+      if (typeof request.runDir !== 'string' || !path.isAbsolute(request.runDir)) fail('CONTRACT_INVALID', 'runDir должен быть абсолютным путём');
+      assertId(request.runId, 'runId');
+      assertCurrentCommandLease(request.runDir, request.runId, request.lease);
+      return { ok: true, receipt: readReceipt(request.runId)?.document || null };
+    }
     if (request.type === 'register-verification-key') {
+      if (!inProcess) fail('ANCHOR_BINDING_REJECTED', 'Раздельная регистрация ключа запрещена в приватной fork IPC топологии');
       for (const name of Object.keys(request)) if (!registerRequestKeys.has(name)) fail('CONTRACT_INVALID', 'Запрос регистрации ключа содержит поле вне протокола');
       return { ok: true, ...registerVerificationKey(request) };
     }
-    if (request.type !== 'sign') fail('CONTRACT_INVALID', 'Подписант принимает только типы sign и register-verification-key');
+    if (request.type !== 'sign') fail('CONTRACT_INVALID', 'Подписант принимает только sign, receipt prepare/status и register-verification-key');
     for (const name of Object.keys(request)) if (!signRequestKeys.has(name)) fail('CONTRACT_INVALID', 'Запрос подписанту содержит поле вне протокола');
     if (typeof request.runDir !== 'string' || !path.isAbsolute(request.runDir)) fail('CONTRACT_INVALID', 'runDir должен быть абсолютным путём');
     assertId(request.approvalId, 'approvalId');
@@ -282,7 +477,7 @@ function createSignerSession({ trustRoot, privateKeyPath, privateKey, inProcess 
   return { signAndPublish, handleRequest, registerVerificationKey };
 }
 
-function handleMessage(session, message, respond) {
+async function handleMessage(session, message, respond) {
   if (!message || typeof message !== 'object' || Array.isArray(message)) {
     respond({ ok: false, code: 'CONTRACT_INVALID', message: 'Сообщение приватного канала не объект' });
     return;
@@ -290,10 +485,12 @@ function handleMessage(session, message, respond) {
   const requestId = message.id ?? null;
   const { id, ...payload } = message;
   void id;
-  Promise.resolve()
-    .then(() => session.handleRequest(JSON.stringify(payload)))
-    .then(result => respond({ id: requestId, ...result }))
-    .catch(error => respond({ id: requestId, ok: false, code: channelCode(error.code), message: error.message }));
+  try {
+    const result = await session.handleRequest(JSON.stringify(payload));
+    respond({ id: requestId, ...result });
+  } catch (error) {
+    respond({ id: requestId, ok: false, code: channelCode(error.code), message: error.message });
+  }
 }
 
 // Дочерний процесс подписанта: только приватный IPC, ключ — только из окружения ребёнка.
@@ -304,9 +501,18 @@ async function runChildSigner() {
   if (typeof anchorKeyPath !== 'string' || !anchorKeyPath) throw new Error('Подписанту не передан путь к anchor.key');
   const session = createSignerSession({ trustRoot, privateKeyPath: anchorKeyPath });
   const respond = payload => { try { if (process.connected) process.send(payload); } catch { /* родитель ушёл */ } };
-  process.on('message', message => handleMessage(session, message, respond));
-  process.on('disconnect', () => { process.exitCode = 0; });
+  let disconnected = false;
+  let queue = Promise.resolve();
+  process.on('message', message => {
+    queue = queue.then(async () => {
+      if (disconnected || !process.connected) return;
+      await handleMessage(session, message, respond);
+    }).catch(error => respond({ id: message?.id ?? null, ok: false, code: channelCode(error.code), message: error.message }));
+  });
   await new Promise(resolve => process.once('disconnect', resolve));
+  disconnected = true;
+  await queue;
+  process.exitCode = 0;
 }
 
 export function startAnchorSigner({ trustRoot, secretsDir, pipePath } = {}) {
@@ -419,11 +625,19 @@ export function connectAnchorSigner(pipePath) {
       const answer = await write({ type: 'register-verification-key', runId, publicKey: verificationPublicKeyRecord(publicKey), verificationPid, sessionNonce });
       return { keyId: answer.keyId };
     },
+    prepareVerificationReceipt(payload = {}) {
+      const allowed = new Set(['runDir', 'approvalId', 'anchorId', 'candidate', 'publicKey', 'verificationPid', 'sessionNonce', 'attestation', 'processIdentity', 'lease']);
+      for (const key of Object.keys(payload)) if (!allowed.has(key)) fail('CONTRACT_INVALID', 'prepareVerificationReceipt() поле вне протокола: ' + key);
+      return write({ type: 'prepare-verification-receipt', ...payload }).then(answer => answer.receipt);
+    },
+    verificationReceiptStatus(payload = {}) {
+      return write({ type: 'verification-receipt-status', ...payload }).then(answer => answer.receipt);
+    },
     sign(payload = {}) {
-      const allowed = new Set(['runDir', 'approvalId', 'anchorId', 'attestation']);
+      const allowed = new Set(['runDir', 'approvalId', 'anchorId', 'attestation', 'lease']);
       for (const key of Object.keys(payload)) if (!allowed.has(key)) fail('CONTRACT_INVALID', 'sign() не принимает поле вне протокола: ' + key);
       if (!payload.attestation) fail('CONTRACT_INVALID', 'sign() требует verification-attestation');
-      return write({ type: 'sign', runDir: payload.runDir, approvalId: payload.approvalId, anchorId: payload.anchorId, attestation: payload.attestation }).then(answer => answer.statement);
+      return write({ type: 'sign', runDir: payload.runDir, approvalId: payload.approvalId, anchorId: payload.anchorId, attestation: payload.attestation, lease: payload.lease }).then(answer => answer.statement);
     },
     close() {
       closed = true;
@@ -489,11 +703,19 @@ export function spawnAnchorSigner({ trustRoot, anchorKeyPath, timeoutMs } = {}) 
       const answer = await request({ type: 'register-verification-key', runId, publicKey: verificationPublicKeyRecord(publicKey), verificationPid, sessionNonce });
       return { keyId: answer.keyId };
     },
+    prepareVerificationReceipt(payload = {}) {
+      const allowed = new Set(['runDir', 'approvalId', 'anchorId', 'candidate', 'publicKey', 'verificationPid', 'sessionNonce', 'attestation', 'processIdentity', 'lease']);
+      for (const key of Object.keys(payload)) if (!allowed.has(key)) fail('CONTRACT_INVALID', 'prepareVerificationReceipt() поле вне протокола: ' + key);
+      return request({ type: 'prepare-verification-receipt', ...payload }).then(answer => answer.receipt);
+    },
+    verificationReceiptStatus(payload = {}) {
+      return request({ type: 'verification-receipt-status', ...payload }).then(answer => answer.receipt);
+    },
     sign(payload = {}) {
-      const allowed = new Set(['runDir', 'approvalId', 'anchorId', 'attestation']);
+      const allowed = new Set(['runDir', 'approvalId', 'anchorId', 'attestation', 'lease']);
       for (const key of Object.keys(payload)) if (!allowed.has(key)) fail('CONTRACT_INVALID', 'sign() не принимает поле вне протокола: ' + key);
       if (!payload.attestation) fail('CONTRACT_INVALID', 'sign() требует verification-attestation');
-      return request({ type: 'sign', runDir: payload.runDir, approvalId: payload.approvalId, anchorId: payload.anchorId, attestation: payload.attestation }).then(answer => answer.statement);
+      return request({ type: 'sign', runDir: payload.runDir, approvalId: payload.approvalId, anchorId: payload.anchorId, attestation: payload.attestation, lease: payload.lease }).then(answer => answer.statement);
     },
     close() {
       if (closed) return Promise.resolve();

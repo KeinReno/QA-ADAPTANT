@@ -23,12 +23,21 @@ import {
   buildTerminalChoice, loadAnchor, observeTrustedVerdict, publishCandidate, publishTerminalChoice,
   publishTerminalVerdict, readCandidate, verifyAnchorStatement, verificationPublicKeyRecord
 } from '../packages/trust/anchor.mjs';
-import { connectAnchorSigner, spawnAnchorSigner, startAnchorSigner } from '../packages/trust/anchor-signer.mjs';
+import { connectAnchorSigner, startAnchorSigner } from '../packages/trust/anchor-signer.mjs';
 import { buildVerificationEnv, verifyWithTrustedWorker } from '../apps/control/trusted.mjs';
 import { currentUserSid } from '../packages/trust/windows-sid.mjs';
 import { fileURLToPath } from 'node:url';
 
 const SID = currentUserSid();
+
+async function legacyTestSigner(w) {
+  const server = startAnchorSigner({ trustRoot: w.trustRoot, secretsDir: w.secretsDir });
+  await server.ready;
+  const client = connectAnchorSigner(server.pipePath);
+  const close = client.close.bind(client);
+  client.close = async () => { await close(); await server.close(); };
+  return client;
+}
 
 async function makeWorld(t, { stand: withStand = true } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-provenance-'));
@@ -186,7 +195,7 @@ async function withWorker(w, run, approvalId, fn) {
 
 async function genuinePass(w, run, approvalId, anchorKeyPath) {
   const worker = await trustedWorker(w, run, approvalId);
-  const signer = spawnAnchorSigner({ trustRoot: w.trustRoot, anchorKeyPath });
+  const signer = await legacyTestSigner(w);
   try {
     publishCandidate(run.runDir, worker.payload.verdict);
     await signer.registerVerificationKey(run.frozen.manifest.runId, worker.verificationPublicKey, worker.verificationPid, worker.sessionNonce);
@@ -231,7 +240,7 @@ test('P0-01: доверенный Worker даёт PASS только с подп�
     assert.equal(attestation.candidateSha256, digest(worker.payload.verdict));
     assert.equal(attestation.decision.verdict, 'PASS');
     assert.equal(attestation.verificationKeyId, worker.verificationPublicKey.keyId);
-    const signer = spawnAnchorSigner({ trustRoot: w.trustRoot, anchorKeyPath: path.join(w.secretsDir, 'anchor.key') });
+    const signer = await legacyTestSigner(w);
     try {
       publishCandidate(run.runDir, worker.payload.verdict);
       await signer.registerVerificationKey(run.frozen.manifest.runId, worker.verificationPublicKey, worker.verificationPid, worker.sessionNonce);
@@ -286,7 +295,7 @@ test('P0-01: подложная цепочка и кандидат без раб
   });
   publishCandidate(run.runDir, candidate);
   const approvalId = await approveRun(w, run.frozen);
-  const signer = spawnAnchorSigner({ trustRoot: w.trustRoot, anchorKeyPath: path.join(w.secretsDir, 'anchor.key') });
+  const signer = await legacyTestSigner(w);
   const fakeNonce = randomBytes(32).toString('hex');
   try {
     // Попытка выдать себя за доверенный Worker: ключ регистрируется с pid постороннего процесса.
@@ -335,7 +344,7 @@ test('P0-01: аттестация от чужого ключа отвергае�
   const worker = await trustedWorker(w, run, approvalId);
   try {
     publishCandidate(run.runDir, worker.payload.verdict);
-    const signer = spawnAnchorSigner({ trustRoot: w.trustRoot, anchorKeyPath: path.join(w.secretsDir, 'anchor.key') });
+    const signer = await legacyTestSigner(w);
     try {
       // В сессии подписанта для runId регистрируется чужой ключ с настоящим pid Worker.
       const foreign = generateKeyPairSync('ed25519');
@@ -368,7 +377,7 @@ test('P0-01: подмена candidateSha256/readSetSha256 и candidate посл�
   const worker = await trustedWorker(w, run, approvalId);
   try {
     publishCandidate(run.runDir, worker.payload.verdict);
-    const signer = spawnAnchorSigner({ trustRoot: w.trustRoot, anchorKeyPath: path.join(w.secretsDir, 'anchor.key') });
+    const signer = await legacyTestSigner(w);
     try {
       await signer.registerVerificationKey(run.frozen.manifest.runId, worker.verificationPublicKey, worker.verificationPid, worker.sessionNonce);
       // a) подмена поля candidateSha256 в аттестации ломает подпись.
@@ -421,7 +430,7 @@ test('P0-01: повтор аттестации другого runId отверг
       const workerB = await trustedWorker(w, second, approvalB);
       try { return workerB.payload.verdict; } finally { await workerB.close(); }
     })()));
-    const signer = spawnAnchorSigner({ trustRoot: w.trustRoot, anchorKeyPath: path.join(w.secretsDir, 'anchor.key') });
+    const signer = await legacyTestSigner(w);
     try {
       await signer.registerVerificationKey(second.frozen.manifest.runId, workerA.verificationPublicKey, workerA.verificationPid, workerA.sessionNonce);
       await assert.rejects(
@@ -486,7 +495,7 @@ test('P0-01: подмена сертифицированного публичн�
   const worker = await trustedWorker(w, run, approvalId);
   try {
     publishCandidate(run.runDir, worker.payload.verdict);
-    const signer = spawnAnchorSigner({ trustRoot: w.trustRoot, anchorKeyPath: path.join(w.secretsDir, 'anchor.key') });
+    const signer = await legacyTestSigner(w);
     try {
       await signer.registerVerificationKey(run.frozen.manifest.runId, worker.verificationPublicKey, worker.verificationPid, worker.sessionNonce);
       const forged = { ...worker.attestation, verificationKeyId: 'ff'.repeat(32), keyId: 'ff'.repeat(32) };
@@ -550,7 +559,7 @@ test('P0-01: подмена session nonce после аттестации отв
   const worker = await trustedWorker(w, run, approvalId);
   try {
     publishCandidate(run.runDir, worker.payload.verdict);
-    const signer = spawnAnchorSigner({ trustRoot: w.trustRoot, anchorKeyPath: path.join(w.secretsDir, 'anchor.key') });
+    const signer = await legacyTestSigner(w);
     try {
       await signer.registerVerificationKey(run.frozen.manifest.runId, worker.verificationPublicKey, worker.verificationPid, worker.sessionNonce);
       const tampered = { ...worker.payload.attestation, nonce: 'ef'.repeat(32) };
@@ -582,7 +591,7 @@ test('P0-01: повтор session nonce другого runId отвергает�
   const workerB = await trustedWorker(w, runB, approvalB);
   try {
     publishCandidate(runB.runDir, workerB.payload.verdict);
-    const signer = spawnAnchorSigner({ trustRoot: w.trustRoot, anchorKeyPath: path.join(w.secretsDir, 'anchor.key') });
+    const signer = await legacyTestSigner(w);
     try {
       // Для runId B регистрируется ключ/pid B, но session nonce от сеанса другого runId.
       await signer.registerVerificationKey(runB.frozen.manifest.runId, workerB.verificationPublicKey, workerB.verificationPid, workerA.sessionNonce);

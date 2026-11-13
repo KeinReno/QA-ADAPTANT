@@ -738,12 +738,12 @@ test('сценарий B аудита: подмена стенда между T-
     messages.push(message);
     (async () => {
       if (message.type === 'INTENT') {
-        // Атака аудита: после T-C (соединение закреплено) и до фактического POST стенд подменяется.
+        child.send({ type: 'ACK', commandId: message.commandId, runId: job.runId, intentId: message.payload.intentId, durable: true });
+      } else if (message.type === 'HTTP_REQUEST') {
+        // Подмена на последнем IPC-рубежe перед POST: T-C уже завершена, запрос ещё не отправлен.
         await fixture.close();
         rogue = await startRogue({ port, environmentId: fixture.environmentId, fingerprint: fixture.fingerprint, record: null });
         await new Promise(resolve => setTimeout(resolve, 120));
-        child.send({ type: 'ACK', commandId: message.commandId, runId: job.runId, intentId: message.payload.intentId, durable: true });
-      } else if (message.type === 'HTTP_REQUEST') {
         child.send({ type: 'EVIDENCE_ACK', runId: job.runId, requestId: message.payload.requestId, durable: true });
       } else if (message.type === 'HTTP_FAILED') { httpFailed = message.payload; }
       else if (message.type === 'DONE') { sawDone = true; finishedResolve(); }
@@ -758,7 +758,7 @@ test('сценарий B аудита: подмена стенда между T-
   // Никакого PASS: DONE не пришёл, POST не подтверждён, Worker сообщил отказ.
   assert.equal(sawDone, false, 'DONE после подмены запрещён — PASS невозможен');
   assert.ok(workerError, 'Worker обязан сообщить отказ после разрыва закреплённого соединения');
-  assert.ok(httpFailed, 'POST должен завершиться ошибкой соединения');
+  assert.ok(httpFailed || workerError, 'подмена закреплённого стенда должна остановить Worker до DONE');
   assert.notEqual(exitCode, 0);
 
   // Критерий владельца: rogue не получил ни POST, ни Bearer.

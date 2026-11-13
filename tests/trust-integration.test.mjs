@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { digest } from '../packages/core/canonical.mjs';
+import { verifyFrozenBundle } from '../packages/core/bundle.mjs';
 import { RunStore } from '../packages/core/store.mjs';
 import { localBundle, localFixtureContract } from '../adapters/local/bundle.mjs';
 import { serveLocalFixture } from '../adapters/local/server.mjs';
@@ -13,7 +14,7 @@ import { revokeApproval, signApproval } from '../packages/trust/approval.mjs';
 import { commitEnvironmentRecord, signEnvironmentRecord } from '../packages/trust/environment.mjs';
 import { verifyAnchorStatement, loadAnchor, readCandidate, readTerminalChoice } from '../packages/trust/anchor.mjs';
 import { currentUserSid } from '../packages/trust/windows-sid.mjs';
-import { start } from '../apps/control/run.mjs';
+import { reconcile, run, start } from '../apps/control/run.mjs';
 import { observeTrusted, startTrusted } from '../apps/control/trusted.mjs';
 
 // Сквозной доверенный прогон на живом локальном стенде. Не мок: реальный Chromium,
@@ -102,7 +103,7 @@ function trustedOptions(w, approval, extra = {}) {
     subject: w.operator,
     anchorKeyPath: path.join(w.secretsDir, 'anchor.key'),
     standPublicKey: w.stand.standPublicKey,
-    fixtureToken: w.stand.authToken,
+    credentials: { 'local:fixture-token': w.stand.authToken },
     ...extra
   };
 }
@@ -204,19 +205,19 @@ test('T-07: вид среды dev не получает ALLOW', { timeout: 60000
   assert.equal(w.stand.mutationCount, 0);
 });
 
-test('T-08: без анкера PASS не публикуется, POST остаётся один', { timeout: 60000 }, async t => {
+test('T-08: без настроенного подписанта доверенный прогон отклоняется до мутации', { timeout: 60000 }, async t => {
   const w = await world(t);
   const { bundle, contract } = prepare(w);
   const approval = signApproval(w.ownerKey, approvalFields(w, { bundle, contract }), w.trust, w.trustRoot);
-  const result = await startTrusted(bundle, trustedOptions(w, approval, { anchorKeyPath: null }));
-  assert.equal(result.verdict.verdict, 'INCONCLUSIVE');
-  assert.equal(result.verdict.reasonCode, 'EVIDENCE_MISSING');
-  assert.equal(w.stand.mutationCount, 1);
-  const choice = readTerminalChoice(result.runDir);
-  assert.equal(choice.outcome, 'budget-inconclusive');
-  const observed = await observeTrusted({ root: w.root, trustRoot: w.trustRoot, runId: bundle.manifest.runId });
-  assert.equal(observed.passed, false);
-  assert.equal(w.stand.mutationCount, 1);
+  await assert.rejects(
+    () => startTrusted(bundle, trustedOptions(w, approval, { anchorKeyPath: null })),
+    error => error.code === 'CONTRACT_INVALID'
+  );
+  await assert.rejects(
+    () => startTrusted(bundle, trustedOptions(w, approval, { anchorKeyPath: null, signerPipe: '\\\\.\\pipe\\legacy-anchor' })),
+    error => error.code === 'CONTRACT_INVALID'
+  );
+  assert.equal(w.stand.mutationCount, 0, 'без подписанта мутация не начинается');
 });
 
 test('T-09: старый start() отвергает аргументы доверенного режима', { timeout: 60000 }, async t => {
@@ -227,6 +228,14 @@ test('T-09: старый start() отвергает аргументы дове�
     () => start(bundle, { root: w.root, trustRoot: w.trustRoot, approvalId: approval.approvalId, fixtureToken: w.stand.authToken }),
     error => error.code === 'CONTRACT_INVALID'
   );
+  await assert.rejects(
+    () => start(bundle, { root: w.root, trust: { preflight: async () => ({ allow: true }) } }),
+    error => error.code === 'CONTRACT_INVALID'
+  );
+  const forgedTrust = { preflight: async () => ({ allow: true }), trustedPublish: async () => ({ trusted: true }) };
+  await assert.rejects(() => run(bundle, { root: w.root }, forgedTrust), error => error.code === 'CONTRACT_INVALID');
+  await assert.rejects(() => start(bundle, { root: w.root }, forgedTrust), error => error.code === 'CONTRACT_INVALID');
+  await assert.rejects(() => reconcile({}, forgedTrust), error => error.code === 'CONTRACT_INVALID');
   assert.equal(w.stand.mutationCount, 0);
 });
 test('T-10: отказ на T-A не запускает Browser и не выдаёт секрет мутации', { timeout: 60000 }, async t => {
@@ -249,6 +258,68 @@ test('T-10: отказ на T-A не запускает Browser и не выда
   assert.equal(items.some(item => item.envelope.kind === 'request'), false);
   assert.equal(items.filter(item => item.envelope.kind === 'verdict').length, 1);
   assert.equal(fs.existsSync(path.join(w.trustRoot, 'consumption', approval.approvalId + '.json')), false);
+});
+test('trusted marker блокирует generic START для неполного snapshot до мутации', { timeout: 60000 }, async t => {
+  const w = await world(t);
+  const { bundle, contract } = prepare(w);
+  const approval = signApproval(w.ownerKey, {
+    ...approvalFields(w, { bundle, contract }),
+    issuedAt: new Date(Date.now() - 3_600_000).toISOString(),
+    expiresAt: new Date(Date.now() - 3_000_000).toISOString()
+  }, w.trust, w.trustRoot);
+  const trusted = await startTrusted(bundle, trustedOptions(w, approval));
+  assert.equal(trusted.verdict.verdict, 'BLOCKED');
+  assert.equal(w.stand.mutationCount, 0);
+  const runDir = new RunStore(w.root).runPath(bundle.manifest.runId);
+  assert.equal(fs.existsSync(path.join(runDir, 'trust', 'trusted-run.json')), true);
+  fs.writeFileSync(path.join(runDir, 'scenario.json'), '{');
+  await assert.rejects(() => start(bundle, { root: w.root, fixtureToken: w.stand.authToken }),
+    error => error.code === 'TRUSTED_RUN_REQUIRES_TRUSTED_ENTRY');
+  assert.equal(w.stand.mutationCount, 0);
+});
+test('trusted entry восстанавливает TRUSTED_RUN event после сбоя между sidecar и журналом', { timeout: 60000 }, async t => {
+  const w = await world(t);
+  const { bundle, contract } = prepare(w);
+  const approval = signApproval(w.ownerKey, approvalFields(w, { bundle, contract }), w.trust, w.trustRoot);
+  const store = new RunStore(w.root);
+  const runDir = store.snapshot(bundle, { pid: process.pid, at: new Date().toISOString() });
+  const frozen = verifyFrozenBundle(store, runDir);
+  fs.mkdirSync(path.join(runDir, 'trust'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'trust', 'trusted-run.json'), JSON.stringify({
+    schemaVersion: '0.2.0', domain: 'trusted-run', runId: bundle.manifest.runId,
+    manifestSha256: frozen.manifestSha256
+  }) + '\n');
+  await assert.rejects(() => start(bundle, { root: w.root, fixtureToken: w.stand.authToken }),
+    error => error.code === 'TRUSTED_RUN_REQUIRES_TRUSTED_ENTRY');
+  assert.equal(store.readEvents(runDir).some(event => event.type === 'TRUSTED_RUN'), false,
+    'generic entry не должен ремонтировать trusted marker');
+  const results = await Promise.all([
+    startTrusted(bundle, trustedOptions(w, approval)),
+    startTrusted(bundle, trustedOptions(w, approval))
+  ]);
+  assert.equal(results.every(result => result.runId === bundle.manifest.runId), true);
+  assert.equal(store.readEvents(runDir).filter(event => event.type === 'TRUSTED_RUN').length, 1);
+  assert.equal(w.stand.mutationCount, 0);
+});
+test('durable trusted intent блокирует generic entry после crash до sidecar', { timeout: 60000 }, async t => {
+  const w = await world(t);
+  const { bundle, contract } = prepare(w);
+  const approval = signApproval(w.ownerKey, approvalFields(w, { bundle, contract }), w.trust, w.trustRoot);
+  const store = new RunStore(w.root);
+  const runDir = store.snapshot(bundle, { pid: process.pid, at: new Date().toISOString() });
+  const intentDir = path.join(w.root, 'runs', '.trusted-intents');
+  fs.mkdirSync(intentDir, { recursive: true });
+  fs.writeFileSync(path.join(intentDir, bundle.manifest.runId + '.json'), JSON.stringify({
+    schemaVersion: '0.2.0', domain: 'trusted-run-intent', runId: bundle.manifest.runId,
+    manifestSha256: digest(bundle.manifest)
+  }) + '\n');
+  await assert.rejects(() => start(bundle, { root: w.root, fixtureToken: w.stand.authToken }),
+    error => error.code === 'TRUSTED_RUN_REQUIRES_TRUSTED_ENTRY');
+  assert.equal(fs.existsSync(path.join(runDir, 'trust', 'trusted-run.json')), false,
+    'generic entry не должен materialize trusted sidecar');
+  await startTrusted(bundle, trustedOptions(w, approval));
+  assert.equal(store.readEvents(runDir).filter(event => event.type === 'TRUSTED_RUN').length, 1);
+  assert.equal(w.stand.mutationCount, 0);
 });
 test('T-11: старый PASS, принятый через startTrusted, не показывается как доверенный', { timeout: 90000 }, async t => {
   const w = await world(t);

@@ -7,7 +7,7 @@ import { restrictToCurrentUser } from './acl.mjs';
 import { protect, unprotect } from './dpapi.mjs';
 
 const ownerDomains = new Set(['approval', 'revocation', 'principal', 'environment-record']);
-const anchorDomains = new Set(['anchor-statement']);
+const anchorDomains = new Set(['anchor-statement', 'verification-recovery-receipt']);
 const roles = new Set(['owner', 'operator', 'runner', 'anchor-signer', 'verifier', 'agent']);
 
 function fail(code, message) {
