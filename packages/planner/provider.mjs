@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { EXECUTION_VERSION } from '../execution/contracts.mjs';
 
 const id = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
+const PlannerModeSchema = z.enum(['MODEL', 'MOCK']);
 const RuleSchema = z.strictObject({ ruleId: id, requirementId: id });
 export const PlanDraftSchema = z.strictObject({
   normalizedGoal: z.string().min(1).max(4000),
@@ -27,9 +28,26 @@ export const PlanDraftSchema = z.strictObject({
 export const PlannerResultSchema = z.strictObject({
   providerId: id,
   modelId: id.nullable(),
-  mode: z.enum(['MODEL', 'MOCK']),
+  mode: PlannerModeSchema,
   output: PlanDraftSchema,
   usage: z.strictObject({ inputTokens: z.number().int().nonnegative().optional(), outputTokens: z.number().int().nonnegative().optional() }).optional()
+});
+
+export const PlannerAvailabilitySchema = z.strictObject({
+  status: z.enum(['AVAILABLE', 'UNAVAILABLE']),
+  providerId: id,
+  modelId: id.nullable().optional(),
+  mode: PlannerModeSchema,
+  reasonCode: id.optional()
+}).superRefine((availability, context) => {
+  if (availability.status === 'AVAILABLE') {
+    if (availability.modelId === undefined) context.addIssue({ code: 'custom', path: ['modelId'], message: 'Доступный Planner обязан объявить modelId или null' });
+    if (availability.reasonCode !== undefined) context.addIssue({ code: 'custom', path: ['reasonCode'], message: 'Доступный Planner не должен объявлять reasonCode' });
+    if (availability.mode === 'MODEL' && availability.modelId == null) context.addIssue({ code: 'custom', path: ['modelId'], message: 'MODEL Planner обязан иметь конкретный modelId' });
+    if (availability.mode === 'MOCK' && availability.modelId !== null) context.addIssue({ code: 'custom', path: ['modelId'], message: 'MOCK Planner не может объявлять modelId' });
+  } else if (!availability.reasonCode) {
+    context.addIssue({ code: 'custom', path: ['reasonCode'], message: 'Недоступный Planner обязан указать reasonCode' });
+  }
 });
 
 export class PlannerProviderError extends Error {
@@ -79,7 +97,7 @@ export async function readBoundedPlannerBytes(response, { maxBytes = 100000, sig
 export class DeterministicMockPlanner {
   constructor() { this.id = 'mock-deterministic'; this.mode = 'MOCK'; }
 
-  async availability() { return { status: 'AVAILABLE', providerId: this.id, modelId: null }; }
+  async availability() { return { status: 'AVAILABLE', providerId: this.id, modelId: null, mode: this.mode }; }
 
   async plan(request) {
     if (request.outputSchemaVersion !== EXECUTION_VERSION) throw new PlannerProviderError('UNSUPPORTED', 'Версия Planner contract не поддерживается');
@@ -112,7 +130,7 @@ export class DeterministicMockPlanner {
 }
 
 export class UnavailablePlannerProvider {
-  constructor(id = 'unconfigured') { this.id = id; this.mode = 'MODEL'; }
-  async availability() { return { status: 'UNAVAILABLE', providerId: this.id, reasonCode: 'NOT_CONFIGURED' }; }
+  constructor(id = 'unconfigured', mode = 'MODEL') { this.id = id; this.mode = mode; }
+  async availability() { return { status: 'UNAVAILABLE', providerId: this.id, modelId: null, mode: this.mode, reasonCode: 'NOT_CONFIGURED' }; }
   async plan() { throw new PlannerProviderError('PROVIDER_UNAVAILABLE', 'Planner provider не настроен'); }
 }

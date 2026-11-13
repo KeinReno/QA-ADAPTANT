@@ -78,7 +78,10 @@ export const ExecutionPlanSchema = z.strictObject({
   taskId: id,
   version: z.number().int().positive(),
   createdAt: iso,
-  provider: z.strictObject({ providerId: id, modelId: id.nullable(), mode: z.enum(['MODEL', 'MOCK']) }),
+  provider: z.strictObject({ providerId: id, modelId: id.nullable(), mode: z.enum(['MODEL', 'MOCK']) }).superRefine((provider, context) => {
+    if (provider.mode === 'MODEL' && provider.modelId === null) context.addIssue({ code: 'custom', path: ['modelId'], message: 'MODEL provenance требует конкретный modelId' });
+    if (provider.mode === 'MOCK' && provider.modelId !== null) context.addIssue({ code: 'custom', path: ['modelId'], message: 'MOCK provenance не принимает modelId' });
+  }),
   normalizedGoal: z.string().min(1).max(4000),
   requirements: z.array(PlanRequirementSchema).min(1).max(100),
   missingContext: z.array(z.string().min(1).max(2000)).max(100),

@@ -93,7 +93,7 @@ export async function approvedLocalTask(t, options = {}) {
   const store = new TaskStore(world.taskRoot, { verifyTaskPass: adapter.verifyTaskPass.bind(adapter) });
   const plannerProvider = {
     id: 'local-test-planner', mode: 'MOCK',
-    async availability() { return { status: 'AVAILABLE', providerId: this.id, modelId: null }; },
+    async availability() { return { status: 'AVAILABLE', providerId: this.id, modelId: null, mode: this.mode }; },
     async plan() {
       const rule = { ruleId: 'rule-created-record', requirementId: 'req-created-record' };
       return Buffer.from(JSON.stringify({ providerId: this.id, modelId: null, mode: 'MOCK', output: {

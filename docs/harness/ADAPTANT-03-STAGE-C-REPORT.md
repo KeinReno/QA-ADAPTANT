@@ -32,3 +32,9 @@ Commit: `c9974502bb005d8635c9025b333fd847dc86b999`
 - Planner в этом маршруте — локальный test provider с явной provenance `MODEL` test-only; это не доказательство автономного планирования настоящей ИИ-моделью.
 - Локальный Trust world использует временный каталог и создаёт собственные ephemeral identity/approval для теста. Они не переносятся в другие сессии и не являются разрешением на Dev.
 - Общий репозиторный gate и финальный Stage D review фиксируются в итоговом отчёте после завершения проверок.
+
+## Errata — provenance Planner (2026-11-14)
+
+Фраза выше «явная provenance `MODEL` test-only» некорректна. В Stage C E2E использовался локальный детерминированный test provider: корректная маркировка — `MOCK`, `providerId: local-test-planner`, `modelId: null`. Runtime не вызывал и не подтверждал inference настоящей модели. Исправление относится к интерпретации provenance; исторические результаты прогона не переписываются.
+
+Уточнённый контракт и регрессионные проверки описаны в `docs/changes/ADAPTANT-03-PLANNER-PROVENANCE.md`; точные логи и коды возврата baseline gate приложены в `docs/harness/ADAPTANT-03-FINAL-REGRESSION.md`.

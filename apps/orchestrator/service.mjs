@@ -1,7 +1,7 @@
 import { TaskSchema } from '../../packages/execution/contracts.mjs';
 import { digest } from '../../packages/core/canonical.mjs';
 import { assertExecutionAdapter } from '../../packages/execution/adapter.mjs';
-import { PlannerResultSchema, PlannerProviderError } from '../../packages/planner/provider.mjs';
+import { PlannerAvailabilitySchema, PlannerResultSchema, PlannerProviderError } from '../../packages/planner/provider.mjs';
 import { validatePlanDraft } from '../../packages/planner/validate.mjs';
 
 const failure = (code, message) => Object.assign(new Error(message), { code });
@@ -10,6 +10,8 @@ export class TaskService {
   constructor({ store, plannerProvider, approvalVerifier = null, adapters = new Map(), registeredExecutionRefs = [], approvedScenarioRefs = [], allowedCapabilities = [], availabilityTimeoutMs = 5000, plannerTimeoutMs = 30000, maxPlannerResponseBytes = 100000 } = {}) {
     if (!store) throw new TypeError('TaskStore обязателен');
     if (!plannerProvider) throw new TypeError('PlannerProvider обязателен; fallback не выбирается автоматически');
+    if (typeof plannerProvider.id !== 'string' || !plannerProvider.id || !['MODEL', 'MOCK'].includes(plannerProvider.mode)) throw new TypeError('PlannerProvider обязан иметь локально заданные id и mode=MODEL|MOCK');
+    if (typeof plannerProvider.availability !== 'function' || typeof plannerProvider.plan !== 'function') throw new TypeError('PlannerProvider обязан реализовать availability() и plan()');
     this.store = store;
     this.plannerProvider = plannerProvider;
     this.approvalVerifier = approvalVerifier;
@@ -81,9 +83,12 @@ export class TaskService {
       payload: { providerId: this.plannerProvider.id || 'unknown' }
     });
     try {
-      const availability = await this.#boundedProviderCall(() => this.plannerProvider.availability(), this.availabilityTimeoutMs);
+      const availability = PlannerAvailabilitySchema.parse(await this.#boundedProviderCall(() => this.plannerProvider.availability(), this.availabilityTimeoutMs));
+      const configuredProviderId = this.plannerProvider.id;
+      const configuredMode = this.plannerProvider.mode;
+      if (availability.providerId !== configuredProviderId || availability.mode !== configuredMode) throw failure('INVALID_PLAN', 'Planner availability не совпадает с локальной конфигурацией provenance');
       if (!availability || availability.status !== 'AVAILABLE') {
-        await this.store.appendEvent(taskId, 'PLANNER_UNAVAILABLE', { providerId: availability?.providerId || 'unknown', reasonCode: availability?.reasonCode || 'NOT_CONFIGURED' });
+        await this.store.appendEvent(taskId, 'PLANNER_UNAVAILABLE', { providerId: availability.providerId, reasonCode: availability.reasonCode || 'NOT_CONFIGURED', mode: configuredMode });
         return { task: await this.store.transition(taskId, 'BLOCKED', { payload: { reasonCode: 'PLANNER_UNAVAILABLE' } }), plan: null };
       }
       const rawBytes = await this.#boundedProviderCall(signal => this.plannerProvider.plan({
@@ -99,12 +104,10 @@ export class TaskService {
       try { raw = JSON.parse(Buffer.from(rawBytes).toString('utf8')); }
       catch { throw failure('INVALID_RESPONSE', 'Planner вернул некорректный JSON'); }
       const result = PlannerResultSchema.parse(raw);
-      const configuredProviderId = availability.providerId || this.plannerProvider.id;
-      const configuredMode = this.plannerProvider.mode || 'MODEL';
-      if (result.providerId !== configuredProviderId || result.mode !== configuredMode) throw failure('INVALID_PLAN', 'Planner output provenance не совпадает с локальной конфигурацией');
+      if (result.providerId !== configuredProviderId || result.modelId !== availability.modelId || result.mode !== configuredMode) throw failure('INVALID_PLAN', 'Planner output provenance не совпадает с локальной конфигурацией и availability');
       const checked = validatePlanDraft(result.output, {
         taskId,
-        provider: { providerId: configuredProviderId, modelId: availability.modelId ?? null, mode: configuredMode },
+        provider: { providerId: configuredProviderId, modelId: availability.modelId, mode: configuredMode },
         registeredExecutionRefs: this.registeredExecutionRefs.filter(ref => this.approvedScenarioRefs.includes(ref)),
         registeredAdapters: [...this.adapters.keys()],
         allowedCapabilities: this.allowedCapabilities
