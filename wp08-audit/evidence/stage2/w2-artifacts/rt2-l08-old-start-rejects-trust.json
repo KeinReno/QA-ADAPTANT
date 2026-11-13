@@ -1,0 +1,97 @@
+{
+  "tool": "REDTEAM-W2",
+  "id": "L-08",
+  "title": "Старый start() отвергает аргументы доверия",
+  "target": {
+    "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+    "dirtyAtStart": false,
+    "diffHashAtStart": "",
+    "stringDiffHash": "",
+    "snapshotKey": "pinned",
+    "stable": true
+  },
+  "verdict": "PASS",
+  "exitCode": 0,
+  "checks": [
+    {
+      "name": "start() с аргументом trustRoot отвергнут",
+      "ok": true,
+      "detail": {
+        "code": "CONTRACT_INVALID"
+      }
+    },
+    {
+      "name": "start() с аргументом approvalId отвергнут",
+      "ok": true,
+      "detail": {
+        "code": "CONTRACT_INVALID"
+      }
+    },
+    {
+      "name": "start() с аргументом approval отвергнут",
+      "ok": true,
+      "detail": {
+        "code": "CONTRACT_INVALID"
+      }
+    },
+    {
+      "name": "start() с аргументом standPublicKey отвергнут",
+      "ok": true,
+      "detail": {
+        "code": "CONTRACT_INVALID"
+      }
+    },
+    {
+      "name": "start() с аргументом signerPipe отвергнут",
+      "ok": true,
+      "detail": {
+        "code": "CONTRACT_INVALID"
+      }
+    },
+    {
+      "name": "start() с аргументом adapter отвергнут",
+      "ok": true,
+      "detail": {
+        "code": "CONTRACT_INVALID"
+      }
+    },
+    {
+      "name": "стенд получил 0 POST",
+      "ok": true,
+      "detail": {
+        "mutationCount": 0
+      }
+    },
+    {
+      "name": "каталог прогона не создан",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "consumption не создан",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "approval остаётся issued",
+      "ok": true,
+      "detail": {
+        "state": "issued"
+      }
+    },
+    {
+      "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+      "ok": true,
+      "detail": {
+        "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+        "dirty": false,
+        "diffHash": ""
+      }
+    }
+  ],
+  "platform": "win32",
+  "node": "v24.16.0",
+  "createdAt": "2026-11-13T18:44:58.034Z"
+}

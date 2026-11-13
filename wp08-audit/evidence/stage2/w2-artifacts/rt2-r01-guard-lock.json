@@ -1,0 +1,91 @@
+{
+  "tool": "REDTEAM-W2",
+  "id": "R-01",
+  "title": "Остаточный guard lock после аварийного завершения",
+  "target": {
+    "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+    "dirtyAtStart": false,
+    "diffHashAtStart": "",
+    "stringDiffHash": "",
+    "snapshotKey": "pinned",
+    "stable": true
+  },
+  "verdict": "PASS",
+  "exitCode": 0,
+  "checks": [
+    {
+      "name": "lock создан реальным withGuard",
+      "ok": true,
+      "detail": {
+        "pid": 41564
+      }
+    },
+    {
+      "name": "lock пуст (нет pid/времени/владельца)",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "lock остался после SIGKILL",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "revoke падает через ~5 с (CONSUMPTION_INCOMPLETE)",
+      "ok": true,
+      "detail": {
+        "code": "CONSUMPTION_INCOMPLETE"
+      }
+    },
+    {
+      "name": "пауза отказа не меньше 4.5 с",
+      "ok": true,
+      "detail": {
+        "elapsedMs": 5015
+      }
+    },
+    {
+      "name": "файл отзыва не создан",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "consume падает через ~5 с (CONSUMPTION_INCOMPLETE)",
+      "ok": true,
+      "detail": {
+        "code": "CONSUMPTION_INCOMPLETE"
+      }
+    },
+    {
+      "name": "пауза отказа consume не меньше 4.5 с",
+      "ok": true,
+      "detail": {
+        "elapsedMs": 5004
+      }
+    },
+    {
+      "name": "второго ACK нет и расход не создан",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "модуль по-прежнему не содержит владельца lock (слепое удаление небезопасно)",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+      "ok": true,
+      "detail": {
+        "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+        "dirty": false,
+        "diffHash": ""
+      }
+    }
+  ],
+  "platform": "win32",
+  "node": "v24.16.0",
+  "createdAt": "2026-11-13T18:45:10.519Z"
+}

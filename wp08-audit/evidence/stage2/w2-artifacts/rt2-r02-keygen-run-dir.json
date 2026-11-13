@@ -1,0 +1,80 @@
+{
+  "tool": "REDTEAM-W2",
+  "id": "R-02",
+  "title": "keygen и каталоги прогонов",
+  "target": {
+    "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+    "dirtyAtStart": false,
+    "diffHashAtStart": "",
+    "stringDiffHash": "",
+    "snapshotKey": "pinned",
+    "stable": true
+  },
+  "verdict": "PASS",
+  "exitCode": 0,
+  "checks": [
+    {
+      "name": "R-02 закрыт: --secrets внутри каталога прогона отвергнут exit != 0",
+      "ok": true,
+      "detail": {
+        "exit": 1,
+        "stderr": "TRUST_STORE_UNAVAILABLE"
+      }
+    },
+    {
+      "name": "каталог секретов внутри runDir не создан",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "код отказа TRUST_STORE_UNAVAILABLE",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "сегмент RUNS в верхнем регистре тоже отвергнут",
+      "ok": true,
+      "detail": {
+        "exit": 1
+      }
+    },
+    {
+      "name": "secretsDir внутри репозитория отвергнут",
+      "ok": true,
+      "detail": {
+        "exit": 1
+      }
+    },
+    {
+      "name": "контроль: безопасный каталог принимается (exit 0)",
+      "ok": true,
+      "detail": {
+        "exit": 0,
+        "stderr": "",
+        "stdout": "owner 43fcc1b698084af5ed1aaee322eb5b3e1a912968ba760ac524b9c37bb8606bbe\nanchor-signer 7a50199a7b728d03b8bc9397961ad8492c208ad9a0d8becb867fa00a21528f34\n",
+        "base": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt2-yqlfeF",
+        "goodSecrets": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt2-yqlfeF\\control\\secrets",
+        "goodTrust": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt2-yqlfeF\\control\\trust"
+      }
+    },
+    {
+      "name": "в git нет *.key",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+      "ok": true,
+      "detail": {
+        "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+        "dirty": false,
+        "diffHash": ""
+      }
+    }
+  ],
+  "platform": "win32",
+  "node": "v24.16.0",
+  "createdAt": "2026-11-13T18:45:19.821Z"
+}

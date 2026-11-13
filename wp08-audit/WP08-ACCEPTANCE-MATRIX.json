@@ -1,0 +1,183 @@
+{
+  "schemaVersion": "1.0",
+  "workpack": "DS-WP08",
+  "auditedSha": "1a510a5d5929534d400dc965f58c78cf468bc270",
+  "auditBranch": "test/wp08-independent-audit",
+  "auditBranchSha": "cf1b951f3061b81c7a7f4b300884641c97868b66",
+  "mainSha": "59d82d49c01442d463ebab5d5f3d661ca550e504",
+  "environment": {
+    "os": "Windows NT 10.0.26100",
+    "node": "v24.16.0",
+    "npm": "11.13.0"
+  },
+  "independence": {
+    "selfCheckedComponents": [
+      "apps/control/trusted.mjs",
+      "apps/control/run.mjs",
+      "apps/browser/trusted-worker.mjs",
+      "apps/verification/trusted-worker.mjs",
+      "packages/trust/facts.mjs",
+      "packages/trust/keygen.mjs",
+      "packages/trust/windows-sid.mjs"
+    ],
+    "note": "код DeepSeek; заключение по нему — самопроверка, требуется второй проверяющий"
+  },
+  "decision": "WORK_IN_PROGRESS",
+  "items": [
+    {
+      "id": "P-01",
+      "status": "PASS",
+      "evidence": "evidence/stage1/ls-remote.txt"
+    },
+    {
+      "id": "P-02",
+      "status": "PASS",
+      "evidence": "evidence/stage1/status.txt"
+    },
+    {
+      "id": "P-03",
+      "status": "PASS",
+      "evidence": "evidence/stage1/head.txt"
+    },
+    {
+      "id": "P-04",
+      "status": "PASS",
+      "evidence": "evidence/stage1/secret-hits.txt"
+    },
+    {
+      "id": "P-05",
+      "status": "PASS",
+      "evidence": "evidence/stage1/changed-files.txt"
+    },
+    {
+      "id": "P-06",
+      "status": "PASS",
+      "evidence": "evidence/stage1/env.txt"
+    },
+    {
+      "id": "A-01",
+      "status": "PASS",
+      "evidence": "evidence/stage1/ls-remote.txt"
+    },
+    {
+      "id": "A-02",
+      "status": "PASS",
+      "evidence": "evidence/stage1/ls-remote.txt"
+    },
+    {
+      "id": "A-05",
+      "status": "PASS",
+      "evidence": "evidence/stage2/w2-artifacts/"
+    },
+    {
+      "id": "A-06",
+      "status": "PASS",
+      "evidence": "WP08-10 §Stable"
+    },
+    {
+      "id": "B-01",
+      "status": "PASS_STATIC",
+      "evidence": "WP08-09 §1-3"
+    },
+    {
+      "id": "B-05",
+      "status": "PASS_STATIC",
+      "evidence": "WP08-09 §1"
+    },
+    {
+      "id": "B-06",
+      "status": "PASS_STATIC",
+      "evidence": "trusted.mjs:36-40, run.mjs:905/978/1024"
+    },
+    {
+      "id": "C-01",
+      "status": "PASS",
+      "evidence": "evidence/stage2/w2-artifacts/rt2-attack-false-pass.json"
+    },
+    {
+      "id": "C-09",
+      "status": "PASS",
+      "evidence": "evidence/stage2/w2-artifacts/rt2-attack-false-pass.json"
+    },
+    {
+      "id": "S-01..S-07",
+      "status": "PASS_PARTIAL",
+      "evidence": "npm-test.log (trust-signed-environment 773 строки тестов)"
+    },
+    {
+      "id": "D-01..R-07",
+      "status": "PASS_PARTIAL",
+      "evidence": "npm-test.log (trust-recovery, race gate)"
+    },
+    {
+      "id": "K-01..K-07",
+      "status": "PASS_PARTIAL",
+      "evidence": "npm-test.log WP-C сценарии"
+    },
+    {
+      "id": "W-01..W-07",
+      "status": "PASS_PARTIAL",
+      "evidence": "npm-test.log lifecycle/worker"
+    },
+    {
+      "id": "E-01",
+      "status": "PASS_PARTIAL",
+      "evidence": "WP08-11"
+    },
+    {
+      "id": "E-02",
+      "status": "NOT_EXECUTED",
+      "evidence": null
+    },
+    {
+      "id": "F-01",
+      "status": "PASS",
+      "evidence": "evidence/stage2/npm-test.log"
+    },
+    {
+      "id": "F-02",
+      "status": "PASS",
+      "evidence": "evidence/stage2/gates.log"
+    },
+    {
+      "id": "F-03",
+      "status": "PASS",
+      "evidence": "evidence/stage2/gates.log"
+    },
+    {
+      "id": "F-04",
+      "status": "PASS",
+      "evidence": "evidence/stage2/gates.log"
+    },
+    {
+      "id": "F-05",
+      "status": "NOT_EXECUTED",
+      "evidence": null
+    },
+    {
+      "id": "F-06",
+      "status": "FAIL_UNDER_INVESTIGATION",
+      "evidence": "evidence/stage2/stable.log; stable-rerun.log"
+    },
+    {
+      "id": "F-07",
+      "status": "PASS",
+      "evidence": "evidence/stage1/status.txt"
+    },
+    {
+      "id": "G-01..G-06",
+      "status": "NOT_EXECUTED",
+      "evidence": null
+    },
+    {
+      "id": "H-01..H-06",
+      "status": "IN_PROGRESS",
+      "evidence": "WP08-08..WP08-12"
+    },
+    {
+      "id": "OBS-01",
+      "status": "P3",
+      "evidence": "WP08-12"
+    }
+  ]
+}

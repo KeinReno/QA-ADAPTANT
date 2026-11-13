@@ -1,0 +1,114 @@
+{
+  "tool": "REDTEAM-W2",
+  "id": "WP06-2POST",
+  "title": "Второй POST и второй terminal verdict",
+  "target": {
+    "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+    "dirtyAtStart": false,
+    "diffHashAtStart": "",
+    "stringDiffHash": "",
+    "snapshotKey": "pinned",
+    "stable": true
+  },
+  "verdict": "PASS",
+  "exitCode": 0,
+  "checks": [
+    {
+      "name": "первый доверенный прогон PASS",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "стенд получил 1 POST",
+      "ok": true,
+      "detail": {
+        "mutationCount": 1
+      }
+    },
+    {
+      "name": "ровно один request evidence",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "reconcile возвращает тот же PASS",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "стенд получил 1 POST",
+      "ok": true,
+      "detail": {
+        "mutationCount": 1
+      }
+    },
+    {
+      "name": "reconcile не добавил evidence",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "второго request нет",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "повторный старт возвращает тот же терминальный PASS",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "стенд получил 1 POST",
+      "ok": true,
+      "detail": {
+        "mutationCount": 1
+      }
+    },
+    {
+      "name": "второй verdict отвергнут INTEGRITY_ERROR",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "в evidence ровно один verdict",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "повторный старт с новым approval возвращает прежний терминальный PASS",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "файл расхода прежнего approval не изменён",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "новый approval не израсходован",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "стенд получил 1 POST",
+      "ok": true,
+      "detail": {
+        "mutationCount": 1
+      }
+    },
+    {
+      "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+      "ok": true,
+      "detail": {
+        "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+        "dirty": false,
+        "diffHash": ""
+      }
+    }
+  ],
+  "platform": "win32",
+  "node": "v24.16.0",
+  "createdAt": "2026-11-13T18:42:38.871Z"
+}

@@ -1,0 +1,155 @@
+{
+  "tool": "REDTEAM-W2",
+  "id": "GAP-01",
+  "title": "Ложный PASS без анкера невозможен",
+  "target": {
+    "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+    "dirtyAtStart": false,
+    "diffHashAtStart": "",
+    "stringDiffHash": "",
+    "snapshotKey": "pinned",
+    "stable": true
+  },
+  "verdict": "PASS",
+  "exitCode": 0,
+  "checks": [
+    {
+      "name": "эталонный доверенный прогон PASS",
+      "ok": true,
+      "detail": {
+        "verdict": "PASS"
+      }
+    },
+    {
+      "name": "эталон: observeTrusted показывает PASS с анкером",
+      "ok": true,
+      "detail": {
+        "passed": true,
+        "anchorStatus": "ANCHOR_OK"
+      }
+    },
+    {
+      "name": "(V-02) подменённый verdict после публикации не даёт PASS",
+      "ok": true,
+      "detail": {
+        "passed": false,
+        "state": "error",
+        "reasonCode": "INTEGRITY_ERROR: checksum evidence не совпадает"
+      }
+    },
+    {
+      "name": "(V-01) подменённый терминальный коммит не даёт PASS при старом анкере",
+      "ok": true,
+      "detail": {
+        "passed": false,
+        "state": "anchor-held",
+        "reasonCode": "PUBLICATION_PENDING"
+      }
+    },
+    {
+      "name": "после восстановления коммита и verdict PASS снова виден",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "(A) недоступный подписант не возвращает доверенный PASS",
+      "ok": true,
+      "detail": {
+        "verdict": null,
+        "error": "ENOENT: no such file or directory, open 'C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt2-DUFf5v\\secrets\\unavailable-anchor.key'"
+      }
+    },
+    {
+      "name": "(A) observeTrusted не показывает PASS",
+      "ok": true,
+      "detail": {
+        "passed": false,
+        "verdict": null,
+        "publication": "collecting",
+        "reasonCode": null
+      }
+    },
+    {
+      "name": "стенд получил 1 POST",
+      "ok": true,
+      "detail": {
+        "mutationCount": 1
+      }
+    },
+    {
+      "name": "(B/C) подготовлен доверенный прогон для порчи terminal-choice",
+      "ok": true,
+      "detail": {
+        "verdict": "PASS"
+      }
+    },
+    {
+      "name": "(C) создан валидный анкер другого runId в том же trust root",
+      "ok": true,
+      "detail": {
+        "verdict": "PASS",
+        "anchorStatus": "ANCHOR_OK"
+      }
+    },
+    {
+      "name": "(B) подделанный выбор без анкера не даёт PASS",
+      "ok": true,
+      "detail": {
+        "passed": false,
+        "state": "inconsistent",
+        "reasonCode": "ANCHOR_MISSING",
+        "anchorStatus": "ANCHOR_MISSING"
+      }
+    },
+    {
+      "name": "(C) чужой подписанный анкер отклоняется именно по runId после локальной проверки candidate",
+      "ok": true,
+      "detail": {
+        "passed": false,
+        "state": "inconsistent",
+        "reasonCode": "ANCHOR_CONFLICT",
+        "anchorStatus": "ANCHOR_CONFLICT",
+        "anchorRunId": "rt2-gap01-foreign-anchor",
+        "targetRunId": "rt2-gap01-choice-tamper",
+        "candidateHashMatchedLocalChoice": true
+      }
+    },
+    {
+      "name": "(D) observeTrusted не показывает PASS для подделанной цепочки",
+      "ok": true,
+      "detail": {
+        "passed": false,
+        "state": "inconsistent",
+        "reasonCode": "INTEGRITY_ERROR"
+      }
+    },
+    {
+      "name": "(D) старый observe() показывает PASS — он не является доказательством доверенного PASS",
+      "ok": true,
+      "detail": {
+        "oldVerdict": "PASS"
+      }
+    },
+    {
+      "name": "(D) подделанный прогон не добавил POST (только три предшествующих тестовых прогона мутировали стенд)",
+      "ok": true,
+      "detail": {
+        "mutationCount": 3
+      }
+    },
+    {
+      "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+      "ok": true,
+      "detail": {
+        "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+        "dirty": false,
+        "diffHash": ""
+      }
+    }
+  ],
+  "platform": "win32",
+  "node": "v24.16.0",
+  "createdAt": "2026-11-13T18:42:16.342Z"
+}

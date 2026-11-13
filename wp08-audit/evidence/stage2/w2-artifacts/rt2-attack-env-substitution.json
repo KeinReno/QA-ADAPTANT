@@ -1,0 +1,114 @@
+{
+  "tool": "REDTEAM-W2",
+  "id": "GAP-02",
+  "title": "Подмена среды на том же origin",
+  "target": {
+    "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+    "dirtyAtStart": false,
+    "diffHashAtStart": "",
+    "stringDiffHash": "",
+    "snapshotKey": "pinned",
+    "stable": true
+  },
+  "verdict": "PASS",
+  "exitCode": 0,
+  "checks": [
+    {
+      "name": "доверенный вход отказал BLOCKED ENVIRONMENT_CHANGED",
+      "ok": true,
+      "detail": {
+        "verdict": "BLOCKED",
+        "reasonCode": "ENVIRONMENT_CHANGED"
+      }
+    },
+    {
+      "name": "(A) зеркало получило запрос аттестации, но не POST",
+      "ok": true,
+      "detail": {
+        "attestCount": 1,
+        "mutationCount": 0,
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/attest"
+          }
+        ]
+      }
+    },
+    {
+      "name": "в журнале нет mutation-intent/request",
+      "ok": true,
+      "detail": {
+        "found": []
+      }
+    },
+    {
+      "name": "доверенный вход отказал BLOCKED ENVIRONMENT_CHANGED",
+      "ok": true,
+      "detail": {
+        "verdict": "BLOCKED",
+        "reasonCode": "ENVIRONMENT_CHANGED"
+      }
+    },
+    {
+      "name": "(B) сервер без ключа не получил POST",
+      "ok": true,
+      "detail": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/attest"
+          }
+        ]
+      }
+    },
+    {
+      "name": "в журнале нет mutation-intent/request",
+      "ok": true,
+      "detail": {
+        "found": []
+      }
+    },
+    {
+      "name": "доверенный вход отказал BLOCKED ENVIRONMENT_CHANGED",
+      "ok": true,
+      "detail": {
+        "verdict": "BLOCKED",
+        "reasonCode": "ENVIRONMENT_CHANGED"
+      }
+    },
+    {
+      "name": "(C) подменённый стенд не получил POST",
+      "ok": true,
+      "detail": {
+        "mutationCount": 0
+      }
+    },
+    {
+      "name": "в журнале нет mutation-intent/request",
+      "ok": true,
+      "detail": {
+        "found": []
+      }
+    },
+    {
+      "name": "ключ подменённого стенда отличается от записи реестра",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+      "ok": true,
+      "detail": {
+        "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+        "dirty": false,
+        "diffHash": ""
+      }
+    }
+  ],
+  "platform": "win32",
+  "node": "v24.16.0",
+  "createdAt": "2026-11-13T18:41:45.370Z"
+}

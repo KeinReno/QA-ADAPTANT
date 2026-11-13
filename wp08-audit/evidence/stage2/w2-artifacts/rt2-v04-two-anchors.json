@@ -1,0 +1,75 @@
+{
+  "tool": "REDTEAM-W2",
+  "id": "V-04",
+  "title": "Повторный finalize отклонён по receipt binding",
+  "target": {
+    "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+    "dirtyAtStart": false,
+    "diffHashAtStart": "",
+    "stringDiffHash": "",
+    "snapshotKey": "pinned",
+    "stable": true
+  },
+  "verdict": "PASS",
+  "exitCode": 0,
+  "checks": [
+    {
+      "name": "доверенный прогон остановлен после durable anchor до terminal-choice",
+      "ok": true,
+      "detail": {
+        "newAnchor": "anchor-92780115-e329-43e5-ae3e-c71a934b1b6c.json",
+        "candidateVerdict": "PASS"
+      }
+    },
+    {
+      "name": "durable candidate PASS существует",
+      "ok": true,
+      "detail": {
+        "verdict": "PASS"
+      }
+    },
+    {
+      "name": "новый anchorId отклонён именно из-за несовпадения durable receipt",
+      "ok": true,
+      "detail": {
+        "code": "ANCHOR_BINDING_REJECTED",
+        "message": "Подписанный receipt не совпадает с finalize запросом"
+      }
+    },
+    {
+      "name": "в trust root остался один анкер",
+      "ok": true,
+      "detail": {
+        "anchors": [
+          "anchor-92780115-e329-43e5-ae3e-c71a934b1b6c.json"
+        ]
+      }
+    },
+    {
+      "name": "первый анкер не изменён",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "исходный trusted run завершил тот же PASS после паузы",
+      "ok": true,
+      "detail": {
+        "verdict": "PASS"
+      }
+    },
+    {
+      "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+      "ok": true,
+      "detail": {
+        "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+        "dirty": false,
+        "diffHash": ""
+      }
+    }
+  ],
+  "platform": "win32",
+  "node": "v24.16.0",
+  "createdAt": "2026-11-13T18:45:31.426Z"
+}

@@ -1,0 +1,61 @@
+{
+  "tool": "REDTEAM-W2",
+  "id": "V-03",
+  "title": "Таймаут ожидания подписанта закрывается fail-closed",
+  "target": {
+    "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+    "dirtyAtStart": false,
+    "diffHashAtStart": "",
+    "stringDiffHash": "",
+    "snapshotKey": "pinned",
+    "stable": true
+  },
+  "verdict": "PASS",
+  "exitCode": 0,
+  "checks": [
+    {
+      "name": "долгий ответ не принимается как анкер",
+      "ok": true,
+      "detail": {
+        "ok": false,
+        "code": "ANCHOR_TIMEOUT"
+      }
+    },
+    {
+      "name": "источник бюджета — подписанный trust profile",
+      "ok": true,
+      "detail": {
+        "budgetMs": 250
+      }
+    },
+    {
+      "name": "таймаут срабатывает раньше ответа подписанта",
+      "ok": true,
+      "detail": {
+        "elapsed": 259,
+        "settledLate": true
+      }
+    },
+    {
+      "name": "таймаут не создаёт файл анкера",
+      "ok": true,
+      "detail": {
+        "anchorFiles": []
+      }
+    },
+    {
+      "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+      "ok": true,
+      "detail": {
+        "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+        "dirty": false,
+        "diffHash": ""
+      }
+    }
+  ],
+  "platform": "win32",
+  "node": "v24.16.0",
+  "createdAt": "2026-11-13T18:45:22.774Z"
+}

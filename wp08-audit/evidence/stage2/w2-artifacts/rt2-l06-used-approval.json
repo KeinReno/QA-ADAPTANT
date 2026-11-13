@@ -1,0 +1,75 @@
+{
+  "tool": "REDTEAM-W2",
+  "id": "L-06",
+  "title": "Новая попытка с использованным approval",
+  "target": {
+    "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+    "dirtyAtStart": false,
+    "diffHashAtStart": "",
+    "stringDiffHash": "",
+    "snapshotKey": "pinned",
+    "stable": true
+  },
+  "verdict": "PASS",
+  "exitCode": 0,
+  "checks": [
+    {
+      "name": "первый доверенный прогон PASS",
+      "ok": true,
+      "detail": {
+        "verdict": "PASS",
+        "reasonCode": "NONE"
+      }
+    },
+    {
+      "name": "стенд получил 1 POST",
+      "ok": true,
+      "detail": {
+        "mutationCount": 1
+      }
+    },
+    {
+      "name": "повторный расход на новом runId -> APPROVAL_REPLAY",
+      "ok": true,
+      "detail": {
+        "code": "APPROVAL_REPLAY"
+      }
+    },
+    {
+      "name": "повторное закрепление approvalId с другим содержимым отвергнуто",
+      "ok": true,
+      "detail": {
+        "code": "CONTRACT_INVALID"
+      }
+    },
+    {
+      "name": "доверенный вход отказал BLOCKED CONTRACT_INVALID/AUTH_UNAVAILABLE",
+      "ok": true,
+      "detail": {
+        "verdict": "BLOCKED",
+        "reasonCode": "CONTRACT_INVALID"
+      }
+    },
+    {
+      "name": "стенд получил 1 POST",
+      "ok": true,
+      "detail": {
+        "mutationCount": 1
+      }
+    },
+    {
+      "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+      "ok": true,
+      "detail": {
+        "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+        "dirty": false,
+        "diffHash": ""
+      }
+    }
+  ],
+  "platform": "win32",
+  "node": "v24.16.0",
+  "createdAt": "2026-11-13T18:44:50.860Z"
+}

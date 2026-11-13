@@ -1,0 +1,53 @@
+{
+  "tool": "REDTEAM-W2",
+  "id": "WP06-SID",
+  "title": "Чужой SID не получает доверенный прогон",
+  "target": {
+    "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+    "dirtyAtStart": false,
+    "diffHashAtStart": "",
+    "stringDiffHash": "",
+    "snapshotKey": "pinned",
+    "stable": true
+  },
+  "verdict": "PASS",
+  "exitCode": 0,
+  "checks": [
+    {
+      "name": "доверенный вход отказал BLOCKED AUTH_UNAVAILABLE",
+      "ok": true,
+      "detail": {
+        "verdict": "BLOCKED",
+        "reasonCode": "AUTH_UNAVAILABLE"
+      }
+    },
+    {
+      "name": "стенд получил 0 POST",
+      "ok": true,
+      "detail": {
+        "mutationCount": 0
+      }
+    },
+    {
+      "name": "в журнале нет mutation-intent/request",
+      "ok": true,
+      "detail": {
+        "found": []
+      }
+    },
+    {
+      "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+      "ok": true,
+      "detail": {
+        "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+        "dirty": false,
+        "diffHash": ""
+      }
+    }
+  ],
+  "platform": "win32",
+  "node": "v24.16.0",
+  "createdAt": "2026-11-13T18:42:23.900Z"
+}

@@ -1,0 +1,119 @@
+{
+  "tool": "REDTEAM-W2",
+  "id": "L-03",
+  "title": "Потерянный ACK после consumption без POST",
+  "target": {
+    "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+    "dirtyAtStart": false,
+    "diffHashAtStart": "",
+    "stringDiffHash": "",
+    "snapshotKey": "pinned",
+    "stable": true
+  },
+  "verdict": "PASS",
+  "exitCode": 0,
+  "checks": [
+    {
+      "name": "потерянный ACK приводит к fail-closed integrity error",
+      "ok": true,
+      "detail": {
+        "message": "INTEGRITY_ERROR: EVIDENCE_CHAIN"
+      }
+    },
+    {
+      "name": "файл расхода создан",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "расход связан с runId",
+      "ok": true,
+      "detail": {
+        "consumption": {
+          "approvalId": "approval-9452667c",
+          "runId": "rt2-l03",
+          "decisionId": "d74dabf9-c1c7-41b7-a912-20fd04f77112",
+          "inputsHash": "0c09d84d5e0bc002d9cb6e2c20df09ae165cc453fabbaea4a1ccd252d7712251",
+          "environmentGeneration": 1,
+          "consumedAt": "2026-11-13T18:44:23.867Z",
+          "bodySha256": "eba2bc9245dc8519866a736e648b1b4adb35580247b4d5c308440395575db38d"
+        }
+      }
+    },
+    {
+      "name": "стенд получил 0 POST",
+      "ok": true,
+      "detail": {
+        "mutationCount": 0
+      }
+    },
+    {
+      "name": "mutation-intent записан",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "request (POST) отсутствует",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "verdict PASS не опубликован",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "reconcile не реконструирует PASS из неполной evidence chain",
+      "ok": true,
+      "detail": {
+        "message": "INTEGRITY_ERROR: EVIDENCE_CHAIN"
+      }
+    },
+    {
+      "name": "стенд получил 0 POST",
+      "ok": true,
+      "detail": {
+        "mutationCount": 0
+      }
+    },
+    {
+      "name": "второго request evidence нет",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "PASS verdict отсутствует",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "доверенный вход отказал BLOCKED CONTRACT_INVALID/AUTH_UNAVAILABLE",
+      "ok": true,
+      "detail": {
+        "verdict": "BLOCKED",
+        "reasonCode": "CONTRACT_INVALID"
+      }
+    },
+    {
+      "name": "стенд получил 0 POST",
+      "ok": true,
+      "detail": {
+        "mutationCount": 0
+      }
+    },
+    {
+      "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+      "ok": true,
+      "detail": {
+        "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+        "dirty": false,
+        "diffHash": ""
+      }
+    }
+  ],
+  "platform": "win32",
+  "node": "v24.16.0",
+  "createdAt": "2026-11-13T18:44:37.561Z"
+}

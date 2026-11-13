@@ -1,0 +1,107 @@
+{
+  "tool": "REDTEAM-W2",
+  "id": "V-07",
+  "title": "Анкер записан, verdict не опубликован",
+  "target": {
+    "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-1b6bfce691d10c14",
+    "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+    "dirtyAtStart": false,
+    "diffHashAtStart": "",
+    "stringDiffHash": "",
+    "snapshotKey": "pinned",
+    "stable": true
+  },
+  "verdict": "PASS",
+  "exitCode": 0,
+  "checks": [
+    {
+      "name": "процесс завершён после появления durable анкера",
+      "ok": true,
+      "detail": {
+        "status": 1,
+        "killedAtAnchor": true,
+        "stopConfirmed": true,
+        "childError": null,
+        "childResult": null,
+        "stderr": ""
+      }
+    },
+    {
+      "name": "durable candidate PASS",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "авария произошла до terminal-choice и verdict",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "дописан ровно один verdict",
+      "ok": true,
+      "detail": {
+        "count": 1
+      }
+    },
+    {
+      "name": "reconcile восстановил anchor terminal-choice для того же candidate",
+      "ok": true,
+      "detail": {
+        "choice": {
+          "anchorId": "anchor-f3a52b3e-2b6e-4cdc-9dd7-877a20abc26a",
+          "candidateSha256": "1c112e7f255e61d0caeb60529e5ad396118027dde1160bdd8c01d33792b6a34e",
+          "createdAt": "2026-11-13T18:45:47.146Z",
+          "discardedCandidateSha256": null,
+          "domain": "terminal-choice",
+          "outcome": "anchor",
+          "schemaVersion": "0.2.0"
+        }
+      }
+    },
+    {
+      "name": "байты verdict равны выбранному candidate",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "первый reconcile восстановил PASS",
+      "ok": true,
+      "detail": {
+        "verdict": "PASS"
+      }
+    },
+    {
+      "name": "повторный reconcile идемпотентно возвращает PASS",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "после восстановления PASS связан с анкером",
+      "ok": true,
+      "detail": {
+        "passed": true,
+        "anchorStatus": "ANCHOR_OK"
+      }
+    },
+    {
+      "name": "нового POST при восстановлении не было",
+      "ok": true,
+      "detail": {
+        "mutationCount": 1
+      }
+    },
+    {
+      "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+      "ok": true,
+      "detail": {
+        "head": "1a510a5d5929534d400dc965f58c78cf468bc270",
+        "dirty": false,
+        "diffHash": ""
+      }
+    }
+  ],
+  "platform": "win32",
+  "node": "v24.16.0",
+  "createdAt": "2026-11-13T18:45:47.911Z"
+}
