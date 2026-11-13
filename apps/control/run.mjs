@@ -260,9 +260,13 @@ export async function run(bundle, options = {}) {
       }
       const browserFile = new URL('../browser/worker.mjs', import.meta.url);
       const browserNonce = randomUUID();
+      // E-04: доверенный путь доставляет только секрет, выданный по credentialRef среды.
+      const deliveredToken = trust && typeof trust.credentialSecret === 'function'
+        ? (trust.credentialSecret() ?? fixtureToken)
+        : fixtureToken;
       const browser = spawnWorker(browserFile, [runDir, frozen.manifestSha256, browserNonce], {
         QA_ADAPTANT_HEADED: headed ? '1' : '0',
-        QA_ADAPTANT_FIXTURE_TOKEN: fixtureToken,
+        QA_ADAPTANT_FIXTURE_TOKEN: deliveredToken,
         ...(fault ? { QA_ADAPTANT_FAULT: fault } : {})
       });
       activeBrowsers.set(runId, browser);
@@ -377,7 +381,7 @@ export async function run(bundle, options = {}) {
       const browserUncertain = Boolean(workerError) || !gotDone || exit.code !== 0;
       const lossDetail = `exit=${exit.code ?? 'null'}, signal=${exit.signal || 'none'}, done=${gotDone}, phase=${workerError?.code || (gotDone ? 'DONE' : 'NO_DONE')}${workerError?.message ? `, ipc=${String(workerError.message).slice(0, 160)}` : ''}`;
       cancellations.delete(runId);
-      return await verifyAndPersist(store, runDir, { fault, browserUncertain, canceled, fixtureToken, lossDetail, trust });
+      return await verifyAndPersist(store, runDir, { fault, browserUncertain, canceled, fixtureToken: deliveredToken, lossDetail, trust });
     } finally {
       try { fs.unlinkSync(lockFile); } catch {}
     }
@@ -562,7 +566,10 @@ export async function reconcile(options = {}) {
     return persistVerdict(store, runDir, frozen, verdict);
   }
   store.appendEvent(runDir, { type: 'STATE', state: 'RECONCILING' });
-  return verifyAndPersist(store, runDir, { fault, browserUncertain: true, canceled, fixtureToken, trust });
+  // E-04: чтение при восстановлении тоже получает только секрет, разрешённый credentialRef среды.
+  let deliveredToken = fixtureToken;
+  if (trust && typeof trust.ensureCredential === 'function') deliveredToken = await trust.ensureCredential({ frozen });
+  return verifyAndPersist(store, runDir, { fault, browserUncertain: true, canceled, fixtureToken: deliveredToken, trust });
 }
 
 export async function cancel(options = {}) {

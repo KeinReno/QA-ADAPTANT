@@ -12,6 +12,10 @@ import { RunStore } from '../packages/core/store.mjs';
 import { localBundle, localFixtureContract } from '../adapters/local/bundle.mjs';
 import { createTrustRoot, loadTrustRoot, signTrustedDocument, unwrapPrivateKey } from '../packages/trust/identity.mjs';
 import { consumeDispatch, readApprovalState, signApproval } from '../packages/trust/approval.mjs';
+import { commitEnvironmentRecord, signEnvironmentRecord } from '../packages/trust/environment.mjs';
+import { serveLocalFixture } from '../adapters/local/server.mjs';
+import { currentUserSid } from '../packages/trust/windows-sid.mjs';
+import { createTrustContext, startTrusted } from '../apps/control/trusted.mjs';
 
 const KEYGEN = path.resolve('packages/trust/keygen.mjs');
 
@@ -66,7 +70,7 @@ const P2_SID = 'S-1-5-21-p2-operator';
 let p2Counter = 0;
 const p2Next = prefix => prefix + '-' + String(++p2Counter).padStart(4, '0');
 
-async function trustFixture(prefix) {
+async function trustFixture(prefix, windowsSid = P2_SID) {
   const base = work(prefix);
   const secretsDir = path.join(base, 'secrets');
   const trustRoot = path.join(base, 'trust-root');
@@ -79,24 +83,29 @@ async function trustFixture(prefix) {
   });
   const subject = signTrustedDocument(ownerKey, {
     schemaVersion: '0.2.0', domain: 'principal', principalId: 'local-operator', roles: ['operator'],
-    keyId: created.ownerKeyId, windowsSid: P2_SID, status: 'active'
+    keyId: created.ownerKeyId, windowsSid, status: 'active'
   });
   const store = new RunStore(path.join(base, 'store'));
   return { base, secretsDir, trustRoot, trust, ownerKey, created, issuer, subject, store, cleanup: () => fs.rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
 }
 
-function p2Run(store, tag) {
+function p2Bundle(tag, override = {}) {
   const runId = p2Next('run-p2-' + tag);
-  const descriptor = { environmentId: 'local-stand', baseUrl: 'http://127.0.0.1:9/', fingerprint: 'fp-p2', fixtureId: 'fixture-' + runId };
+  const descriptor = { environmentId: 'local-stand', baseUrl: 'http://127.0.0.1:9/', fingerprint: 'fp-p2', fixtureId: 'fixture-' + runId, ...override };
   const fixture = localFixtureContract(descriptor, runId);
   const bundle = localBundle({ ...descriptor, fixtureId: fixture.fixtureId }, { runId });
   bundle.fixture = fixture;
   bundle.manifest.fixtureSha256 = digest(fixture);
-  const runDir = store.snapshot(bundle, null);
-  return { runId, runDir, bundle, fixture };
+  return { runId, bundle, fixture };
 }
-function p2Frozen(store, tag) {
-  const run = p2Run(store, tag);
+
+function p2Run(store, tag, override = {}) {
+  const built = p2Bundle(tag, override);
+  const runDir = store.snapshot(built.bundle, null);
+  return { ...built, runDir };
+}
+function p2Frozen(store, tag, override = {}) {
+  const run = p2Run(store, tag, override);
   return { ...run, frozen: verifyFrozenBundle(store, run.runDir) };
 }
 
@@ -188,5 +197,105 @@ test('P2-02: путь approvalId-only отвергает повреждённы�
     }), error => error.code === 'APPROVAL_SIGNATURE_INVALID');
   } finally {
     env.cleanup();
+  }
+});
+// E-04: мир с живым стендом, подписанной записью среды и замороженным прогоном.
+async function e04World(prefix, credentialRef) {
+  const sid = currentUserSid();
+  const env = await trustFixture(prefix, sid);
+  const stand = await serveLocalFixture({ generation: 1 });
+  try {
+    const record = signEnvironmentRecord(env.ownerKey, {
+      environmentId: stand.environmentId, generation: stand.generation, kind: 'local-stand', status: 'active',
+      origin: stand.baseUrl, standKeyId: stand.standKeyId, credentialRef
+    });
+    commitEnvironmentRecord(env.trust, env.trustRoot, record);
+    const run = p2Bundle(prefix, { environmentId: stand.environmentId, baseUrl: stand.baseUrl, fingerprint: stand.fingerprint });
+    const { approvalId, approval } = p2Approval(env, run.bundle, {
+      targetEnvironmentId: stand.environmentId, environmentGeneration: stand.generation
+    });
+    return { ...env, sid, stand, run, approvalId, approval, record };
+  } catch (error) {
+    await stand.close();
+    env.cleanup();
+    throw error;
+  }
+}
+
+test('E-04: credentialRef среды участвует в выдаче секрета (preflight)', async () => {
+  const w = await e04World('e04-store', 'local:fixture-token');
+  try {
+    const frozen = verifyFrozenBundle(w.store, w.store.snapshot(w.run.bundle, null));
+    const baseOptions = {
+      trust: w.trust, trustRoot: w.trustRoot, approvalId: w.approvalId, approval: w.approval,
+      issuer: w.issuer, subject: w.subject, sid: w.sid, standPublicKey: w.stand.standPublicKey
+    };
+    // Разрешённый credentialRef: секрет выдаётся, preflight ALLOW.
+    const allowed = createTrustContext({ ...baseOptions, credentials: { 'local:fixture-token': w.stand.authToken }, fixtureToken: w.stand.authToken });
+    const allowedResult = await allowed.preflight({ runDir: w.store.runPath(w.run.runId), frozen });
+    assert.equal(allowedResult.allow, true);
+    assert.equal(allowed.credentialSecret(), w.stand.authToken);
+    // Сырой fixtureToken при непустом credentialRef без хранилища не принимается.
+    const raw = createTrustContext({ ...baseOptions, credentials: null, fixtureToken: w.stand.authToken });
+    const rawResult = await raw.preflight({ runDir: w.store.runPath(w.run.runId), frozen });
+    assert.equal(rawResult.allow, false);
+    assert.equal(rawResult.denial.reasonCode, 'ENVIRONMENT_ATTESTATION_FAILED');
+    assert.equal(rawResult.denial.verdictCode, 'ENVIRONMENT_CHANGED');
+    assert.equal(raw.credentialSecret(), null);
+    // Секрет, зарегистрированный под другим credentialRef, не выдаётся.
+    const foreign = createTrustContext({ ...baseOptions, credentials: { 'prod:foreign-secret-7': w.stand.authToken }, fixtureToken: w.stand.authToken });
+    const foreignResult = await foreign.preflight({ runDir: w.store.runPath(w.run.runId), frozen });
+    assert.equal(foreignResult.allow, false);
+    assert.equal(foreign.credentialSecret(), null);
+    // Секрет хранилища не совпал с переданным — отказ.
+    const mismatch = createTrustContext({ ...baseOptions, credentials: { 'local:fixture-token': 'not-this-stand-token' }, fixtureToken: w.stand.authToken });
+    const mismatchResult = await mismatch.preflight({ runDir: w.store.runPath(w.run.runId), frozen });
+    assert.equal(mismatchResult.allow, false);
+    assert.equal(mismatch.credentialSecret(), null);
+  } finally {
+    await w.stand.close();
+    w.cleanup();
+  }
+});
+
+test('E-04: доверенный прогон с чужим credentialRef отказывает до мутации', async () => {
+  const w = await e04World('e04-e2e', 'prod:foreign-secret-7');
+  try {
+    const result = await startTrusted(w.run.bundle, {
+      root: w.store.root, trustRoot: w.trustRoot, approvalId: w.approvalId, approval: w.approval,
+      issuer: w.issuer, subject: w.subject, standPublicKey: w.stand.standPublicKey,
+      signerPipe: null, fixtureToken: w.stand.authToken,
+      credentials: { 'local:fixture-token': w.stand.authToken }
+    });
+    assert.equal(result.verdict.verdict, 'BLOCKED');
+    assert.equal(result.verdict.reasonCode, 'ENVIRONMENT_CHANGED');
+    assert.equal(w.stand.mutationCount, 0, 'секрет другой среды не должен дойти до стенда');
+    const store = new RunStore(w.store.root);
+    const events = store.readEvents(result.runDir).map(event => event.type);
+    assert.equal(events.includes('READY'), false, 'Browser не должен запускаться при отказе E-04');
+    assert.equal(events.includes('REQUEST_DURABLE'), false);
+  } finally {
+    await w.stand.close();
+    w.cleanup();
+  }
+});
+
+// P2-02 (E2E): полный доверенный прогон только по approvalId, документ читается из trust root.
+test('P2-02: startTrusted без документа approval доходит до PASS', { timeout: 120000 }, async () => {
+  const w = await e04World('p2-approval-e2e', 'local:fixture-token');
+  try {
+    const result = await startTrusted(w.run.bundle, {
+      root: w.store.root, trustRoot: w.trustRoot, approvalId: w.approvalId,
+      issuer: w.issuer, subject: w.subject, standPublicKey: w.stand.standPublicKey,
+      signerPipe: null, fixtureToken: w.stand.authToken,
+      credentials: { 'local:fixture-token': w.stand.authToken }
+    });
+    assert.equal(result.verdict.verdict, 'INCONCLUSIVE', 'без подписанта PASS не публикуется, но прогон проходит PEP');
+    assert.equal(result.verdict.reasonCode, 'EVIDENCE_MISSING');
+    assert.equal(w.stand.mutationCount, 1, 'мутация выполнена ровно один раз');
+    assert.equal(fs.existsSync(path.join(w.trustRoot, 'consumption', w.approvalId + '.json')), true);
+  } finally {
+    await w.stand.close();
+    w.cleanup();
   }
 });
