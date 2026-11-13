@@ -244,37 +244,96 @@ test('слишком большой ответ /attest отвергается', 
   await expectCode(attestEnvironment({ trust, record, challenge: newChallenge(), standPublicKey: keys.publicKey }), 'ENVIRONMENT_ATTESTATION_FAILED');
 });
 
+// D-04: chunked-ответ без content-length ограничивается по потоку до буферизации всего тела.
+test('D-04: chunked-ответ без content-length отсекается по размеру', async t => {
+  const keys = createStandKeys();
+  let serverWrote = 0;
+  const chunked = await listen((req, res) => {
+    const url = new URL(req.url, 'http://127.0.0.1');
+    if (url.pathname === '/attest') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      const chunk = 'x'.repeat(8192);
+      for (let index = 0; index < 20; index += 1) {
+        if (!res.write(chunk)) break;
+        serverWrote += chunk.length;
+      }
+      res.end();
+      return;
+    }
+    res.writeHead(404); res.end('{}');
+  });
+  t.after(() => chunked.close());
+  const record = register({ environmentId: envId('chunked'), origin: chunked.origin, standKeyId: keys.standKeyId });
+  const started = Date.now();
+  await expectCode(attestEnvironment({ trust, record, challenge: newChallenge(), standPublicKey: keys.publicKey }), 'ENVIRONMENT_ATTESTATION_FAILED');
+  assert.ok(Date.now() - started < 3000, 'кап должен срабатывать без ожидания всего тела');
+});
+
 // E-02: среды нет в реестре.
 test('E-02: environmentId отсутствует в реестре — ENVIRONMENT_UNKNOWN', async () => {
   assert.throws(() => loadEnvironmentRecord(trust, trustRoot, 'env-does-not-exist'), codeIs('ENVIRONMENT_UNKNOWN'));
 });
 
-// CREATE_NEW + fsync + повторное чтение: повтор не перезаписывает запись.
-test('запись среды ставится CREATE_NEW, повтор с другим содержимым не перезаписывает файл', async () => {
+// D-01 (docs/changes/005): поколенческая раскладка environments/<environmentId>/<generation>.json.
+test('поколенческая запись среды: CREATE_NEW, идемпотентный повтор, конфликт и запрет публикации назад', async () => {
   const keys = createStandKeys();
-  const record = recordFor({ origin: 'http://127.0.0.1:9/', standKeyId: keys.standKeyId });
-  const first = commitEnvironmentRecord(trust, trustRoot, record);
-  assert.deepEqual(first, record);
-  const file = path.join(trustRoot, 'environments', record.environmentId + '.json');
-  const bytes = fs.readFileSync(file);
-  assert.equal(bytes.toString('utf8'), JSON.stringify(record) + '\n');
-  const again = commitEnvironmentRecord(trust, trustRoot, record);
-  assert.deepEqual(again, record);
-  assert.deepEqual(fs.readFileSync(file), bytes);
-  const changed = signEnvironmentRecord(ownerKey, {
-    environmentId: record.environmentId,
-    generation: 2,
-    kind: 'local-stand',
-    status: 'active',
-    origin: record.origin,
-    standKeyId: record.standKeyId,
-    credentialRef: ''
-  });
-  assert.throws(() => commitEnvironmentRecord(trust, trustRoot, changed), codeIs('CONTRACT_INVALID'));
-  assert.deepEqual(fs.readFileSync(file), bytes);
-  const loaded = loadEnvironmentRecord(trust, trustRoot, record.environmentId);
-  assert.equal(loaded.generation, 1);
+  const environmentId = envId('generation-write');
+  const generationOne = recordFor({ environmentId, generation: 1, origin: 'http://127.0.0.1:9/', standKeyId: keys.standKeyId });
+  assert.deepEqual(commitEnvironmentRecord(trust, trustRoot, generationOne), generationOne);
+  const fileOne = path.join(trustRoot, 'environments', environmentId, '1.json');
+  const bytesOne = fs.readFileSync(fileOne);
+  assert.equal(bytesOne.toString('utf8'), JSON.stringify(generationOne) + '\n');
+  // Повтор того же поколения с идентичным содержимым — идемпотентный успех, байты не меняются.
+  assert.deepEqual(commitEnvironmentRecord(trust, trustRoot, generationOne), generationOne);
+  assert.deepEqual(fs.readFileSync(fileOne), bytesOne);
+  // Новое поколение с другим origin и ключом стенда — отдельный CREATE_NEW-файл.
+  const newKeys = createStandKeys();
+  const generationTwo = recordFor({ environmentId, generation: 2, origin: 'http://127.0.0.1:10/', standKeyId: newKeys.standKeyId });
+  commitEnvironmentRecord(trust, trustRoot, generationTwo);
+  assert.equal(fs.existsSync(path.join(trustRoot, 'environments', environmentId, '2.json')), true);
+  const loaded = loadEnvironmentRecord(trust, trustRoot, environmentId);
+  assert.equal(loaded.generation, 2);
+  assert.equal(loaded.origin, 'http://127.0.0.1:10/');
+  assert.equal(loaded.standKeyId, newKeys.standKeyId);
   assert.equal('fingerprint' in loaded, false);
+  // Публикация поколения ниже максимума с новым содержимым запрещена.
+  const backward = recordFor({ environmentId, generation: 1, origin: 'http://127.0.0.1:11/', standKeyId: keys.standKeyId });
+  assert.throws(() => commitEnvironmentRecord(trust, trustRoot, backward), codeIs('CONTRACT_INVALID'));
+  assert.deepEqual(fs.readFileSync(fileOne), bytesOne);
+  // Та же generation с другим содержимым — конфликт, файл не перезаписывается.
+  const conflict = recordFor({ environmentId, generation: 2, origin: 'http://127.0.0.1:12/', standKeyId: newKeys.standKeyId });
+  assert.throws(() => commitEnvironmentRecord(trust, trustRoot, conflict), codeIs('CONTRACT_INVALID'));
+  assert.equal(loadEnvironmentRecord(trust, trustRoot, environmentId).generation, 2);
+  // Повтор уже опубликованного старого поколения с идентичным содержимым остаётся идемпотентным.
+  assert.deepEqual(commitEnvironmentRecord(trust, trustRoot, generationOne), generationOne);
+  assert.equal(loadEnvironmentRecord(trust, trustRoot, environmentId).generation, 2);
+});
+
+// Максимальное поколение выбирается числовым сравнением, а не лексикографическим (10 > 9).
+test('загрузка выбирает максимальное поколение числово: 10 старше 9', async () => {
+  const keys = createStandKeys();
+  const environmentId = envId('max-generation');
+  for (const generation of [1, 9, 10]) {
+    commitEnvironmentRecord(trust, trustRoot, recordFor({
+      environmentId,
+      generation,
+      origin: 'http://127.0.0.1:' + (1000 + generation) + '/',
+      standKeyId: keys.standKeyId
+    }));
+  }
+  const loaded = loadEnvironmentRecord(trust, trustRoot, environmentId);
+  assert.equal(loaded.generation, 10);
+  assert.equal(loaded.origin, 'http://127.0.0.1:1010/');
+});
+
+// Старый путь environments/<environmentId>.json не поддерживается (нет развёртываний).
+test('старый путь environments/<environmentId>.json не читается', async () => {
+  const keys = createStandKeys();
+  const environmentId = envId('legacy-path');
+  const record = recordFor({ environmentId, generation: 1, origin: 'http://127.0.0.1:9/', standKeyId: keys.standKeyId });
+  fs.mkdirSync(path.join(trustRoot, 'environments'), { recursive: true });
+  fs.writeFileSync(path.join(trustRoot, 'environments', environmentId + '.json'), JSON.stringify(record) + '\n');
+  assert.throws(() => loadEnvironmentRecord(trust, trustRoot, environmentId), codeIs('ENVIRONMENT_UNKNOWN'));
 });
 
 // Отозванная среда не загружается и не аттестуется.
@@ -283,6 +342,72 @@ test('отозванная среда — ENVIRONMENT_REVOKED на загруз�
   const record = register({ status: 'revoked', origin: 'http://127.0.0.1:9/', standKeyId: keys.standKeyId });
   assert.throws(() => loadEnvironmentRecord(trust, trustRoot, record.environmentId), codeIs('ENVIRONMENT_REVOKED'));
   await expectCode(attestLiveEnvironment({ trust, record, standPublicKey: keys.publicKey }), 'ENVIRONMENT_REVOKED');
+});
+
+// D-01: отзыв ранее зарегистрированной среды публикацией поколения N+1.
+test('отзыв среды поколением N+1: загрузка ENVIRONMENT_REVOKED и провал аттестации', async t => {
+  const keys = createStandKeys();
+  const environmentId = envId('revoke-live');
+  const mock = await standMock(keys, { environmentId, generation: 1 });
+  t.after(() => mock.close());
+  const active = register({ environmentId, generation: 1, origin: mock.origin, standKeyId: keys.standKeyId });
+  const live = await attestLiveEnvironment({ trust, record: active, standPublicKey: keys.publicKey });
+  assert.equal(live.attestation.generation, 1);
+  const revoked = recordFor({ environmentId, generation: 2, status: 'revoked', origin: mock.origin, standKeyId: keys.standKeyId });
+  commitEnvironmentRecord(trust, trustRoot, revoked);
+  assert.throws(() => loadEnvironmentRecord(trust, trustRoot, environmentId), codeIs('ENVIRONMENT_REVOKED'));
+  await expectCode(attestEnvironment({ trust, record: revoked, challenge: newChallenge(), standPublicKey: keys.publicKey }), 'ENVIRONMENT_REVOKED');
+  await expectCode(attestLiveEnvironment({ trust, record: revoked, standPublicKey: keys.publicKey }), 'ENVIRONMENT_REVOKED');
+});
+
+// D-01: disabled-поколение возвращается PDP (статус оценивает Policy), аттестация запрещена.
+test('disabled поколение N+1 возвращается загрузкой, аттестация запрещена', async t => {
+  const keys = createStandKeys();
+  const environmentId = envId('disabled-live');
+  const mock = await standMock(keys, { environmentId, generation: 1 });
+  t.after(() => mock.close());
+  register({ environmentId, generation: 1, origin: mock.origin, standKeyId: keys.standKeyId });
+  const disabled = recordFor({ environmentId, generation: 2, status: 'disabled', origin: mock.origin, standKeyId: keys.standKeyId });
+  commitEnvironmentRecord(trust, trustRoot, disabled);
+  const loaded = loadEnvironmentRecord(trust, trustRoot, environmentId);
+  assert.equal(loaded.generation, 2);
+  assert.equal(loaded.status, 'disabled');
+  await expectCode(attestEnvironment({ trust, record: loaded, challenge: newChallenge(), standPublicKey: keys.publicKey }), 'ENVIRONMENT_ATTESTATION_FAILED');
+});
+
+// D-01: смена ключа стенда = новое поколение; загрузка выбирает новое, старый ключ не проходит.
+test('смена ключа стенда публикуется новым поколением', async t => {
+  const firstKeys = createStandKeys();
+  const secondKeys = createStandKeys();
+  const environmentId = envId('new-key');
+  const firstStand = await standMock(firstKeys, { environmentId, generation: 1 });
+  t.after(() => firstStand.close());
+  register({ environmentId, generation: 1, origin: firstStand.origin, standKeyId: firstKeys.standKeyId });
+  const secondEnvironmentId = envId('new-key-stand');
+  const secondStand = await standMock(secondKeys, { environmentId: secondEnvironmentId, generation: 2 });
+  t.after(() => secondStand.close());
+  // Стенд перезапущен: новый origin и новый ключ, реестр получает поколение 2.
+  const second = recordFor({ environmentId: secondEnvironmentId, generation: 2, origin: secondStand.origin, standKeyId: secondKeys.standKeyId });
+  commitEnvironmentRecord(trust, trustRoot, second);
+  const loaded = loadEnvironmentRecord(trust, trustRoot, secondEnvironmentId);
+  assert.equal(loaded.generation, 2);
+  assert.equal(loaded.standKeyId, secondKeys.standKeyId);
+  const live = await attestLiveEnvironment({ trust, record: loaded, standPublicKey: secondKeys.publicKey });
+  assert.equal(live.attestation.generation, 2);
+  await expectCode(attestEnvironment({ trust, record: loaded, challenge: newChallenge(), standPublicKey: firstKeys.publicKey }), 'ENVIRONMENT_ATTESTATION_FAILED');
+});
+
+// D-03: повторная проверка уже проверенного тела идемпотентна.
+test('D-03: verifyEnvironmentRecord идемпотентна для проверенного тела', async () => {
+  const keys = createStandKeys();
+  const environmentId = envId('idempotent-verify');
+  register({ environmentId, generation: 1, origin: 'http://127.0.0.1:9/', standKeyId: keys.standKeyId });
+  const loaded = loadEnvironmentRecord(trust, trustRoot, environmentId);
+  const again = verifyEnvironmentRecord(trust, loaded);
+  assert.deepEqual(again, loaded);
+  const third = verifyEnvironmentRecord(trust, again);
+  assert.deepEqual(third, loaded);
+  assert.equal(third.environmentId, environmentId);
 });
 
 // Replay: старый ответ на прежний challenge не принимается для нового challenge.
@@ -362,10 +487,11 @@ test('подмена environmentId отвергается', async t => {
     () => verifyEnvironmentAttestation(trust, record, forged, { challenge: forged.challenge, standPublicKey: keys.publicKey }),
     codeIs('ENVIRONMENT_ATTESTATION_FAILED')
   );
-  // Файл с чужим именем не выдаёт себя за другую среду.
+  // Запись с чужим environmentId в каталоге другой среды не выдаёт себя за неё.
   const misnamed = recordFor({ environmentId: envId('misnamed'), origin: 'http://127.0.0.1:9/', standKeyId: keys.standKeyId });
-  fs.mkdirSync(path.join(trustRoot, 'environments'), { recursive: true });
-  fs.writeFileSync(path.join(trustRoot, 'environments', otherId + '.json'), JSON.stringify(misnamed) + '\n');
+  const misnamedDirectory = path.join(trustRoot, 'environments', otherId);
+  fs.mkdirSync(misnamedDirectory, { recursive: true });
+  fs.writeFileSync(path.join(misnamedDirectory, '1.json'), JSON.stringify(misnamed) + '\n');
   assert.throws(() => loadEnvironmentRecord(trust, trustRoot, otherId), codeIs('CONTRACT_INVALID'));
 });
 
@@ -611,17 +737,37 @@ test('неизвестное поле в записи среды и ключ а�
   assert.throws(() => verifyEnvironmentRecord(trust, anchorSigned), codeIs('APPROVAL_SIGNATURE_INVALID'));
 });
 
+// D-02: неверный алгоритм/пустая/не-hex подпись аттестации — провал аттестации, форма документа — CONTRACT_INVALID.
+test('D-02: неверная подпись аттестации даёт ENVIRONMENT_ATTESTATION_FAILED', async () => {
+  const keys = createStandKeys();
+  const environmentId = envId('bad-signature');
+  const record = register({ environmentId, generation: 1, origin: 'http://127.0.0.1:9/', standKeyId: keys.standKeyId });
+  const challenge = newChallenge();
+  const valid = signEnvironmentAttestation(keys.privateKey, {
+    environmentId, generation: 1, origin: 'http://127.0.0.1:9/', pid: process.pid, challenge
+  });
+  const context = { challenge, standPublicKey: keys.publicKey };
+  assert.throws(() => verifyEnvironmentAttestation(trust, record, { ...valid, signatureAlgorithm: 'RSA' }, context), codeIs('ENVIRONMENT_ATTESTATION_FAILED'));
+  assert.throws(() => verifyEnvironmentAttestation(trust, record, { ...valid, signature: '' }, context), codeIs('ENVIRONMENT_ATTESTATION_FAILED'));
+  assert.throws(() => verifyEnvironmentAttestation(trust, record, { ...valid, signature: 'not-hex!' }, context), codeIs('ENVIRONMENT_ATTESTATION_FAILED'));
+  // Форма документа по-прежнему CONTRACT_INVALID: отсутствует обязательное поле.
+  const { challenge: missing, ...withoutChallenge } = valid;
+  assert.equal(missing, challenge);
+  assert.throws(() => verifyEnvironmentAttestation(trust, record, withoutChallenge, context), codeIs('CONTRACT_INVALID'));
+});
+
 // E-05 (часть WP-04): недоступный или повреждённый реестр — fail-closed.
 test('E-05: повреждённый и подменённый реестр сред не читается', async () => {
   assert.throws(() => loadTrustRoot(path.join(root, 'missing-trust-root')), codeIs('TRUST_STORE_UNAVAILABLE'));
-  fs.mkdirSync(path.join(trustRoot, 'environments'), { recursive: true });
-  const corrupt = path.join(trustRoot, 'environments', 'env-corrupt.json');
-  fs.writeFileSync(corrupt, '{"environmentId":');
+  const corruptDirectory = path.join(trustRoot, 'environments', 'env-corrupt');
+  fs.mkdirSync(corruptDirectory, { recursive: true });
+  fs.writeFileSync(path.join(corruptDirectory, '1.json'), '{"environmentId":');
   assert.throws(() => loadEnvironmentRecord(trust, trustRoot, 'env-corrupt'), codeIs('CONTRACT_INVALID'));
   const keys = createStandKeys();
-  const record = recordFor({ origin: 'http://127.0.0.1:9/', standKeyId: keys.standKeyId });
-  const tampered = { ...record, generation: 2 };
-  fs.writeFileSync(path.join(trustRoot, 'environments', record.environmentId + '.json'), JSON.stringify(tampered) + '\n');
+  const record = recordFor({ environmentId: 'env-tampered', generation: 1, origin: 'http://127.0.0.1:9/', standKeyId: keys.standKeyId });
+  const tamperedDirectory = path.join(trustRoot, 'environments', record.environmentId);
+  fs.mkdirSync(tamperedDirectory, { recursive: true });
+  fs.writeFileSync(path.join(tamperedDirectory, '1.json'), JSON.stringify({ ...record, generation: 2 }) + '\n');
   assert.throws(() => loadEnvironmentRecord(trust, trustRoot, record.environmentId), codeIs('APPROVAL_SIGNATURE_INVALID'));
 });
 
