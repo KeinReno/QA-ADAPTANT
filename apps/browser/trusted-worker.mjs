@@ -128,11 +128,18 @@ async function execute(handle) {
   if (controlLost || !process.connected) throw fail('WORKER_LOST', 'Control IPC отключён перед POST');
 
   // T-C в Worker'е: закреплённое соединение переаттестуется на самом сокете непосредственно перед POST.
-  const prePost = await attestPinnedConnection(socket, {
-    trust: loadTrustRoot(job.trustRoot),
-    record: job.environmentRecord,
-    standPublicKey: job.standPublicKey
+  // Control получает подписанную аттестацию (сырое тело + подпись stand-response) и проверяет её сам.
+  const prePostChallenge = newChallenge();
+  const prePostResponse = await pinnedStandRequest(socket, {
+    method: 'POST',
+    path: '/attest',
+    headers: { 'content-type': 'application/json', [STAND_CHALLENGE_HEADER]: prePostChallenge },
+    body: { challenge: prePostChallenge },
+    timeoutMs: socket.timeoutMs
   });
+  if (prePostResponse.status !== 200) throw fail('ENVIRONMENT_ATTESTATION_FAILED', 'Переаттестация среды вернула HTTP ' + prePostResponse.status);
+  const prePostAttestation = prePostResponse.body;
+  const prePostSignature = readStandResponseSignature(prePostResponse.headers);
 
   let posted;
   try {
@@ -154,7 +161,9 @@ async function execute(handle) {
     responseBody: posted.body,
     method: 'POST',
     path: '/records',
-    prePostAttestation: prePost.attestation
+    prePostChallenge,
+    prePostAttestation,
+    prePostSignature
   });
   await responseAck;
   await event('STEP', { stepId: job.stepId, status: 'ACTION_RETURNED' });

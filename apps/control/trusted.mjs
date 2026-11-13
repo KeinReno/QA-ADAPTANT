@@ -325,8 +325,12 @@ export function createTrustContext(options = {}) {
       if (!responseBody || !signature || !challenge) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Ответ POST не подписан ключом стенда');
       // Переаттестация закреплённого соединения, выполненная Worker'ом непосредственно перед POST.
       if (typeof environment.verifyEnvironmentAttestation === 'function') {
-        if (!payload?.prePostAttestation) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Нет переаттестации закреплённого соединения перед POST');
-        environment.verifyEnvironmentAttestation(trust, record, payload.prePostAttestation, { challenge: payload.prePostAttestation.challenge, standPublicKey });
+        if (!payload?.prePostAttestation || !payload?.prePostSignature) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Нет переаттестации закреплённого соединения перед POST');
+        environment.verifyEnvironmentAttestation(trust, record, payload.prePostAttestation, { challenge: payload.prePostChallenge, standPublicKey });
+        environment.verifyStandResponse({
+          trust, record, challenge: payload.prePostChallenge, body: payload.prePostAttestation,
+          signature: payload.prePostSignature, method: 'POST', path: '/attest', status: 200, standPublicKey
+        });
       }
       const body = environment.verifyStandResponse({
         trust,
@@ -342,6 +346,7 @@ export function createTrustContext(options = {}) {
       });
       return { allow: true, body };
     } catch (error) {
+      if (process.env.QA_ADAPTANT_DEBUG === '1') console.error('verifyDispatchResponse', error.code, error.message, error.stack);
       return { allow: false, denial: errorDenial(error, 'dispatch'), body: null };
     }
   }
