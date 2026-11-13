@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { RunStore } from '../../packages/core/store.mjs';
 import { digest } from '../../packages/core/canonical.mjs';
 import { verifyFrozenBundle } from '../../packages/core/bundle.mjs';
@@ -131,6 +131,11 @@ export async function verifyWithTrustedWorker({ runDir, frozen, trustRoot, appro
     stdio: ['ignore', 'ignore', process.env.QA_ADAPTANT_DEBUG === '1' ? 'inherit' : 'ignore', 'ipc'],
     env: { ...process.env, ...env }
   });
+  // Session nonce Control→Worker: 32 случайных байта hex, передаются РЕБЁНКУ ТОЛЬКО по fork IPC
+  // (не env/argv/файл). Он входит в подписанные байты verification-attestation (поле nonce).
+  const sessionNonce = randomBytes(32).toString('hex');
+  try { child.send({ type: 'SESSION', sessionNonce }); }
+  catch (error) { try { child.kill(); } catch { /* уже завершён */ } throw fail('WORKER_LOST', 'Не удалось передать session nonce Verification Worker: ' + error.message); }
   const budget = Number.isSafeInteger(timeoutMs) && timeoutMs > 0 ? timeoutMs : Math.max(15000, (frozen.manifest.budget?.deadlineMs || 5000) + 5000);
   let workerPid = child.pid;
   const close = async () => {
@@ -163,6 +168,7 @@ export async function verifyWithTrustedWorker({ runDir, frozen, trustRoot, appro
     const payload = message.payload || {};
     const publicKey = verificationPublicKeyRecord(payload.verificationPublicKey);
     const attestationBody = verifyVerificationAttestation(payload.attestation, { publicKey, expectedKeyId: publicKey.keyId });
+    if (attestationBody.nonce !== sessionNonce) fail('INTEGRITY_ERROR', 'nonce аттестации не совпал с session nonce IPC-сеанса Control');
     const items = store.readEvidence(runDir);
     if (attestationBody.runId !== frozen.manifest.runId || attestationBody.manifestSha256 !== frozen.manifestSha256) fail('INTEGRITY_ERROR', 'Аттестация Verification относится к другому прогону');
     if (attestationBody.approvalId !== approvalId) fail('INTEGRITY_ERROR', 'Аттестация Verification относится к другому approvalId');
@@ -185,7 +191,7 @@ export async function verifyWithTrustedWorker({ runDir, frozen, trustRoot, appro
     validateVerdictCoverage(payload.verdict, frozen.operation, durableReads);
     assertEvidenceRefs(items, frozen, { requireMutation: true });
     if (payload.verdict.verdict === 'PASS' && durableReads.length === 0) fail('INTEGRITY_ERROR', 'PASS Verification без независимых чтений');
-    return { payload, attestation: payload.attestation, verificationPublicKey: publicKey, verificationPid: workerPid, close };
+    return { payload, attestation: payload.attestation, verificationPublicKey: publicKey, verificationPid: workerPid, sessionNonce, close };
   } catch (error) {
     await close();
     throw error;
@@ -469,7 +475,7 @@ export function createTrustContext(options = {}) {
             if (signerHandle && worker && typeof signerHandle.registerVerificationKey === 'function') {
               // Ключ Verification регистрируется только по приватному каналу Control→подписант,
               // вместе с pid процесса, происхождение которого подписант подтверждает сам.
-              await signerHandle.registerVerificationKey(frozen.manifest.runId, worker.verificationPublicKey, worker.verificationPid);
+              await signerHandle.registerVerificationKey(frozen.manifest.runId, worker.verificationPublicKey, worker.verificationPid, worker.sessionNonce);
               const anchorId = 'anchor-' + randomUUID();
               const outcome = await anchorWithinBudget({
                 signer: signerHandle, trustRoot, runDir, approvalId, anchorId, attestation: worker.attestation

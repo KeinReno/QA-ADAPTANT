@@ -210,11 +210,40 @@ async function execute() {
   return captured;
 }
 
-async function runAndAttest() {
+// P0-01: session nonce приходит ТОЛЬКО по fork IPC от Control. Он входит в подписанную
+// аттестацию как поле nonce, поэтому чужой процесс с тем же образом, но без IPC-сеанса,
+// не может предъявить подпись.
+async function waitForSessionNonce() {
+  const timeoutMs = 5000;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (value, error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error); else resolve(value);
+    };
+    const timer = setTimeout(() => finish(null, Object.assign(new Error('IPC-сеанс Control не открыт: session nonce не получен'), { code: 'SESSION_MISSING' })), timeoutMs);
+    const onMessage = message => {
+      if (!message || typeof message !== 'object') return;
+      if (message.type !== 'SESSION') return;
+      if (typeof message.sessionNonce !== 'string' || !/^[a-f0-9]{64}$/.test(message.sessionNonce)) {
+        finish(null, Object.assign(new Error('session nonce имеет неверную форму'), { code: 'SESSION_INVALID' }));
+        return;
+      }
+      process.removeListener('message', onMessage);
+      finish(message.sessionNonce);
+    };
+    process.on('message', onMessage);
+    process.once('disconnect', () => finish(null, Object.assign(new Error('IPC-сеанс Control закрыт до передачи session nonce'), { code: 'SESSION_MISSING' })));
+  });
+}
+
+async function runAndAttest(sessionNonce) {
   // Эфемерная пара Verification: только в памяти, на диск не пишется.
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const startedAt = now();
-  const nonce = randomBytes(32).toString('hex');
+  const nonce = sessionNonce;
   const store = new RunStore(path.dirname(path.dirname(runDir)));
   let result;
   try {
@@ -269,7 +298,8 @@ async function runAndAttest() {
 }
 
 try {
-  await runAndAttest();
+  const sessionNonce = await waitForSessionNonce();
+  await runAndAttest(sessionNonce);
 } catch (error) {
   if (process.env.QA_ADAPTANT_DEBUG === '1') console.error(error);
   try { await send({ type: 'ERROR', code: error.code || 'TRUSTED_WORKER_ERROR', message: error.message }); } catch { /* канал закрыт */ }

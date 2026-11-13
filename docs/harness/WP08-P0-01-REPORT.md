@@ -1,8 +1,8 @@
 # WP-08 P0-01 — отчёт потока «достоверное происхождение Verification»
 
 Ветка: `fix/wp08-p0-01-provenance` (база `07c21c4`). Владелец: Agent R-A.
-Финальный SHA на момент отчёта: `4ecc542c90d149ca4eb3553b13d20a22260042bd`
-(коммиты `13ad46c` — ядро, `ef237c5` — strict-канал/закреплённое соединение, `4ecc542` — тесты).
+Финальный SHA на момент отчёта: см. §7. Коммиты: `13ad46c` — ядро, `ef237c5` — strict-канал/закреплённое
+соединение, `4ecc542` — тесты, `a9d971b` — отчёт/поколение среды, коммит session nonce — см. §7.
 Отчёт не объявляет ACCEPT: независимая приёмка — отдельно.
 
 ## 1. Что сделано
@@ -20,6 +20,10 @@
 ```
 
 - Подпись Ed25519 эфемерным ключом Verification; `keyId === verificationKeyId = sha256(SPKI)`.
+- **`nonce` = session nonce Control**: 32 случайных байта hex генерирует Control при спавне Verification Worker
+  и передаёт РЕБЁНКУ ТОЛЬКО по fork IPC сообщением `{type:'SESSION', sessionNonce}` (не env, не argv, не файл).
+  Worker включает этот nonce в подписанные байты аттестации; схема полей не расширялась — используется
+  существующее поле `nonce`.
 - `readSetSha256` = digest канонического массива пар `{evidenceId, artifact.sha256}` **только**
   `independent-read` в порядке журнала (терминальный verdict в набор не входит).
 - Новые экспорты: `buildVerificationAttestation`, `verifyVerificationAttestation`,
@@ -47,8 +51,11 @@
   приватным fork IPC. Путь к `anchor.key` передаётся только через env ребёнка
   (`QA_ANCHOR_SIGNER_CHILD=1`, `QA_TRUST_ROOT`, `QA_ANCHOR_KEY_PATH`); публичного named pipe доверенный путь
   не использует.
-- Регистрация ключа Verification — только по приватному каналу: `register-verification-key {runId, publicKey, verificationPid}`,
-  один ключ/pid на runId в сессии подписанта.
+- Регистрация ключа Verification — только по приватному каналу: `register-verification-key {runId, publicKey,
+  verificationPid, sessionNonce}`, один ключ/pid/session nonce на runId в сессии подписанта.
+- Порядок проверок при подписи: (1) подпись аттестации ключом, зарегистрированным в сессии; (2) `attestation.nonce
+  === sessionNonce`, переданный Control по приватному каналу; (3) defense-in-depth WMI: родитель verification-pid —
+  Control, образ — `trusted-worker.mjs`, процесс жив. Затем runId/manifest/approval/candidate/head/readSet.
 - До подписи подписант проверяет происхождение ключа через WMI (абсолютный
   `%SystemRoot%/System32/WindowsPowerShell/v1.0/powershell.exe`): родитель verification-pid === Control
   (родитель подписанта), CommandLine содержит `apps\\verification\\trusted-worker.mjs`, ExecutablePath —
@@ -65,6 +72,8 @@
 Замороженный `apps/verification/worker.mjs` 0.1 не изменялся и не импортируется.
 
 - Эфемерная пара Ed25519 создаётся в памяти на процесс; на диск/в IPC приватный ключ не попадает.
+- При старте Worker ждёт по fork IPC сообщение `{type:'SESSION', sessionNonce}` (таймаут 5 с). Без этого сеанса
+  Worker не выполняет работу и завершается с `ERROR SESSION_MISSING`; session nonce не читается из env/argv/файла.
 - Совместимого режима без подписи стенда НЕТ: при отсутствии `attestationVerifiedReads`/ошибке канала —
   fail-closed (INCONCLUSIVE/ENVIRONMENT_CHANGED), PASS не строится.
 - Все независимые чтения — только `attestationVerifiedReads`/`ctx.verifiedRead` с заголовком
@@ -100,7 +109,7 @@
   `ANCHOR_BINDING_REJECTED` (для неподтверждённого происхождения/ключа), `INTEGRITY_ERROR` (расхождение хешей).
 - Схемы 0.1 (`packages/contracts`, `schemas/`, `docs/contract-freeze.json`) не менялись.
 
-## 3. Обязательные регрессии (tests/trust-provenance.test.mjs, 7 тестов)
+## 3. Обязательные регрессии (tests/trust-provenance.test.mjs, 10 тестов)
 
 1. Доверенный Worker: PASS только с подписанной аттестацией и полной связкой; анкер содержит
    `verificationAttestationSha256/verificationKeyId`; наблюдатель `trusted=true passed=true`.
@@ -113,6 +122,10 @@
 5. Повтор аттестации другого runId → `ANCHOR_BINDING_REJECTED`.
 6. Наблюдатель: удаление/подмена `trustRoot/verification/<runId>.json` и подложный прогон → не PASS.
 7. Подмена `verificationKeyId/keyId` в аттестации → отказ.
+8. Worker, запущенный вручную с тем же образом/argv/env, но без IPC-сеанса Control (`SESSION` не отправлен),
+   завершается `ERROR SESSION_MISSING`; анкера нет.
+9. Подмена session nonce после аттестации → подпись ломается → отказ.
+10. Повтор session nonce другого runId (регистрация для runId B с nonce сеанса A) → `ANCHOR_BINDING_REJECTED`.
 
 ## 4. Команды и фактические результаты
 
@@ -125,10 +138,9 @@
 
 | Команда | Результат | Exit |
 |---|---|---|
-| `node --test tests/trust-anchor.test.mjs` (с R-B) | 22/22 pass, ~74 s | 0 |
-| `node --test tests/trust-provenance.test.mjs` (с R-B) | 7/7 pass, ~74 s | 0 |
+| `node --test tests/trust-provenance.test.mjs tests/trust-anchor.test.mjs` (с R-B) | 32/32 pass (10+22), ~95 s | 0 |
 | `node --test tests/trust-integration.test.mjs` (файл Lead, не менялся) | 13/13 pass, ~86 s | 0 |
-| `node --test --test-name-pattern "T-01|T-08|T-12" tests/trust-integration.test.mjs` (с R-B) | 3/3 pass, ~47 s | 0 |
+| `node --test --test-name-pattern "T-01|T-08|T-12" tests/trust-integration.test.mjs` (с R-B) | 3/3 pass, ~34 s | 0 |
 | `node --test tests/trust-{identity,keygen,approval,environment,policy,r01}.test.mjs` | pass (без изменений), exit 0 | 0 |
 
 Полный `npm test` — только Lead на финальном SHA. Атакующий скрипт аудита
@@ -141,7 +153,9 @@
    инъекции/отладки/запуска доверенных бинарников с выбираемыми входами остаётся вне модели A1–A3. Для Dev/ЦИЗ
    обязателен отдельный Windows SID для Verification/anchor-signer.
 2. **WMI-зависимость**: проверка происхождения использует абсолютный powershell.exe; на загруженной машине
-   добавляет ~0.5–1 с на подпись. При недоступности WMI — fail-closed (анкера нет).
+   добавляет ~0.5–1 с на подпись. При недоступности WMI — fail-closed (анкера нет). Session nonce повышает
+   планку: чужой процесс с тем же образом не предъявит подпись без IPC-сеанса Control, но WMI остаётся
+   defense-in-depth, а не единственной привязкой.
 3. **Legacy named pipe**: оставлен только для совместимости текущего tests/trust-integration (Lead переводит на
    `anchorKeyPath`); подпись по нему возможна лишь с зарегистрированным ключом и валидной аттестацией.
 4. **Pinned-socket (P0-02)**: методы контекста реализованы по спецификации Lead; фактический wiring run.mjs и
@@ -164,10 +178,8 @@
 
 ## 7. Git
 
+Код и тесты (session nonce): `841fa69f2d62e338f89806926057657d459055b8`.
 ```
-git rev-parse HEAD
-4ecc542c90d149ca4eb3553b13d20a22260042bd
+git rev-parse 841fa69f2d62e338f89806926057657d459055b8
+git status --porcelain   # пусто; отчёт добавлен следующим коммитом
 ```
-
-`git status --porcelain` на момент отчёта: см. финальный коммит отчёта; рабочее дерево содержит только этот файл
-до коммита отчёта.

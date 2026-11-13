@@ -205,7 +205,7 @@ function anchorIdFor(env, suffix) {
 
 async function signFor(env, suffix) {
   const anchorId = anchorIdFor(env, suffix);
-  await client.registerVerificationKey(env.runId, env.worker.verificationPublicKey, env.worker.verificationPid);
+  await client.registerVerificationKey(env.runId, env.worker.verificationPublicKey, env.worker.verificationPid, env.worker.sessionNonce);
   const statement = await client.sign({ runDir: env.runDir, approvalId: env.approvalId, anchorId, attestation: env.worker.payload.attestation });
   return { anchorId, statement };
 }
@@ -351,13 +351,13 @@ test('хеш candidate от вызывающего не принимается: 
   const anchorId = nextId('anchor-caller');
   assert.throws(() => client.sign({ runDir: env.runDir, approvalId: env.approvalId, anchorId, candidateSha256: 'ab'.repeat(32), attestation: env.worker.payload.attestation }), error => error.code === 'CONTRACT_INVALID');
   assert.equal(fs.existsSync(anchorFile(anchorId)), false);
-  await client.registerVerificationKey(env.runId, env.worker.verificationPublicKey, env.worker.verificationPid);
+  await client.registerVerificationKey(env.runId, env.worker.verificationPublicKey, env.worker.verificationPid, env.worker.sessionNonce);
   // Сырой кадр протокола по legacy named pipe: служебный id не обязателен, field candidateSha256 отвергается.
   const legacy = startAnchorSigner({ trustRoot, secretsDir });
   await legacy.ready;
   const legacyClient = connectAnchorSigner(legacy.pipePath);
   try {
-    await legacyClient.registerVerificationKey(env.runId, env.worker.verificationPublicKey, env.worker.verificationPid);
+    await legacyClient.registerVerificationKey(env.runId, env.worker.verificationPublicKey, env.worker.verificationPid, env.worker.sessionNonce);
     const socketRequest = request => new Promise((resolve, reject) => {
       const socket = net.connect(legacy.pipePath);
       let buffer = '';
@@ -610,7 +610,7 @@ test('V-09: гонка бюджета и позднего анкера — од�
         return latePromise;
       }
     };
-    await client.registerVerificationKey(env.runId, env.worker.verificationPublicKey, env.worker.verificationPid);
+    await client.registerVerificationKey(env.runId, env.worker.verificationPublicKey, env.worker.verificationPid, env.worker.sessionNonce);
     const outcome = await anchorWithinBudget({ signer: delayed, trustRoot, runDir: env.runDir, approvalId: env.approvalId, anchorId, attestation: env.worker.payload.attestation, budgetMs: 1 });
     assert.equal(outcome.ok, false);
     assert.equal(outcome.code, 'ANCHOR_TIMEOUT');
