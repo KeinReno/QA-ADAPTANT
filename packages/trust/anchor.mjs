@@ -371,7 +371,34 @@ function resolveChosenCandidate({ runDir, frozen, choice }) {
   return chosen.candidate;
 }
 
-export function publishTerminalVerdict({ store, runDir, frozen } = {}) {
+// D-01: исход anchor публикуется только при годном анкере на выбранный candidate.
+// Проверка выполняется до записи verdict и повторно в ветке уже записанного verdict.
+function assertAnchoredPublication({ store, runDir, frozen, trust, trustRoot, choice, verdictItem = null }) {
+  if (!trust || !trustRoot) fail('ANCHOR_MISSING', 'Для исхода anchor нужны trust и trustRoot: анкер не проверен');
+  const statement = loadAnchor(trustRoot, choice.anchorId);
+  const body = verifyAnchorStatement(trust, statement);
+  if (body.anchorId !== choice.anchorId) fail('ANCHOR_CONFLICT', 'Заявление анкера не совпало с anchorId выбора');
+  if (body.candidateSha256 !== choice.candidateSha256) fail('ANCHOR_CONFLICT', 'Анкер подписан на другой candidateSha256');
+  if (body.runId !== frozen.manifest.runId || body.manifestSha256 !== frozen.manifestSha256) fail('ANCHOR_CONFLICT', 'Анкер относится к другому прогону или манифесту');
+  if (body.verdict !== 'PASS' && body.verdict !== 'FAIL') fail('ANCHOR_CONFLICT', 'Исход anchor относится только к PASS или FAIL');
+  const chosen = readCandidateBody(runDir, choice.candidateSha256);
+  if (!chosen) fail('EVIDENCE_MISSING', 'Тело выбранного candidate отсутствует; verdict не пишется');
+  if (chosen.candidate.verdict !== body.verdict || chosen.candidate.reasonCode !== body.reasonCode) fail('ANCHOR_CONFLICT', 'Анкер относится к другому вердикту candidate');
+  const binding = inspectEvidenceBinding({ trust, trustRoot, runDir, approvalId: body.approvalId, mode: verdictItem ? 'terminal' : 'pre-verdict' });
+  verifyAnchorAgainstBinding({ trustRoot, trust, statement: body, binding, verdictItem });
+  return body;
+}
+
+function assertUnanchoredPublication({ runDir, choice, artifact }) {
+  const chosen = readCandidateBody(runDir, choice.candidateSha256);
+  if (!chosen) fail('EVIDENCE_MISSING', 'Тело выбранного candidate отсутствует; verdict не пересчитывается');
+  if (choice.outcome === 'fail-without-anchor' && (chosen.candidate.verdict !== 'FAIL' || artifact.verdict !== 'FAIL')) fail('INTEGRITY_ERROR', 'Исход fail-without-anchor не указывает на FAIL');
+  if (choice.outcome === 'inconclusive-without-anchor' && (chosen.candidate.verdict !== 'INCONCLUSIVE' || artifact.verdict !== 'INCONCLUSIVE')) fail('INTEGRITY_ERROR', 'Исход inconclusive-without-anchor не указывает на INCONCLUSIVE');
+  if (choice.outcome === 'budget-inconclusive' && (chosen.candidate.verdict !== 'INCONCLUSIVE' || chosen.candidate.reasonCode !== 'EVIDENCE_MISSING' || artifact.reasonCode !== 'EVIDENCE_MISSING')) fail('INTEGRITY_ERROR', 'Исход budget-inconclusive не указывает на INCONCLUSIVE/EVIDENCE_MISSING');
+  return chosen.candidate;
+}
+
+export function publishTerminalVerdict({ store, runDir, frozen, trust = null, trustRoot = null } = {}) {
   if (!store || !frozen || !frozen.manifest || !frozen.scenario || !frozen.fixture) throw new TypeError('Нужны store, runDir и замороженный bundle');
   assertRunDir(runDir);
   const choice = readTerminalChoice(runDir);
@@ -382,8 +409,11 @@ export function publishTerminalVerdict({ store, runDir, frozen } = {}) {
   if (existing.length === 1) {
     const artifact = existing[0].artifact;
     if (digest(artifact) !== choice.candidateSha256) fail('INTEGRITY_ERROR', 'Терминальный verdict не совпал с выбором исхода');
+    if (choice.outcome === 'anchor') assertAnchoredPublication({ store, runDir, frozen, trust, trustRoot, choice, verdictItem: existing[0] });
+    else assertUnanchoredPublication({ runDir, choice, artifact });
     return { verdict: artifact, evidenceId: existing[0].envelope.evidenceId, created: false };
   }
+  if (choice.outcome === 'anchor') assertAnchoredPublication({ store, runDir, frozen, trust, trustRoot, choice, verdictItem: null });
   const verdict = resolveChosenCandidate({ runDir, frozen, choice });
   const final = store.appendEvidence(runDir, {
     runId: frozen.manifest.runId,
@@ -411,6 +441,7 @@ export function verifyAnchorStatement(trust, statement) {
   return validateStatementBody(body);
 }
 
+// D-06: возвращает только разобранный файл; вызывающий обязан проверить его verifyAnchorStatement.
 export function loadAnchor(trustRoot, anchorId) {
   if (typeof trustRoot !== 'string' || trustRoot.length === 0) throw new TypeError('Нужен каталог trust root');
   assertId(anchorId, 'anchorId');
@@ -433,10 +464,14 @@ function listAnchors(trustRoot) {
   return result;
 }
 
-function findUnlinkedAnchor(trustRoot, runId, candidateSha256) {
-  if (!candidateSha256) return null;
+// D-05: ANCHOR_UNLINKED сообщается только по заявлению с годной подписью anchor-signer.
+function findUnlinkedAnchor(trust, trustRoot, runId, candidateSha256) {
+  if (!candidateSha256 || !trust) return null;
   for (const anchor of listAnchors(trustRoot)) {
-    if (anchor.runId === runId && anchor.candidateSha256 === candidateSha256) return anchor.anchorId || null;
+    let body;
+    try { body = verifyAnchorStatement(trust, anchor); }
+    catch { continue; }
+    if (body.runId === runId && body.candidateSha256 === candidateSha256) return body.anchorId || null;
   }
   return null;
 }
@@ -615,7 +650,7 @@ function analyze({ store, runDir, frozen, trust, trustRoot }) {
       }
       result.state = 'candidate-ready';
       result.reasonCode = 'PUBLICATION_PENDING';
-      result.unlinkedAnchorId = findUnlinkedAnchor(trustRoot, current.manifest.runId, choice.discardedCandidateSha256);
+      result.unlinkedAnchorId = findUnlinkedAnchor(trust, trustRoot, current.manifest.runId, choice.discardedCandidateSha256);
       if (result.unlinkedAnchorId) { result.anchorStatus = 'ANCHOR_UNLINKED'; result.reasonCode = 'ANCHOR_UNLINKED'; }
       return result;
     }
@@ -673,7 +708,7 @@ function analyze({ store, runDir, frozen, trust, trustRoot }) {
   result.trusted = true;
   result.anchorStatus = null;
   result.reasonCode = 'EVIDENCE_MISSING';
-  result.unlinkedAnchorId = findUnlinkedAnchor(trustRoot, current.manifest.runId, choice.discardedCandidateSha256);
+  result.unlinkedAnchorId = findUnlinkedAnchor(trust, trustRoot, current.manifest.runId, choice.discardedCandidateSha256);
   if (result.unlinkedAnchorId) { result.anchorStatus = 'ANCHOR_UNLINKED'; result.reasonCode = 'ANCHOR_UNLINKED'; }
   return result;
 }

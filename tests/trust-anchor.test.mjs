@@ -250,7 +250,7 @@ test('collecting → candidate-ready: без выбора исхода verdict �
   publishCandidate(run.runDir, candidate);
   const env = { ...run, candidateSha256: digest(candidate) };
   assert.equal(stateOf(env), 'candidate-ready');
-  assert.throws(() => publishTerminalVerdict({ store, runDir: run.runDir, frozen: run.frozen }), error => error.code === 'PUBLICATION_PENDING');
+  assert.throws(() => publishTerminalVerdict({ store, runDir: run.runDir, frozen: run.frozen, trust, trustRoot }), error => error.code === 'PUBLICATION_PENDING');
   assert.equal(verdictItems(run.runDir).length, 0);
   const observed = observe(env);
   assert.equal(observed.passed, false);
@@ -281,7 +281,7 @@ test('доверенный PASS: полная связка approval/consumption/
   assert.equal(before.passed, false);
   assert.equal(before.state, 'anchor-held');
   assert.equal(before.reasonCode, 'PUBLICATION_PENDING');
-  const published = publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen });
+  const published = publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot });
   assert.equal(published.created, true);
   const items = verdictItems(env.runDir);
   assert.equal(items.length, 1);
@@ -296,7 +296,7 @@ test('доверенный PASS: полная связка approval/consumption/
   assert.equal(observed.anchorStatus, 'ANCHOR_OK');
   assert.equal(observed.anchorId, anchorId);
   assert.equal(stateOf(env), 'terminal');
-  const repeat = publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen });
+  const repeat = publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot });
   assert.equal(repeat.created, false);
   assert.equal(verdictItems(env.runDir).length, 1);
   assert.throws(() => store.appendEvidence(env.runDir, {
@@ -339,10 +339,14 @@ test('хеш candidate от вызывающего не принимается: 
   assert.equal(response.ok, false);
   assert.equal(response.code, 'CONTRACT_INVALID');
   assert.equal(fs.existsSync(anchorFile(anchorId)), false);
-  const statement = await client.sign({ runDir: env.runDir, approvalId: env.approvalId, anchorId, candidateSha256: 'ab'.repeat(32) });
-  const body = verifyAnchorStatement(trust, statement);
+  assert.throws(() => client.sign({ runDir: env.runDir, approvalId: env.approvalId, anchorId, candidateSha256: 'ab'.repeat(32) }), error => error.code === 'CONTRACT_INVALID');
+  assert.equal(fs.existsSync(anchorFile(anchorId)), false);
+  // raw-запрос без служебного id допустим: id не является обязательным полем протокола.
+  const noId = await rawSignerRequest({ type: 'sign', runDir: env.runDir, approvalId: env.approvalId, anchorId });
+  assert.equal(noId.ok, true);
+  const body = verifyAnchorStatement(trust, noId.statement);
   assert.equal(body.candidateSha256, env.candidateSha256);
-  assert.notEqual(body.candidateSha256, 'ab'.repeat(32));
+  assert.equal(body.anchorId, anchorId);
 });
 
 test('V-08: ключ owner не создаёт годный анкер', async () => {
@@ -371,13 +375,13 @@ test('V-07/V-11: выбор anchor переживает падение до verd
   assert.equal(stateOf(env), 'anchor-held');
   assert.equal(verdictItems(env.runDir).length, 0);
   const before = fs.readdirSync(path.join(trustRoot, 'anchors')).length;
-  const published = publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen });
+  const published = publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot });
   assert.equal(published.created, true);
   assert.deepEqual(published.verdict, env.candidate);
   assert.equal(verdictItems(env.runDir).length, 1);
   assert.equal(fs.readdirSync(path.join(trustRoot, 'anchors')).length, before);
   assert.equal(observe(env).passed, true);
-  assert.equal(publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen }).created, false);
+  assert.equal(publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot }).created, false);
 });
 
 test('V-12: частично записанный terminal-choice блокирует PASS и не заменяется', async () => {
@@ -387,7 +391,7 @@ test('V-12: частично записанный terminal-choice блокиру
   fs.writeFileSync(choiceFile, '{"schemaVersion":"0.2.0","domain":"terminal-choice"');
   const torn = fs.readFileSync(choiceFile);
   assert.throws(() => readTerminalChoice(env.runDir), error => error.code === 'TERMINAL_CHOICE_INCOMPLETE');
-  assert.throws(() => publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen }), error => error.code === 'TERMINAL_CHOICE_INCOMPLETE');
+  assert.throws(() => publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot }), error => error.code === 'TERMINAL_CHOICE_INCOMPLETE');
   assert.equal(verdictItems(env.runDir).length, 0);
   assert.deepEqual(fs.readFileSync(choiceFile), torn);
   assert.throws(() => publishTerminalChoice(env.runDir, buildTerminalChoice({ outcome: 'anchor', candidateSha256: env.candidateSha256, anchorId })), error => error.code === 'TERMINAL_CHOICE_INCOMPLETE');
@@ -397,6 +401,50 @@ test('V-12: частично записанный terminal-choice блокиру
   assert.equal(observed.state, 'inconsistent');
   assert.equal(stateOf(env), 'inconsistent');
   await assert.rejects(client.sign({ runDir: env.runDir, approvalId: env.approvalId, anchorId: nextId('anchor-after-torn') }), error => error.code === 'ANCHOR_BINDING_REJECTED');
+});
+
+test('D-01: исход anchor без подписанного анкера не пишет PASS', () => {
+  const env = trustedRun('d01-anchor-missing');
+  const anchorId = nextId('anchor-never-signed');
+  publishTerminalChoice(env.runDir, buildTerminalChoice({ outcome: 'anchor', candidateSha256: env.candidateSha256, anchorId }));
+  assert.throws(() => publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot }), error => error.code === 'ANCHOR_MISSING');
+  assert.equal(verdictItems(env.runDir).length, 0);
+  const observed = observe(env);
+  assert.equal(observed.passed, false);
+  assert.equal(observed.verdict, null);
+  assert.equal(observed.reasonCode, 'ANCHOR_MISSING');
+  // Без trust/trustRoot исход anchor тоже fail-closed, а не публикует PASS.
+  assert.throws(() => publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen }), error => error.code === 'ANCHOR_MISSING');
+  assert.equal(verdictItems(env.runDir).length, 0);
+});
+
+test('D-01: удалённый анкер не превращает повторную публикацию в PASS', async () => {
+  const env = trustedRun('d01-anchor-removed');
+  const { anchorId } = await signFor(env, 'removed');
+  publishAnchorChoice(env, anchorId);
+  const published = publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot });
+  assert.equal(published.verdict.verdict, 'PASS');
+  assert.equal(verdictItems(env.runDir).length, 1);
+  fs.rmSync(anchorFile(anchorId));
+  assert.throws(() => publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot }), error => error.code === 'ANCHOR_MISSING');
+  const items = verdictItems(env.runDir);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].artifact.verdict, 'PASS');
+  const observed = observe(env);
+  assert.equal(observed.passed, false);
+  assert.equal(observed.reasonCode, 'ANCHOR_MISSING');
+});
+
+test('D-01: подмена outcome в ветке существующего verdict не возвращает PASS', async () => {
+  const env = trustedRun('d01-outcome-swap');
+  const { anchorId } = await signFor(env, 'swap');
+  publishAnchorChoice(env, anchorId);
+  publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot });
+  const choiceFile = path.join(env.runDir, 'trust', 'terminal-choice.json');
+  const saved = readTerminalChoice(env.runDir);
+  fs.writeFileSync(choiceFile, canonical({ ...saved, outcome: 'inconclusive-without-anchor', anchorId: null, discardedCandidateSha256: null }) + '\n');
+  assert.throws(() => publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot }), error => error.code === 'INTEGRITY_ERROR');
+  assert.equal(verdictItems(env.runDir).length, 1);
 });
 
 test('два одновременных publishTerminalChoice: один CREATE_NEW, второй читает первый выбор', async () => {
@@ -451,7 +499,7 @@ test('подмена candidate после анкера не даёт PASS и н�
   assert.equal(observed.passed, false);
   assert.notEqual(observed.state, 'terminal');
   assert.equal(stateOf(env), 'inconsistent');
-  assert.throws(() => publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen }), error => error.code === 'INTEGRITY_ERROR' || error.code === 'EVIDENCE_MISSING');
+  assert.throws(() => publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot }), error => ['INTEGRITY_ERROR', 'EVIDENCE_MISSING', 'ANCHOR_CONFLICT'].includes(error.code));
   assert.equal(verdictItems(env.runDir).length, 0);
   assert.equal(fs.readFileSync(candidateFile).equals(kept), false);
   await assert.rejects(client.sign({ runDir: env.runDir, approvalId: env.approvalId, anchorId: nextId('anchor-after-candidate') }), error => error.code === 'ANCHOR_BINDING_REJECTED' || error.code === 'ANCHOR_CONFLICT');
@@ -461,7 +509,7 @@ test('подмена evidence chain ломает терминальный PASS',
   const env = trustedRun('chain-tamper');
   const { anchorId } = await signFor(env, 'chain');
   publishAnchorChoice(env, anchorId);
-  publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen });
+  publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot });
   assert.equal(observe(env).passed, true);
   const readItem = store.readEvidence(env.runDir).find(item => item.envelope.kind === 'independent-read');
   const artifactFile = path.join(env.runDir, 'evidence', readItem.envelope.artifact.path);
@@ -477,7 +525,7 @@ test('подмена финального verdict после публикаци�
   const env = trustedRun('verdict-tamper');
   const { anchorId } = await signFor(env, 'verdict');
   publishAnchorChoice(env, anchorId);
-  publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen });
+  publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot });
   const item = verdictItems(env.runDir)[0];
   const artifactFile = path.join(env.runDir, 'evidence', item.envelope.artifact.path);
   fs.writeFileSync(artifactFile, canonical({ ...env.candidate, verdict: 'FAIL', reasonCode: 'BUSINESS_INVARIANT_VIOLATED' }) + '\n');
@@ -495,7 +543,7 @@ test('чужой runId: candidate и анкер не переносятся ме
   assert.throws(() => publishCandidate(second.runDir, first.candidate), error => error.code === 'CONTRACT_INVALID');
   const { anchorId, statement } = await signFor(first, 'foreign');
   publishAnchorChoice(first, anchorId);
-  publishTerminalVerdict({ store, runDir: first.runDir, frozen: first.frozen });
+  publishTerminalVerdict({ store, runDir: first.runDir, frozen: first.frozen, trust, trustRoot });
   const secondTrust = path.join(second.runDir, 'trust');
   fs.mkdirSync(secondTrust, { recursive: true });
   fs.copyFileSync(path.join(first.runDir, 'trust', 'candidate.json'), path.join(secondTrust, 'candidate.json'));
@@ -537,7 +585,7 @@ test('V-09: гонка бюджета и позднего анкера — од�
     assert.equal(published.choice.outcome, 'budget-inconclusive');
     assert.equal(published.choice.discardedCandidateSha256, env.candidateSha256);
     assert.equal(published.choice.anchorId, null);
-    const verdict = publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen });
+    const verdict = publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot });
     assert.equal(verdict.verdict.verdict, 'INCONCLUSIVE');
     assert.equal(verdict.verdict.reasonCode, 'EVIDENCE_MISSING');
     assert.equal(verdict.verdict.message, INCONCLUSIVE_MESSAGE);
@@ -551,7 +599,13 @@ test('V-09: гонка бюджета и позднего анкера — од�
     assert.equal(observed.reasonCode, 'ANCHOR_UNLINKED');
     assert.equal(observed.unlinkedAnchorId, anchorId);
     assert.equal(loadAnchor(trustRoot, anchorId).candidateSha256, env.candidateSha256);
-    assert.equal(publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen }).created, false);
+    // D-05: синтаксически валидный, но неподписанный файл анкера не выдаётся за ANCHOR_UNLINKED.
+    fs.writeFileSync(path.join(trustRoot, 'anchors', 'aaa-forged-unlinked.json'), JSON.stringify({ anchorId: 'aaa-forged-unlinked', runId: env.runId, candidateSha256: env.candidateSha256 }) + '\n');
+    const observedAfterForged = observe(env);
+    assert.equal(observedAfterForged.passed, false);
+    assert.equal(observedAfterForged.unlinkedAnchorId, anchorId);
+    fs.rmSync(path.join(trustRoot, 'anchors', 'aaa-forged-unlinked.json'));
+    assert.equal(publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot }).created, false);
   } finally {
     fs.rmSync(profileFile, { force: true });
   }
@@ -580,7 +634,7 @@ test('fail-without-anchor публикует один бизнес-FAIL без �
   const env = { ...run, candidateSha256: published.candidateSha256 };
   publishTerminalChoice(run.runDir, buildTerminalChoice({ outcome: 'fail-without-anchor', candidateSha256: published.candidateSha256 }));
   assert.equal(stateOf(env), 'candidate-ready');
-  const verdict = publishTerminalVerdict({ store, runDir: run.runDir, frozen: run.frozen });
+  const verdict = publishTerminalVerdict({ store, runDir: run.runDir, frozen: run.frozen, trust, trustRoot });
   assert.equal(verdict.verdict.verdict, 'FAIL');
   assert.equal(verdictItems(run.runDir).length, 1);
   const observed = observe(env);
@@ -598,7 +652,7 @@ test('inconclusive-without-anchor публикует ровно байты би�
   const published = publishCandidate(run.runDir, candidate);
   const env = { ...run, candidateSha256: published.candidateSha256 };
   publishTerminalChoice(run.runDir, buildTerminalChoice({ outcome: 'inconclusive-without-anchor', candidateSha256: published.candidateSha256 }));
-  const verdict = publishTerminalVerdict({ store, runDir: run.runDir, frozen: run.frozen });
+  const verdict = publishTerminalVerdict({ store, runDir: run.runDir, frozen: run.frozen, trust, trustRoot });
   assert.deepEqual(verdict.verdict, candidate);
   assert.equal(verdictItems(run.runDir).length, 1);
   const observed = observe(env);
@@ -613,10 +667,10 @@ test('второй терминальный verdict запрещён; повто
   const env = trustedRun('second-verdict');
   const { anchorId } = await signFor(env, 'second');
   publishAnchorChoice(env, anchorId);
-  publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen });
+  publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot });
   const firstItems = verdictItems(env.runDir);
   assert.equal(firstItems.length, 1);
-  const reconciled = publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen });
+  const reconciled = publishTerminalVerdict({ store, runDir: env.runDir, frozen: env.frozen, trust, trustRoot });
   assert.equal(reconciled.created, false);
   assert.equal(reconciled.evidenceId, firstItems[0].envelope.evidenceId);
   assert.equal(verdictItems(env.runDir).length, 1);
