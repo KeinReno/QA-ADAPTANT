@@ -27,6 +27,41 @@ $('cancel').onclick=async()=>{try{message.textContent='Отправляю отм
 </script></html>`;
 
 const loopbackHosts = new Set(['127.0.0.1', '::1', 'localhost']);
+function parseLoopbackAuthority(authority) {
+  if (typeof authority !== 'string' || !authority || /[\s\\]/.test(authority)) return null;
+  try {
+    const url = new URL(`http://${authority}`);
+    if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) return null;
+    const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    const port = url.port ? Number(url.port) : 80;
+    return loopbackHosts.has(hostname) && Number.isInteger(port) ? { hostname, port } : null;
+  } catch { return null; }
+}
+
+function requestSecurityFailure(request, server) {
+  if (request.method === 'OPTIONS') return { status: 405, code: 'METHOD_NOT_ALLOWED' };
+  const address = server.address();
+  if (!address || typeof address === 'string') return { status: 503, code: 'SERVER_NOT_READY' };
+  const target = parseLoopbackAuthority(request.headers.host);
+  if (!target || target.port !== address.port) return { status: 403, code: 'HOST_REJECTED' };
+  if (request.method === 'POST') {
+    const origin = request.headers.origin;
+    const parsedOrigin = typeof origin === 'string' && origin !== 'null' ? (() => {
+      try {
+        const url = new URL(origin);
+        if (url.protocol !== 'http:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash) return null;
+        const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+        const port = url.port ? Number(url.port) : 80;
+        return loopbackHosts.has(hostname) && Number.isInteger(port) ? { hostname, port } : null;
+      } catch { return null; }
+    })() : null;
+    if (!parsedOrigin || parsedOrigin.hostname !== target.hostname || parsedOrigin.port !== target.port) return { status: 403, code: 'ORIGIN_REJECTED' };
+    const contentType = request.headers['content-type'] || '';
+    if (!/^application\/json(?:\s*;|$)/i.test(contentType)) return { status: 415, code: 'JSON_REQUIRED' };
+  }
+  return null;
+}
+
 export function loopbackBaseUrl(host) {
   if (!loopbackHosts.has(host)) throw new TypeError('Локальный UI разрешено привязывать только к loopback');
   const authorityHost = host.includes(':') ? `[${host}]` : host;
@@ -45,7 +80,8 @@ function send(response, status, value, contentType = 'application/json; charset=
     'content-type': contentType,
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
-    'content-security-policy': "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'"
+    'content-security-policy': "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-ancestors 'none'",
+    'x-frame-options': 'DENY'
   });
   response.end(contentType.startsWith('application/json') ? JSON.stringify(value) : value);
 }
@@ -68,10 +104,13 @@ async function readJson(request, maxBytes) {
 export function createOrchestratorServer({ service, authenticate, issuePlanApproval, environmentRef = null, host = '127.0.0.1', maxBodyBytes = 32768 } = {}) {
   if (!service) throw new TypeError('TaskService обязателен');
   if (typeof authenticate !== 'function') throw new TypeError('Нужна host-side аутентификация владельца');
+  if (typeof issuePlanApproval !== 'function') throw new TypeError('Нужен host-side callback подтверждения плана владельцем');
   if (!loopbackHosts.has(host)) throw new TypeError('Локальный UI разрешено привязывать только к loopback');
   const server = http.createServer(async (request, response) => {
     let actorRef;
     try {
+      const securityFailure = requestSecurityFailure(request, server);
+      if (securityFailure) return send(response, securityFailure.status, { code: securityFailure.code, message: 'Запрос отклонён проверками локального origin и типа содержимого.' });
       actorRef = await authenticate(request);
       if (typeof actorRef !== 'string' || !actorRef) return send(response, 401, { code: 'UNAUTHENTICATED', message: 'Локальный пользователь не аутентифицирован.' });
       const url = new URL(request.url, loopbackBaseUrl(host));
