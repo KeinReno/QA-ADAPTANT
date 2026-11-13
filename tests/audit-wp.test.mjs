@@ -147,14 +147,21 @@ test('WP-B: самодекларация approval и урезанные effects 
 });
 
 test('WP-C: CANCEL после BROWSER_DONE публикует INCONCLUSIVE, а не PASS', { timeout: 30000 }, async t => {
-  const { root, fixture, bundle, runId } = await setup(t, { fault: 'transientRead', runId: 'audit-cancel-verify' });
-  const pending = start(bundle, { root, fault: 'transientRead', fixtureToken: fixture.authToken });
-  await waitUntil(() => {
-    const file = path.join(root, 'runs', runId, 'events.jsonl');
-    return fs.existsSync(file) && fs.readFileSync(file, 'utf8').includes('BROWSER_DONE');
-  });
+  const { root, fixture, bundle, runId } = await setup(t, { fault: 'pauseVerificationRead', runId: 'audit-cancel-verify' });
+  const pending = start(bundle, { root, fault: 'pauseVerificationRead', fixtureToken: fixture.authToken });
+  await fixture.verificationReadStarted;
+  const file = path.join(root, 'runs', runId, 'events.jsonl');
+  const events = [];
+  for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean)) {
+    try { events.push(JSON.parse(line)); } catch { /* незавершённый хвост журнала не считается событием */ }
+  }
+  const browserDone = events.some(event => event.type === 'BROWSER_DONE');
+  const verifying = events.some(event => event.type === 'STATE' && event.state === 'VERIFYING');
+  const terminal = events.some(event => event.type === 'VERDICT_DURABLE');
+  assert.ok(browserDone && verifying && !terminal, 'verification read gate наступает после BROWSER_DONE, до verdict');
   const requested = await cancel({ root, runId });
   assert.equal(requested.state, 'CANCEL_REQUESTED');
+  fixture.releaseVerificationRead();
   const result = await pending;
   assert.equal(result.verdict.verdict, 'INCONCLUSIVE');
   assert.equal(result.verdict.reasonCode, 'CANCELED');

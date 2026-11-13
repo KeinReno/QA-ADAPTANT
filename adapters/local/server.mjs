@@ -62,6 +62,14 @@ export async function serveLocalFixture({ fault = null, environmentId = randomUU
   let mutationCount = 0;
   let readCount = 0;
   let mutated = false;
+  let releaseVerificationRead = null;
+  let markVerificationReadStarted = null;
+  const verificationReadStarted = fault === 'pauseVerificationRead'
+    ? new Promise(resolve => { markVerificationReadStarted = resolve; })
+    : Promise.resolve();
+  const verificationReadGate = fault === 'pauseVerificationRead'
+    ? new Promise(resolve => { releaseVerificationRead = resolve; })
+    : null;
   // Одноразовость мутации и привязка к runId включаются только при наличии x-qa-run-id:
   // замороженный Worker 0.1 заголовок не шлёт, поэтому его поведение не меняется (совместимость 0.1).
   const auth = { runId: null, mutationUsed: false };
@@ -157,6 +165,10 @@ export async function serveLocalFixture({ fault = null, environmentId = randomUU
       const fixtureId = url.searchParams.get('fixtureId');
       if (!fixtureId) { send(400, { error: 'fixture_required' }); return; }
       readCount++;
+      if (verificationReadGate) {
+        markVerificationReadStarted();
+        await verificationReadGate;
+      }
       let matches = records.filter(record => record.fixtureId === fixtureId);
       if (fault === 'delayedRead' && readCount < 3) matches = [];
       if (fault === 'transientRead' && readCount < 3) { send(503, { error: 'temporarily_unavailable' }); return; }
@@ -232,6 +244,11 @@ export async function serveLocalFixture({ fault = null, environmentId = randomUU
     get mutationCount() { return mutationCount; },
     get readCount() { return readCount; },
     get recordCount() { return records.length; },
-    close: () => new Promise(resolve => server.close(resolve))
+    verificationReadStarted,
+    releaseVerificationRead: () => { if (releaseVerificationRead) releaseVerificationRead(); },
+    close: () => {
+      if (releaseVerificationRead) releaseVerificationRead();
+      return new Promise(resolve => server.close(resolve));
+    }
   };
 }
