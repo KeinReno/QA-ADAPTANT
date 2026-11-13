@@ -1,0 +1,69 @@
+{
+  "tool": "WP08-V2-QWEN-DECISION",
+  "product": "KAIDEN QA ADAPTANT",
+  "workpack": "WP-08 TRUST FOUNDATION V2",
+  "architectureBranch": "arch/wp08-trust-foundation-v2",
+  "architectureSha": "f99573322a1be7955926b82c92253c559d6c0b33",
+  "architectureBase": "59d82d49c01442d463ebab5d5f3d661ca550e504",
+  "baseNote": "Ветка основана на общем предке до линии 0.2; дерево не содержит текущий 0.2-код; требуется ребейз (M10)",
+  "previousReject": {
+    "auditSha": "4e96cdce3eef1d7cd6c5585d4756742a6a12b228",
+    "productSha": "41043ad50eb80948c0aa146ab18748998b5bce05"
+  },
+  "auditBranch": "audit/wp08-qwen-independent-core",
+  "generatedAt": "2026-11-13T23:30:50.029Z",
+  "reviewer": "Qwen (Independent Security Architect / Acceptance Reviewer)",
+  "decision": "REVISION_REQUIRED",
+  "mainQuestion": "Может ли произвольный процесс пользовательского SID получить ложный trusted PASS, обманув TAS, даже если он не может изменить её защищённый реестр и приватные ключи?",
+  "mainQuestionAnswer": "По текущему тексту пакета — ДА (цепочка A: replay-гонка публичного approval → grant → fabricated evidence → anchor; цепочка B: поддельный named pipe). После M01–M04 ответ должен стать НЕТ; проверяется исполненными сценариями на v2-SHA",
+  "decisionRationale": "Реестр TAS с отдельным SID корректно закрывает первопричину F1 и сценарии R5/R7/R8/R6/N10в проектным механизмом; A2 не сужена. Но происхождение Verification не аутентифицировано (PID — не граница), аттестации независимых чтений нет, evidenceHead берётся из A2-writable runDir, потребление approval/grant не специфицировано в защищённом состоянии, сервер IPC не аутентифицируется. TAS в текущем виде может стать сервисом подписи произвольных заявлений клиента. Пробелы закрываются конкретными механизмами (M01–M08), поэтому REVISION REQUIRED, а не ARCHITECTURE REJECT; ACCEPT не выдаётся до их внесения",
+  "threatModel": "Исходная A1–A3 без сужения; процессы того же SID враждебны; сужение 41043ad не повторяется",
+  "mandatoryChanges": [
+    {"id": "M01", "priority": "blocker-before-implementation", "title": "Происхождение Verification и аттестация фактов (TAS создаёт Worker/канал, эфемерный ключ, readSetSha256, byte-identity, паритет проверок)", "scenarios": ["T03", "T04", "T09", "T10", "T20"]},
+    {"id": "M02", "priority": "blocker-before-implementation", "title": "Защищённое состояние потребления approval/grant; атомарная привязка approvalId→runId; одноразовость/TTL/отзыв при cancel; сериализация race", "scenarios": ["T01", "T02", "T06", "T07", "T08", "T11"]},
+    {"id": "M03", "priority": "blocker-before-implementation", "title": "Аутентификация сервера IPC: SID владельца канала + подпись ответов ключом TAS, закреплённым в устанавливаемом продукте", "scenarios": ["T12", "N15"]},
+    {"id": "M04", "priority": "blocker-before-implementation", "title": "Grant не покидает доверенную зону (запрет записи в user-writable, привязка к каналу TAS)", "scenarios": ["T05"]},
+    {"id": "M05", "priority": "blocker-before-implementation", "title": "Enrollment/rotation: обязательная внешняя сверка fingerprint, неподделываемое подтверждение, отказ повторного enroll, внешний ожидаемый keyId", "scenarios": ["T14", "N17"]},
+    {"id": "M06", "priority": "blocker-before-implementation", "title": "Registry: ACL SYSTEM+TAS (не Admins-писатели), выделенная учётка службы (не LocalSystem), append-only, монотонность+high-water mark, подписи, backup только с подписью владельца", "scenarios": ["T15", "N18"]},
+    {"id": "M07", "priority": "blocker-before-implementation", "title": "DPAPI LocalMachine — не граница; ACL файла ключа = только SID службы; явная фиксация", "scenarios": ["key-material"]},
+    {"id": "M08", "priority": "blocker-before-implementation", "title": "Legacy-анкеры без автопринятия доверенного PASS; переаттестация владельцем; запрет автопринятия старого корня", "scenarios": ["T16", "N20"]},
+    {"id": "M09", "priority": "owner-decision-and-deployment-condition", "title": "Owner=локальный админ: граница деградирует; обязательное условие развёртывания (не-админ учётка, либо TPM/HSM, либо явное принятие остатка)", "scenarios": ["T13", "N19"]},
+    {"id": "M10", "priority": "before-implementation", "title": "Ребейз пакета на текущую продуктовую линию; сверка дельт с 41043ad; проверка вызовов 0.3; публикация инструментов R-D в репо", "scenarios": ["compatibility"]},
+    {"id": "M11", "priority": "before-acceptance", "title": "Fake TAS-провайдер только тестовый, не выбирается через env/config; приёмка против реальной службы", "scenarios": ["T19"]},
+    {"id": "M12", "priority": "before-acceptance", "title": "Полная исполненная матрица R1/N01–N12/P01/R5–R8/N13/N14/N15–N20 на v2-SHA с сырыми журналами; gates воспроизводимы из SHA; P01 обязателен", "scenarios": ["all"]}
+  ],
+  "scenarioMatrix": {
+    "note": "Проектная оценка; реализации нет; PASS не ставится неисполненным сценариям",
+    "closedByDesign": ["R1", "N01", "N02", "N03", "N04", "N05", "N06", "N07", "N08", "N09", "N10", "N11", "N12", "R5", "R6", "R7", "R8", "N14", "T14", "T15", "T17", "T18", "T20"],
+    "requiresImplementationAndTest": ["P01", "N13", "T02", "T06", "T07", "T08", "T11", "T19"],
+    "requiresOwnerDecision": ["T13", "T16"],
+    "notClosedByCurrentArchitecture": ["T01-replay", "T03", "T04", "T05", "T09", "T10", "T12"]
+  },
+  "stageA": {
+    "serviceSid": "корректный механизм; требуется выделенная учётка, не LocalSystem",
+    "aclRegistry": "применим; убрать Admins-писателей; админ-деградация — M09",
+    "writablePaths": "registry/ключи вне записи A2 (не-админ); runDir/trustRoot writable — TAS не принимает их как истину о фактах (M01/M02)",
+    "dpapiLocalMachine": "не граница; ACL+контекст службы (M07)",
+    "localAdmin": "граница не обеспечивается; условие развёртывания (M09)",
+    "enrollment": "внешняя сверка спроектирована; жёсткое исполнение (M05)",
+    "registryUpdateRollback": "append-only+подписи; монотонность/high-water/backup (M06)",
+    "foreignTrustRoot": "закрыто проектом: только enrolled trustRootId",
+    "componentSeparation": "ключи — верно; факты исполнения — пробел (M01/M04)",
+    "defectMigration": "идентичность ключей НЕ перенесена в user-writable файл; факты исполнения — частично перенесены (evidenceHead/grant), исправимо M01/M02"
+  },
+  "deliverables": [
+    "WP08-V2-QWEN-ARCHITECTURE-REVIEW.md",
+    "WP08-V2-QWEN-THREAT-ANALYSIS.md",
+    "WP08-V2-QWEN-CONTRACT-REVIEW.md",
+    "WP08-V2-QWEN-REQUIRED-CHANGES.md",
+    "WP08-V2-QWEN-DECISION.json"
+  ],
+  "constraintsHonored": {
+    "productCodeUnchanged": true,
+    "noMerge": true,
+    "noSelfImplementation": true,
+    "a2NotNarrowed": true,
+    "noPassForUnexecutedScenarios": true,
+    "noDevCiz": true
+  }
+}
