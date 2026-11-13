@@ -1,0 +1,24 @@
+﻿✔ привязки operation/inputs/fixture/scenario/generation/effects/resource/runId отвергаются без расхода (129.9188ms)
+✔ one-shot: другой runId → APPROVAL_REPLAY, тот же runId → без второго ACK, файл неизменен (42.5328ms)
+✔ подмена закреплённого approval, подпись anchor-ключом и чужой keyId не дают ACK (27.159ms)
+✔ чужой издатель, чужой субъект и чужой SID не авторизуют расход (34.5624ms)
+✔ отзыв: до расхода запрещает, после расхода не отменяет уже выданный ACK и не даёт второй (70.6495ms)
+✔ срок: просроченный и ещё не вступивший approval запрещают расход (23.9856ms)
+✔ L-07: обрыв после CREATE_NEW оставляет неполный расход, повтор и другой runId не получают ACK (44.5686ms)
+✔ R-01: осиротевшая блокировка guard не даёт ни ACK, ни отзыва (fail-closed ~5 с) (10063.143ms)
+✔ L-01/L-09: четыре процесса, один approval, разные runId — не больше одного ACK и один полный файл (984.9294ms)
+✔ L-09: два процесса, один approval, один runId — ровно один ACK (565.4625ms)
+✔ отзыв другого процесса до расхода не даёт ACK: гонка с барьером перед guard (1151.799ms)
+✔ F-WP02-01: путь «только approvalId» в readApprovalState/consumeDispatch не работает (fail-closed) (21.4215ms)
+✔ F-04 (подтверждение): подмена trust-объекта позволяет израсходовать rogue-approval в чужом trust root (4290.4295ms)
+✔ пути хранения: approvalId не может выйти из каталога и не может быть device/ADS-именем (1.3024ms)
+✔ второй POST после ACK невозможен по порядку Control: dispatch до intent, без ack нет ACK и POST (1.7969ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 15
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 21923.9031
+EXITCODE:0

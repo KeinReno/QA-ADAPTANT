@@ -1,0 +1,11 @@
+✔ A: подмена стенда между POST и независимым чтением Verification даёт ложный доверенный PASS (12371.9857ms)
+✔ B: подмена в окне после beforeRequestAck (mutation уходит rogue) — попытка полного PASS (12086.2434ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 25631.7542
+EXITCODE: 0

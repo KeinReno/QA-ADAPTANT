@@ -1,0 +1,11 @@
+﻿BASE=C:\Users\gvi\AppData\Local\Temp\wp08-r02-b69331c4
+COMMAND: node packages/trust/keygen.mjs --secrets <junction>\secrets --trust-root C:\Users\gvi\AppData\Local\Temp\wp08-r02-b69331c4\trust-outside
+EXIT=0
+owner 13404b45673fb36565a0100148a85d9d3d5adcf8ac87e7aaf43d7b67ded361bf
+anchor-signer d6a1f009115ee6245a848c08f02884c9081b3f41d4fd37fed35b905c36df60a3
+
+KEY_IN_RUNDIR=True
+ANCHOR_IN_RUNDIR=True
+RUN_DIR_FILES=
+C:\Users\gvi\AppData\Local\Temp\wp08-r02-b69331c4\store\runs\run-r02\secrets\anchor.key
+C:\Users\gvi\AppData\Local\Temp\wp08-r02-b69331c4\store\runs\run-r02\secrets\owner.key

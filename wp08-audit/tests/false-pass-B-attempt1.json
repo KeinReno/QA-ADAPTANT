@@ -1,0 +1,18 @@
+{
+  "scenario": "B: swap in window after beforeRequestAck before POST",
+  "attempt": 1,
+  "triggered": true,
+  "swapAt": 1794555040504,
+  "listenAt": 1794555040506,
+  "swapToListenMs": 2,
+  "verdict": "PASS",
+  "reasonCode": "NONE",
+  "message": "Все обязательные эффекты подтверждены независимым чтением",
+  "observedPassed": true,
+  "standMutationCount": 0,
+  "roguePosts": 1,
+  "rogueRecordGets": 1,
+  "rogueEnvGets": 2,
+  "bearerLeakedToRogue": true,
+  "postTimeFromRequestEvidenceMs": 4
+}

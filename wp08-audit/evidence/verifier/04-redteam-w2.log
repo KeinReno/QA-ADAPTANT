@@ -1,0 +1,263 @@
+﻿COMMAND: node tests/redteam/run-all-w2.mjs --target=.
+HEAD: 07c21c4db936627df9a3c874015327ea992a335a
+started=2026-11-13T10:17:32.1572516+03:00
+
+{
+  "tool": "REDTEAM-W2-ALL",
+  "target": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-eea6376c7fba4196",
+  "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+  "pinnedSnapshot": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-w2-pin-eea6376c7fba4196",
+  "targetDirty": true,
+  "total": 24,
+  "pass": 23,
+  "fail": 1,
+  "inconclusive": 0,
+  "verdict": "FAIL",
+  "results": [
+    {
+      "script": "rt2-attack-ack-without-consumption.mjs",
+      "ms": 21871,
+      "exitCode": 0,
+      "id": "WP06-ACK",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-attack-env-substitution.mjs",
+      "ms": 6380,
+      "exitCode": 0,
+      "id": "GAP-02",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-attack-false-pass.mjs",
+      "ms": 29980,
+      "exitCode": 0,
+      "id": "GAP-01",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-attack-foreign-sid.mjs",
+      "ms": 8361,
+      "exitCode": 0,
+      "id": "WP06-SID",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-attack-second-post.mjs",
+      "ms": 19470,
+      "exitCode": 0,
+      "id": "WP06-2POST",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-attack-secret-before-allow.mjs",
+      "ms": 21899,
+      "exitCode": 0,
+      "id": "WP06-SECRET",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-b01-registry.mjs",
+      "ms": 8354,
+      "exitCode": 0,
+      "id": "B-01",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-b03-effects-mismatch.mjs",
+      "ms": 7859,
+      "exitCode": 0,
+      "id": "B-03",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-b04-fixture-mismatch.mjs",
+      "ms": 8973,
+      "exitCode": 0,
+      "id": "B-04",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-b05-http-200-existing.mjs",
+      "ms": 20321,
+      "exitCode": 0,
+      "id": "B-05",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-e02-unknown-environment.mjs",
+      "ms": 6939,
+      "exitCode": 0,
+      "id": "E-02",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-e03-generation-change.mjs",
+      "ms": 8028,
+      "exitCode": 0,
+      "id": "E-03",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-e05-registry-unreadable.mjs",
+      "ms": 8222,
+      "exitCode": 0,
+      "id": "E-05",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-e06-dev-environment.mjs",
+      "ms": 7799,
+      "exitCode": 0,
+      "id": "E-06",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-l03-crash-after-consumption.mjs",
+      "ms": 16476,
+      "exitCode": 0,
+      "id": "L-03",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-l06-used-approval.mjs",
+      "ms": 21711,
+      "exitCode": 1,
+      "id": "L-06",
+      "verdict": "FAIL",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [
+        "первый доверенный прогон PASS"
+      ],
+      "stderr": null
+    },
+    {
+      "script": "rt2-l08-old-start-rejects-trust.mjs",
+      "ms": 6189,
+      "exitCode": 0,
+      "id": "L-08",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-r01-guard-lock.mjs",
+      "ms": 21963,
+      "exitCode": 0,
+      "id": "R-01",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-r02-keygen-run-dir.mjs",
+      "ms": 8971,
+      "exitCode": 0,
+      "id": "R-02",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-v03-signer-unavailable.mjs",
+      "ms": 10846,
+      "exitCode": 0,
+      "id": "V-03",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-v04-two-anchors.mjs",
+      "ms": 17548,
+      "exitCode": 0,
+      "id": "V-04",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-v07-anchor-before-verdict.mjs",
+      "ms": 15226,
+      "exitCode": 0,
+      "id": "V-07",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-v08-owner-as-anchor.mjs",
+      "ms": 14896,
+      "exitCode": 0,
+      "id": "V-08",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    },
+    {
+      "script": "rt2-v09-budget-race.mjs",
+      "ms": 18353,
+      "exitCode": 0,
+      "id": "V-09",
+      "verdict": "PASS",
+      "targetHead": "07c21c4db936627df9a3c874015327ea992a335a",
+      "failedChecks": [],
+      "stderr": null
+    }
+  ]
+}
+
+EXITCODE:1
+finished=2026-11-13T10:23:10.6012990+03:00

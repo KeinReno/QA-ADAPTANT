@@ -1,0 +1,81 @@
+﻿COMMAND: node tests/redteam/rt2-l06-used-approval.mjs --target=.
+HEAD: 07c21c4db936627df9a3c874015327ea992a335a
+date=2026-11-13T10:23:55.3042192+03:00
+
+{
+  "tool": "REDTEAM-W2",
+  "id": "L-06",
+  "title": "Новая попытка с использованным approval",
+  "target": {
+    "liveDir": "C:\\Users\\gvi\\Desktop\\QA-ADAPTANT-WP08-AUDIT",
+    "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt2-snap-eea6376c7fba4196",
+    "head": "07c21c4db936627df9a3c874015327ea992a335a",
+    "dirtyAtStart": true,
+    "diffHashAtStart": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stringDiffHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "snapshotKey": "eea6376c7fba4196",
+    "stable": true
+  },
+  "verdict": "PASS",
+  "exitCode": 0,
+  "checks": [
+    {
+      "name": "первый доверенный прогон PASS",
+      "ok": true,
+      "detail": {
+        "verdict": "PASS",
+        "reasonCode": "NONE"
+      }
+    },
+    {
+      "name": "стенд получил 1 POST",
+      "ok": true,
+      "detail": {
+        "mutationCount": 1
+      }
+    },
+    {
+      "name": "повторный расход на новом runId -> APPROVAL_REPLAY",
+      "ok": true,
+      "detail": {
+        "code": "APPROVAL_REPLAY"
+      }
+    },
+    {
+      "name": "повторное закрепление approvalId с другим содержимым отвергнуто",
+      "ok": true,
+      "detail": {
+        "code": "CONTRACT_INVALID"
+      }
+    },
+    {
+      "name": "доверенный вход отказал BLOCKED CONTRACT_INVALID/AUTH_UNAVAILABLE",
+      "ok": true,
+      "detail": {
+        "verdict": "BLOCKED",
+        "reasonCode": "CONTRACT_INVALID"
+      }
+    },
+    {
+      "name": "стенд получил 1 POST",
+      "ok": true,
+      "detail": {
+        "mutationCount": 1
+      }
+    },
+    {
+      "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+      "ok": true,
+      "detail": {
+        "head": "07c21c4db936627df9a3c874015327ea992a335a",
+        "dirty": true,
+        "diffHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  ],
+  "platform": "win32",
+  "node": "v24.16.0",
+  "createdAt": "2026-11-13T07:23:54.596Z"
+}
+
+EXITCODE:0

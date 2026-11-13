@@ -1,0 +1,1829 @@
+﻿COMMAND: node tests/redteam/run-matrix.mjs .
+HEAD: 07c21c4db936627df9a3c874015327ea992a335a
+started=2026-11-13T10:24:06.8709800+03:00
+
+{
+  "tool": "REDTEAM-MATRIX",
+  "target": "C:\\Users\\gvi\\Desktop\\QA-ADAPTANT-WP08-AUDIT",
+  "revision": "07c21c4db936627df9a3c874015327ea992a335a",
+  "pinnedSnapshot": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+  "targetStable": true,
+  "generatedAt": "2026-11-13T07:28:02.315Z",
+  "node": "v24.16.0",
+  "platform": "win32",
+  "total": 34,
+  "counts": {
+    "PASS": 24,
+    "TODO": 10
+  },
+  "exitCode": 0,
+  "rows": [
+    {
+      "id": "E-01",
+      "subject": "Копирование environmentId/fingerprint и любого ранее виденного ответа",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-attack-env-substitution.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "доверенный вход отказал BLOCKED ENVIRONMENT_CHANGED",
+            "ok": true,
+            "detail": {
+              "verdict": "BLOCKED",
+              "reasonCode": "ENVIRONMENT_CHANGED"
+            }
+          },
+          {
+            "name": "(A) зеркало получило запрос аттестации, но не POST",
+            "ok": true,
+            "detail": {
+              "attestCount": 1,
+              "mutationCount": 0,
+              "requests": [
+                {
+                  "method": "POST",
+                  "url": "/attest"
+                }
+              ]
+            }
+          },
+          {
+            "name": "в журнале нет mutation-intent/request",
+            "ok": true,
+            "detail": {
+              "found": []
+            }
+          },
+          {
+            "name": "доверенный вход отказал BLOCKED ENVIRONMENT_CHANGED",
+            "ok": true,
+            "detail": {
+              "verdict": "BLOCKED",
+              "reasonCode": "ENVIRONMENT_CHANGED"
+            }
+          },
+          {
+            "name": "(B) сервер без ключа не получил POST",
+            "ok": true,
+            "detail": {
+              "requests": [
+                {
+                  "method": "POST",
+                  "url": "/attest"
+                }
+              ]
+            }
+          },
+          {
+            "name": "в журнале нет mutation-intent/request",
+            "ok": true,
+            "detail": {
+              "found": []
+            }
+          },
+          {
+            "name": "доверенный вход отказал BLOCKED ENVIRONMENT_CHANGED",
+            "ok": true,
+            "detail": {
+              "verdict": "BLOCKED",
+              "reasonCode": "ENVIRONMENT_CHANGED"
+            }
+          },
+          {
+            "name": "(C) подменённый стенд не получил POST",
+            "ok": true,
+            "detail": {
+              "mutationCount": 0
+            }
+          },
+          {
+            "name": "в журнале нет mutation-intent/request",
+            "ok": true,
+            "detail": {
+              "found": []
+            }
+          },
+          {
+            "name": "ключ подменённого стенда отличается от записи реестра",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "E-02",
+      "subject": "environmentId отсутствует в реестре",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-e02-unknown-environment.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "доверенный вход отказал BLOCKED ENVIRONMENT_CHANGED/CONTRACT_INVALID",
+            "ok": true,
+            "detail": {
+              "verdict": "BLOCKED",
+              "reasonCode": "ENVIRONMENT_CHANGED"
+            }
+          },
+          {
+            "name": "стенд получил 0 POST",
+            "ok": true,
+            "detail": {
+              "mutationCount": 0
+            }
+          },
+          {
+            "name": "в журнале нет mutation-intent/request",
+            "ok": true,
+            "detail": {
+              "found": []
+            }
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "E-03",
+      "subject": "Поколение стенда сменилось между T-A и T-B",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-e03-generation-change.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "доверенный вход отказал BLOCKED ENVIRONMENT_CHANGED",
+            "ok": true,
+            "detail": {
+              "verdict": "BLOCKED",
+              "reasonCode": "ENVIRONMENT_CHANGED"
+            }
+          },
+          {
+            "name": "стенд получил 0 POST",
+            "ok": true,
+            "detail": {
+              "mutationCount": 0
+            }
+          },
+          {
+            "name": "в журнале нет mutation-intent/request",
+            "ok": true,
+            "detail": {
+              "found": []
+            }
+          },
+          {
+            "name": "approval не израсходован",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "E-04",
+      "subject": "credentialRef указывает секрет другой среды",
+      "status": "TODO",
+      "reason": "зависимости есть, проверка каркаса волны 1 ещё не реализована",
+      "evidence": {
+        "note": "реализовать в волне 2 на SHA интеграции"
+      }
+    },
+    {
+      "id": "E-05",
+      "subject": "Реестр сред не читается (fail-closed)",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-e05-registry-unreadable.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "запись среды существует до атаки",
+            "ok": true,
+            "detail": {
+              "registryFile": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt2-ZVuVoo\\trust\\environments\\ed8a642e-c341-4ac3-aecd-6849b88a803c\\1.json"
+            }
+          },
+          {
+            "name": "доверенный вход отказал BLOCKED",
+            "ok": true,
+            "detail": {
+              "verdict": "BLOCKED",
+              "reasonCode": "AUTH_UNAVAILABLE"
+            }
+          },
+          {
+            "name": "стенд получил 0 POST",
+            "ok": true,
+            "detail": {
+              "mutationCount": 0
+            }
+          },
+          {
+            "name": "в журнале нет mutation-intent/request",
+            "ok": true,
+            "detail": {
+              "found": []
+            }
+          },
+          {
+            "name": "фактический код отказа зафиксирован (fail-closed важнее точной проекции)",
+            "ok": true,
+            "detail": {
+              "verdict": "BLOCKED",
+              "reasonCode": "AUTH_UNAVAILABLE"
+            }
+          },
+          {
+            "name": "битый owner.pub -> TRUST_STORE_UNAVAILABLE (старт не начат)",
+            "ok": true,
+            "detail": {
+              "code": "TRUST_STORE_UNAVAILABLE"
+            }
+          },
+          {
+            "name": "стенд получил 0 POST",
+            "ok": true,
+            "detail": {
+              "mutationCount": 0
+            }
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "E-06",
+      "subject": "Среда kind=dev даже при status=active",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-e06-dev-environment.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "доверенный вход отказал BLOCKED ENVIRONMENT_CHANGED/CONTRACT_INVALID",
+            "ok": true,
+            "detail": {
+              "verdict": "BLOCKED",
+              "reasonCode": "CONTRACT_INVALID"
+            }
+          },
+          {
+            "name": "стенд получил 0 POST",
+            "ok": true,
+            "detail": {
+              "mutationCount": 0
+            }
+          },
+          {
+            "name": "в журнале нет mutation-intent/request",
+            "ok": true,
+            "detail": {
+              "found": []
+            }
+          },
+          {
+            "name": "исходящих соединений на внешние адреса не было (стенд только 127.0.0.1)",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "E-07",
+      "subject": "Стенд остановлен, порт занял процесс без ключа стенда",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-attack-env-substitution.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "доверенный вход отказал BLOCKED ENVIRONMENT_CHANGED",
+            "ok": true,
+            "detail": {
+              "verdict": "BLOCKED",
+              "reasonCode": "ENVIRONMENT_CHANGED"
+            }
+          },
+          {
+            "name": "(A) зеркало получило запрос аттестации, но не POST",
+            "ok": true,
+            "detail": {
+              "attestCount": 1,
+              "mutationCount": 0,
+              "requests": [
+                {
+                  "method": "POST",
+                  "url": "/attest"
+                }
+              ]
+            }
+          },
+          {
+            "name": "в журнале нет mutation-intent/request",
+            "ok": true,
+            "detail": {
+              "found": []
+            }
+          },
+          {
+            "name": "доверенный вход отказал BLOCKED ENVIRONMENT_CHANGED",
+            "ok": true,
+            "detail": {
+              "verdict": "BLOCKED",
+              "reasonCode": "ENVIRONMENT_CHANGED"
+            }
+          },
+          {
+            "name": "(B) сервер без ключа не получил POST",
+            "ok": true,
+            "detail": {
+              "requests": [
+                {
+                  "method": "POST",
+                  "url": "/attest"
+                }
+              ]
+            }
+          },
+          {
+            "name": "в журнале нет mutation-intent/request",
+            "ok": true,
+            "detail": {
+              "found": []
+            }
+          },
+          {
+            "name": "доверенный вход отказал BLOCKED ENVIRONMENT_CHANGED",
+            "ok": true,
+            "detail": {
+              "verdict": "BLOCKED",
+              "reasonCode": "ENVIRONMENT_CHANGED"
+            }
+          },
+          {
+            "name": "(C) подменённый стенд не получил POST",
+            "ok": true,
+            "detail": {
+              "mutationCount": 0
+            }
+          },
+          {
+            "name": "в журнале нет mutation-intent/request",
+            "ok": true,
+            "detail": {
+              "found": []
+            }
+          },
+          {
+            "name": "ключ подменённого стенда отличается от записи реестра",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "E-08",
+      "subject": "Монополия порта живого стенда",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "bindCode": "EADDRINUSE",
+        "stillAlive": true,
+        "attested": true,
+        "missing": []
+      }
+    },
+    {
+      "id": "V-01",
+      "subject": "Локальный терминальный коммит заменён, анкер старый",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-attack-false-pass.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "эталонный доверенный прогон PASS",
+            "ok": true,
+            "detail": {
+              "verdict": "PASS"
+            }
+          },
+          {
+            "name": "эталон: observeTrusted показывает PASS с анкером",
+            "ok": true,
+            "detail": {
+              "passed": true,
+              "anchorStatus": "ANCHOR_OK"
+            }
+          },
+          {
+            "name": "(V-02) подменённый verdict после публикации не даёт PASS",
+            "ok": true,
+            "detail": {
+              "passed": false,
+              "state": "error",
+              "reasonCode": "INTEGRITY_ERROR: checksum evidence не совпадает"
+            }
+          },
+          {
+            "name": "(V-01) подменённый терминальный коммит не даёт PASS при старом анкере",
+            "ok": true,
+            "detail": {
+              "passed": false,
+              "state": "error",
+              "reasonCode": "INTEGRITY_ERROR"
+            }
+          },
+          {
+            "name": "после восстановления коммита и verdict PASS снова виден",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "(A) без подписанта вердикт INCONCLUSIVE/EVIDENCE_MISSING",
+            "ok": true,
+            "detail": {
+              "verdict": "INCONCLUSIVE",
+              "reasonCode": "EVIDENCE_MISSING"
+            }
+          },
+          {
+            "name": "(A) observeTrusted не показывает PASS",
+            "ok": true,
+            "detail": {
+              "passed": false,
+              "verdict": "INCONCLUSIVE"
+            }
+          },
+          {
+            "name": "стенд получил 1 POST",
+            "ok": true,
+            "detail": {
+              "mutationCount": 1
+            }
+          },
+          {
+            "name": "(B) подделанный выбор без анкера не даёт PASS",
+            "ok": true,
+            "detail": {
+              "passed": false,
+              "state": "inconsistent",
+              "reasonCode": "TERMINAL_CHOICE_INCOMPLETE",
+              "anchorStatus": null
+            }
+          },
+          {
+            "name": "(C) чужой анкер (другой runId) не даёт PASS",
+            "ok": true,
+            "detail": {
+              "passed": false,
+              "state": "inconsistent",
+              "reasonCode": "TERMINAL_CHOICE_INCOMPLETE",
+              "anchorStatus": null
+            }
+          },
+          {
+            "name": "(D) observeTrusted не показывает PASS для подделанной цепочки",
+            "ok": true,
+            "detail": {
+              "passed": false,
+              "state": "inconsistent",
+              "reasonCode": "INTEGRITY_ERROR"
+            }
+          },
+          {
+            "name": "(D) старый observe() показывает PASS — он не является доказательством доверенного PASS",
+            "ok": true,
+            "detail": {
+              "oldVerdict": "PASS"
+            }
+          },
+          {
+            "name": "(D) подделанный прогон не имеет анкера/потребления и POST не было",
+            "ok": true,
+            "detail": {
+              "mutationCount": 1
+            }
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "V-02",
+      "subject": "Подменён verdict в каталоге прогона",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-attack-false-pass.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "эталонный доверенный прогон PASS",
+            "ok": true,
+            "detail": {
+              "verdict": "PASS"
+            }
+          },
+          {
+            "name": "эталон: observeTrusted показывает PASS с анкером",
+            "ok": true,
+            "detail": {
+              "passed": true,
+              "anchorStatus": "ANCHOR_OK"
+            }
+          },
+          {
+            "name": "(V-02) подменённый verdict после публикации не даёт PASS",
+            "ok": true,
+            "detail": {
+              "passed": false,
+              "state": "error",
+              "reasonCode": "INTEGRITY_ERROR: checksum evidence не совпадает"
+            }
+          },
+          {
+            "name": "(V-01) подменённый терминальный коммит не даёт PASS при старом анкере",
+            "ok": true,
+            "detail": {
+              "passed": false,
+              "state": "error",
+              "reasonCode": "INTEGRITY_ERROR"
+            }
+          },
+          {
+            "name": "после восстановления коммита и verdict PASS снова виден",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "(A) без подписанта вердикт INCONCLUSIVE/EVIDENCE_MISSING",
+            "ok": true,
+            "detail": {
+              "verdict": "INCONCLUSIVE",
+              "reasonCode": "EVIDENCE_MISSING"
+            }
+          },
+          {
+            "name": "(A) observeTrusted не показывает PASS",
+            "ok": true,
+            "detail": {
+              "passed": false,
+              "verdict": "INCONCLUSIVE"
+            }
+          },
+          {
+            "name": "стенд получил 1 POST",
+            "ok": true,
+            "detail": {
+              "mutationCount": 1
+            }
+          },
+          {
+            "name": "(B) подделанный выбор без анкера не даёт PASS",
+            "ok": true,
+            "detail": {
+              "passed": false,
+              "state": "inconsistent",
+              "reasonCode": "TERMINAL_CHOICE_INCOMPLETE",
+              "anchorStatus": null
+            }
+          },
+          {
+            "name": "(C) чужой анкер (другой runId) не даёт PASS",
+            "ok": true,
+            "detail": {
+              "passed": false,
+              "state": "inconsistent",
+              "reasonCode": "TERMINAL_CHOICE_INCOMPLETE",
+              "anchorStatus": null
+            }
+          },
+          {
+            "name": "(D) observeTrusted не показывает PASS для подделанной цепочки",
+            "ok": true,
+            "detail": {
+              "passed": false,
+              "state": "inconsistent",
+              "reasonCode": "INTEGRITY_ERROR"
+            }
+          },
+          {
+            "name": "(D) старый observe() показывает PASS — он не является доказательством доверенного PASS",
+            "ok": true,
+            "detail": {
+              "oldVerdict": "PASS"
+            }
+          },
+          {
+            "name": "(D) подделанный прогон не имеет анкера/потребления и POST не было",
+            "ok": true,
+            "detail": {
+              "mutationCount": 1
+            }
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "V-03",
+      "subject": "Подписант недоступен дольше anchorBudgetMs",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-v03-signer-unavailable.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "V-04",
+      "subject": "Два разных заявления на один runId",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-v04-two-anchors.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "процесс-жертва записал анкер и погиб до terminal-choice",
+            "ok": true,
+            "detail": {
+              "status": 42,
+              "childError": null,
+              "childResult": null,
+              "stderr": ""
+            }
+          },
+          {
+            "name": "анкер в trust root существует",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "terminal-choice отсутствует",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "verdict ещё не опубликован",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "durable candidate PASS существует",
+            "ok": true,
+            "detail": {
+              "verdict": "PASS"
+            }
+          },
+          {
+            "name": "в trust root ровно один анкер",
+            "ok": true,
+            "detail": {
+              "anchors": [
+                "anchor-124ae191-bf2b-4c58-8e9d-e64a0e152a51.json"
+              ]
+            }
+          },
+          {
+            "name": "второе заявление для runId отвергнуто ANCHOR_CONFLICT",
+            "ok": true,
+            "detail": {
+              "code": "ANCHOR_CONFLICT",
+              "message": "Для этого runId уже существует другое заявление анкера"
+            }
+          },
+          {
+            "name": "второй анкер не создан",
+            "ok": true,
+            "detail": {
+              "anchors": [
+                "anchor-124ae191-bf2b-4c58-8e9d-e64a0e152a51.json"
+              ]
+            }
+          },
+          {
+            "name": "первое заявление не изменено",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "PASS не появляется без терминальной публикации",
+            "ok": true,
+            "detail": {
+              "passed": false,
+              "state": "candidate-ready"
+            }
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "V-05",
+      "subject": "Повторная публикация тех же байт анкера",
+      "status": "TODO",
+      "reason": "зависимости есть, проверка каркаса волны 1 ещё не реализована",
+      "evidence": {
+        "note": "реализовать в волне 2 на SHA интеграции"
+      }
+    },
+    {
+      "id": "V-06",
+      "subject": "Падение после локального response и до анкера",
+      "status": "TODO",
+      "reason": "зависимости есть, проверка каркаса волны 1 ещё не реализована",
+      "evidence": {
+        "note": "реализовать в волне 2 на SHA интеграции"
+      }
+    },
+    {
+      "id": "V-07",
+      "subject": "Анкер записан, процесс падает до verdict",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-v07-anchor-before-verdict.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "процесс погиб после анкера (exit 42)",
+            "ok": true,
+            "detail": {
+              "status": 42,
+              "childError": null,
+              "childResult": null,
+              "stderr": ""
+            }
+          },
+          {
+            "name": "durable candidate PASS",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "дописан ровно один verdict",
+            "ok": true,
+            "detail": {
+              "count": 1
+            }
+          },
+          {
+            "name": "байты verdict равны выбранному candidate",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "первый вызов создал verdict",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "второй вызов не создаёт второй verdict",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "после восстановления PASS связан с анкером",
+            "ok": true,
+            "detail": {
+              "passed": true,
+              "anchorStatus": "ANCHOR_OK"
+            }
+          },
+          {
+            "name": "нового POST при восстановлении не было",
+            "ok": true,
+            "detail": {
+              "mutationCount": 1
+            }
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "V-08",
+      "subject": "Ключ owner предъявлен как подпись анкера",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-v08-owner-as-anchor.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "исходный доверенный прогон PASS",
+            "ok": true,
+            "detail": {
+              "verdict": "PASS"
+            }
+          },
+          {
+            "name": "выбран исход anchor",
+            "ok": true,
+            "detail": {
+              "outcome": "anchor"
+            }
+          },
+          {
+            "name": "owner-подпись анкера отвергнута ANCHOR_SIGNATURE_INVALID",
+            "ok": true,
+            "detail": {
+              "code": "ANCHOR_SIGNATURE_INVALID",
+              "message": "Подпись не от ключа этого домена"
+            }
+          },
+          {
+            "name": "observeTrusted не показывает PASS при owner-подписи",
+            "ok": true,
+            "detail": {
+              "passed": false,
+              "verdict": null,
+              "state": "inconsistent",
+              "anchorStatus": "ANCHOR_SIGNATURE_INVALID"
+            }
+          },
+          {
+            "name": "после восстановления анкера PASS снова виден",
+            "ok": true,
+            "detail": {
+              "passed": true
+            }
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "V-09",
+      "subject": "Гонка бюджета и уже созданного анкера PASS",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-v09-budget-race.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "V-10",
+      "subject": "Подложный PASS-candidate без связки approval/consumption",
+      "status": "TODO",
+      "reason": "зависимости есть, проверка каркаса волны 1 ещё не реализована",
+      "evidence": {
+        "note": "реализовать в волне 2 на SHA интеграции"
+      }
+    },
+    {
+      "id": "V-11",
+      "subject": "Выбор anchor записан, verdict ещё нет, падение",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-v07-anchor-before-verdict.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "процесс погиб после анкера (exit 42)",
+            "ok": true,
+            "detail": {
+              "status": 42,
+              "childError": null,
+              "childResult": null,
+              "stderr": ""
+            }
+          },
+          {
+            "name": "durable candidate PASS",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "дописан ровно один verdict",
+            "ok": true,
+            "detail": {
+              "count": 1
+            }
+          },
+          {
+            "name": "байты verdict равны выбранному candidate",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "первый вызов создал verdict",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "второй вызов не создаёт второй verdict",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "после восстановления PASS связан с анкером",
+            "ok": true,
+            "detail": {
+              "passed": true,
+              "anchorStatus": "ANCHOR_OK"
+            }
+          },
+          {
+            "name": "нового POST при восстановлении не было",
+            "ok": true,
+            "detail": {
+              "mutationCount": 1
+            }
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "V-12",
+      "subject": "Неполный terminal-choice.json блокирует PASS",
+      "status": "TODO",
+      "reason": "зависимости есть, проверка каркаса волны 1 ещё не реализована",
+      "evidence": {
+        "note": "реализовать в волне 2 на SHA интеграции"
+      }
+    },
+    {
+      "id": "L-01",
+      "subject": "Два процесса, один approval, разные runId",
+      "status": "TODO",
+      "reason": "зависимости есть, проверка каркаса волны 1 ещё не реализована",
+      "evidence": {
+        "note": "реализовать в волне 2 на SHA интеграции"
+      }
+    },
+    {
+      "id": "L-02",
+      "subject": "Cancel до INTENT",
+      "status": "TODO",
+      "reason": "зависимости есть, проверка каркаса волны 1 ещё не реализована",
+      "evidence": {
+        "note": "реализовать в волне 2 на SHA интеграции"
+      }
+    },
+    {
+      "id": "L-03",
+      "subject": "Падение после consumption и до POST",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-l03-crash-after-consumption.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "прогон терминальный и не PASS",
+            "ok": true,
+            "detail": {
+              "verdict": "INCONCLUSIVE",
+              "reasonCode": "INTEGRITY_ERROR"
+            }
+          },
+          {
+            "name": "файл расхода создан",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "расход связан с runId",
+            "ok": true,
+            "detail": {
+              "consumption": {
+                "approvalId": "approval-c6feeeb3",
+                "runId": "rt2-l03",
+                "decisionId": "9d6d8323-07ef-46d2-87bf-0fbf2833fdb1",
+                "inputsHash": "0c09d84d5e0bc002d9cb6e2c20df09ae165cc453fabbaea4a1ccd252d7712251",
+                "environmentGeneration": 1,
+                "consumedAt": "2026-11-13T07:27:05.140Z",
+                "bodySha256": "23ddaf2a250df94605ae942b10a07d2c1da5cc82870dd68e3d18e6d33020eedc"
+              }
+            }
+          },
+          {
+            "name": "стенд получил 0 POST",
+            "ok": true,
+            "detail": {
+              "mutationCount": 0
+            }
+          },
+          {
+            "name": "mutation-intent записан",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "request (POST) отсутствует",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "reconcile сохраняет терминальный verdict",
+            "ok": true,
+            "detail": {
+              "before": "INCONCLUSIVE",
+              "after": "INCONCLUSIVE"
+            }
+          },
+          {
+            "name": "стенд получил 0 POST",
+            "ok": true,
+            "detail": {
+              "mutationCount": 0
+            }
+          },
+          {
+            "name": "второго request evidence нет",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "verdict ровно один",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "доверенный вход отказал BLOCKED CONTRACT_INVALID/AUTH_UNAVAILABLE",
+            "ok": true,
+            "detail": {
+              "verdict": "BLOCKED",
+              "reasonCode": "CONTRACT_INVALID"
+            }
+          },
+          {
+            "name": "стенд получил 0 POST",
+            "ok": true,
+            "detail": {
+              "mutationCount": 0
+            }
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "L-04",
+      "subject": "Падение после POST: reconcile без второго POST",
+      "status": "TODO",
+      "reason": "зависимости есть, проверка каркаса волны 1 ещё не реализована",
+      "evidence": {
+        "note": "реализовать в волне 2 на SHA интеграции"
+      }
+    },
+    {
+      "id": "L-05",
+      "subject": "Повторный reconcile терминального прогона",
+      "status": "TODO",
+      "reason": "зависимости есть, проверка каркаса волны 1 ещё не реализована",
+      "evidence": {
+        "note": "реализовать в волне 2 на SHA интеграции"
+      }
+    },
+    {
+      "id": "L-06",
+      "subject": "Новая попытка с использованным approval",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-l06-used-approval.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "первый доверенный прогон PASS",
+            "ok": true,
+            "detail": {
+              "verdict": "PASS",
+              "reasonCode": "NONE"
+            }
+          },
+          {
+            "name": "стенд получил 1 POST",
+            "ok": true,
+            "detail": {
+              "mutationCount": 1
+            }
+          },
+          {
+            "name": "повторный расход на новом runId -> APPROVAL_REPLAY",
+            "ok": true,
+            "detail": {
+              "code": "APPROVAL_REPLAY"
+            }
+          },
+          {
+            "name": "повторное закрепление approvalId с другим содержимым отвергнуто",
+            "ok": true,
+            "detail": {
+              "code": "CONTRACT_INVALID"
+            }
+          },
+          {
+            "name": "доверенный вход отказал BLOCKED CONTRACT_INVALID/AUTH_UNAVAILABLE",
+            "ok": true,
+            "detail": {
+              "verdict": "BLOCKED",
+              "reasonCode": "CONTRACT_INVALID"
+            }
+          },
+          {
+            "name": "стенд получил 1 POST",
+            "ok": true,
+            "detail": {
+              "mutationCount": 1
+            }
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "L-07",
+      "subject": "Обрыв после CREATE_NEW расхода",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "tornCode": "CONSUMPTION_INCOMPLETE",
+        "second": {
+          "ok": false,
+          "ack": false,
+          "code": "CONSUMPTION_INCOMPLETE",
+          "message": "Файл расхода занят и неполон"
+        },
+        "childExit": 0,
+        "unchanged": true,
+        "tornFile": "{"
+      }
+    },
+    {
+      "id": "L-08",
+      "subject": "Старый start() не принимает approval/адаптер",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-l08-old-start-rejects-trust.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "start() с аргументом trustRoot отвергнут",
+            "ok": true,
+            "detail": {
+              "code": "CONTRACT_INVALID"
+            }
+          },
+          {
+            "name": "start() с аргументом approvalId отвергнут",
+            "ok": true,
+            "detail": {
+              "code": "CONTRACT_INVALID"
+            }
+          },
+          {
+            "name": "start() с аргументом approval отвергнут",
+            "ok": true,
+            "detail": {
+              "code": "CONTRACT_INVALID"
+            }
+          },
+          {
+            "name": "start() с аргументом standPublicKey отвергнут",
+            "ok": true,
+            "detail": {
+              "code": "CONTRACT_INVALID"
+            }
+          },
+          {
+            "name": "start() с аргументом signerPipe отвергнут",
+            "ok": true,
+            "detail": {
+              "code": "CONTRACT_INVALID"
+            }
+          },
+          {
+            "name": "start() с аргументом adapter отвергнут",
+            "ok": true,
+            "detail": {
+              "code": "CONTRACT_INVALID"
+            }
+          },
+          {
+            "name": "стенд получил 0 POST",
+            "ok": true,
+            "detail": {
+              "mutationCount": 0
+            }
+          },
+          {
+            "name": "каталог прогона не создан",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "consumption не создан",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "approval остаётся issued",
+            "ok": true,
+            "detail": {
+              "state": "issued"
+            }
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "L-09",
+      "subject": "Гонка CREATE_NEW расхода на Windows",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "acks": 1,
+        "results": [
+          {
+            "ok": true,
+            "ack": true,
+            "code": "TRUST_OK"
+          },
+          {
+            "ok": false,
+            "ack": false,
+            "code": "APPROVAL_REPLAY",
+            "message": "Approval уже связан с другим runId"
+          }
+        ],
+        "consumption": {
+          "approvalId": "approval-l09",
+          "runId": "run-l09-p1",
+          "hasBodySha256": true
+        }
+      }
+    },
+    {
+      "id": "B-01",
+      "subject": "Операция не из реестра 0.1",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-b01-registry.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "доверенный вход отказал BLOCKED CONTRACT_INVALID",
+            "ok": true,
+            "detail": {
+              "verdict": "BLOCKED",
+              "reasonCode": "CONTRACT_INVALID"
+            }
+          },
+          {
+            "name": "стенд получил 0 POST",
+            "ok": true,
+            "detail": {
+              "mutationCount": 0
+            }
+          },
+          {
+            "name": "в журнале нет mutation-intent/request",
+            "ok": true,
+            "detail": {
+              "found": []
+            }
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-02",
+      "subject": "Повторный POST на уже созданный fixture",
+      "status": "TODO",
+      "reason": "зависимости есть, проверка каркаса волны 1 ещё не реализована",
+      "evidence": {
+        "note": "реализовать в волне 2 на SHA интеграции"
+      }
+    },
+    {
+      "id": "B-03",
+      "subject": "Набор эффектов в approval не совпал",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-b03-effects-mismatch.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "доверенный вход отказал BLOCKED CONTRACT_INVALID",
+            "ok": true,
+            "detail": {
+              "verdict": "BLOCKED",
+              "reasonCode": "CONTRACT_INVALID"
+            }
+          },
+          {
+            "name": "стенд получил 0 POST",
+            "ok": true,
+            "detail": {
+              "mutationCount": 0
+            }
+          },
+          {
+            "name": "в журнале нет mutation-intent/request",
+            "ok": true,
+            "detail": {
+              "found": []
+            }
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-04",
+      "subject": "Снимок fixtureId не совпал с approval",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-b04-fixture-mismatch.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "доверенный вход отказал BLOCKED CONTRACT_INVALID/AUTH_UNAVAILABLE",
+            "ok": true,
+            "detail": {
+              "verdict": "BLOCKED",
+              "reasonCode": "CONTRACT_INVALID"
+            }
+          },
+          {
+            "name": "стенд получил 0 POST",
+            "ok": true,
+            "detail": {
+              "mutationCount": 0
+            }
+          },
+          {
+            "name": "в журнале нет mutation-intent/request",
+            "ok": true,
+            "detail": {
+              "found": []
+            }
+          },
+          {
+            "name": "объект fixtureId=B не создан",
+            "ok": true,
+            "detail": {
+              "recordCount": 0
+            }
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-05",
+      "subject": "HTTP 200 на существующий объект не PASS",
+      "status": "PASS",
+      "reason": null,
+      "evidence": {
+        "script": "rt2-b05-http-200-existing.mjs",
+        "target": {
+          "liveDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "snapshotDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\qa-rt-matrix-pin-eea6376c7fba4196",
+          "head": "07c21c4db936627df9a3c874015327ea992a335a",
+          "dirtyAtStart": false,
+          "diffHashAtStart": "",
+          "stringDiffHash": "",
+          "snapshotKey": "pinned",
+          "stable": true
+        },
+        "checks": [
+          {
+            "name": "объект заранее создан прямым POST (201)",
+            "ok": true,
+            "detail": {
+              "status": 201
+            }
+          },
+          {
+            "name": "стенд насчитал 1 мутацию до прогона",
+            "ok": true,
+            "detail": {
+              "mutationCount": 1
+            }
+          },
+          {
+            "name": "доверенный прогон не даёт PASS на HTTP 200",
+            "ok": true,
+            "detail": {
+              "verdict": "INCONCLUSIVE",
+              "reasonCode": "RESULT_UNCONFIRMED"
+            }
+          },
+          {
+            "name": "новой мутации не было (POST вернул 200, mutationCount не вырос)",
+            "ok": true,
+            "detail": {
+              "mutationCount": 1
+            }
+          },
+          {
+            "name": "второго объекта не создано",
+            "ok": true,
+            "detail": {
+              "recordCount": 1
+            }
+          },
+          {
+            "name": "observeTrusted не показывает PASS",
+            "ok": true,
+            "detail": {
+              "passed": false,
+              "verdict": "INCONCLUSIVE"
+            }
+          },
+          {
+            "name": "снимок целевой ветки снят стабильно (HEAD+diff)",
+            "ok": true,
+            "detail": {
+              "head": "07c21c4db936627df9a3c874015327ea992a335a",
+              "dirty": false,
+              "diffHash": ""
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
+
+EXITCODE:0
+finished=2026-11-13T10:28:02.4375969+03:00

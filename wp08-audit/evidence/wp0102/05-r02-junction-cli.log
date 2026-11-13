@@ -1,0 +1,9 @@
+﻿CMD node packages/trust/keygen.mjs --secrets C:\Users\gvi\AppData\Local\Temp\wp0102-r02-cli-junction-ZVSpI8\safe-link\secrets --trust-root C:\Users\gvi\AppData\Local\Temp\wp0102-r02-cli-junction-ZVSpI8\trust
+EXITCODE=0
+STDOUT=owner f438afaaf4080d4f8df93274e46b700d01bfd0ae57b24d20c25fb85ff168bca8
+anchor-signer 2685c5bcf1c81260635959772dc621f059964b5ef3e0c3246f271c3f6610862e
+STDERR=
+REAL SECRETS DIR=C:\Users\gvi\AppData\Local\Temp\wp0102-r02-cli-junction-ZVSpI8\store\runs\run-1\secrets
+owner.key inside runs? true
+files in runDir/secrets: ["anchor.key","owner.key"]
+EXITCODE:0

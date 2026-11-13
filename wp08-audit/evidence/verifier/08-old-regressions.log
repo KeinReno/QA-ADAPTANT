@@ -1,0 +1,73 @@
+﻿COMMAND: node --test --test-concurrency=1 --test-timeout=45000 tests/contracts.test.mjs tests/contract-links.test.mjs tests/runtime.test.mjs tests/faults.test.mjs tests/lifecycle.test.mjs tests/audit-wp.test.mjs tests/evidence-readers.test.mjs tests/review-grok.test.mjs
+HEAD: 07c21c4db936627df9a3c874015327ea992a335a
+date=2026-11-13T10:31:24.4585555+03:00
+
+✔ WP-A: второй START во время preflight не публикует вердикт и не портит журнал (7454.0177ms)
+✔ WP-A: удаление locks и leases не создаёт второй объект (3947.1577ms)
+✔ WP-A: новый runId с тем же fixtureId не создаёт второй объект (2470.7738ms)
+✔ WP-B: правка только хвоста evidence не превращает INCONCLUSIVE в PASS (2542.9457ms)
+✔ WP-B: самодекларация approval и урезанные effects не дают PASS (85.4498ms)
+✔ WP-C: CANCEL после BROWSER_DONE публикует INCONCLUSIVE, а не PASS (2489.687ms)
+✔ WP-C: POST без fixtureId не считается мутацией (11.5967ms)
+✔ DS-P1-022: appliesWhen не превращает нарушенный эффект в PASS (67.0303ms)
+✔ DS-P1-022: подмена equals не подтверждает чужое сохранённое значение (69.9416ms)
+✔ DS-P2-025: байты после анкера не выглядят как повреждение журнала (19.6651ms)
+✔ DS-P2-013: пустой каталог прогона не отдаёт сырой ENOENT и не удваивает мутацию (2260.3899ms)
+✔ DS-P2-013: усечённый evidence останавливает повторную мутацию (2262.5247ms)
+✔ DS-P2-026: каталог fixture без bind.json не блокирует прогон навсегда (2318.8582ms)
+✔ DS-P2-027: HTTP 200 существующего объекта не становится PASS нового прогона (5189.8762ms)
+✔ bundle отклоняет подмену операции, входов, fixture и прав до отправки (36.8778ms)
+✔ network контракт не принимает Dev, hostname, userinfo и скрытый путь (0.9201ms)
+✔ доказательство должно проверять точное значение и принадлежать запуску (12.5145ms)
+✔ unknown appliesWhen нельзя скрыть как неприменимую проверку (1.1924ms)
+✔ операция требует хотя бы один безусловный обязательный эффект (13.4353ms)
+✔ неподдерживаемые графы, чужая операция и скрытый повтор отклоняются (6.4377ms)
+✔ статус APPROVED требует квитанции, DRAFT не маскирует approval (2.5843ms)
+✔ PASS без владения, целостности и явных доказательств запрещён (1.9218ms)
+✔ доказательство запрещает traversal и непредусмотренные поля (3.1331ms)
+✔ полнота PASS связана с исходными effects, а не произвольным check (1.3335ms)
+✔ мутацию нельзя спрятать за mutation=false или чужим operationId (0.9431ms)
+✔ FAIL требует доказанного нарушения, а не пустого VIOLATED (0.5473ms)
+✔ append-only evidence выдерживает 1, 2 и 6 читателей файла (12191.5376ms)
+✔ хвост без коммита не затирается, откат коммита и пропавший артефакт дают INTEGRITY_ERROR (107.7879ms)
+✔ пропуск, повреждение и чужой хвост не подтверждают последующие записи (175.1499ms)
+✔ чужой хвост не подтверждается, а осиротевший artifact не блокирует продолжение (206.1927ms)
+✔ активный прогон выдерживает 1, 2 и 6 процессов OBSERVE (20053.0607ms)
+✔ fault delayedRead: PASS, POST=1 (4275.4355ms)
+✔ fault wrongExecutor: FAIL, POST=1 (8527.4169ms)
+✔ fault partialSave: FAIL, POST=1 (8446.2949ms)
+✔ fault lostResponse: INCONCLUSIVE, POST=1 (3274.7658ms)
+✔ fault crashAfterMutation: INCONCLUSIVE, POST=1 (3364.4182ms)
+✔ fault missingEvidence: INCONCLUSIVE, POST=1 (2384.3616ms)
+✔ fault changedEnvironment: INCONCLUSIVE, POST=1 (2273.312ms)
+✔ fault untrustedId: INCONCLUSIVE, POST=1 (3611.6877ms)
+✔ fault duplicateIntent: PASS, POST=1 (3460.2819ms)
+✔ fault dropIntentAck: INCONCLUSIVE, POST=0 (3718.133ms)
+✔ fault driftBody: INCONCLUSIVE, POST=0 (2657.5774ms)
+✔ fault ambiguousButton: BLOCKED, POST=0 (1943.6887ms)
+✔ повторный START и OBSERVE не запускают браузер и не меняют терминальный результат (3210.2348ms)
+✔ CANCEL до durable intent не отправляет POST (461.4619ms)
+✔ CANCEL после dispatch сохраняет неизвестность и не повторяет POST (4068.7113ms)
+✔ durable lock блокирует второй прогон того же fixture (5627.0517ms)
+✔ очистка чужого объекта отклоняется без удаления (7014.8199ms)
+✔ повреждение evidence обнаруживается при чтении после завершения (4483.9024ms)
+✔ Browser отклоняет snapshot, изменённый после preflight Control (1969.6693ms)
+✔ новый Control процесс после аварии выполняет reconcile без повторного POST (6182.1429ms)
+✔ Grok P0: сохранённый PASS с вымышленными evidence отклоняется при START и OBSERVE (5100.1472ms)
+✔ Grok P0: cross-process CANCEL не публикует вердикт до остановки владельца и не допускает поздний POST (5032.2466ms)
+✔ Grok P0: reconcile после потери Control без durable intent сохраняет неизвестность и не оставляет поздний POST (3222.2066ms)
+✔ Grok P1: удаление fixture lock не разрешает два POST для одного fixture (6595.9685ms)
+✔ Grok P2: временные HTTP 503 при независимом чтении не обрывают budget (7563.8087ms)
+✔ Grok P2: неполная цепочка evidence не помечается как проверенная целостность (3614.096ms)
+✔ Grok P1: fixture требует авторизацию и фильтр, идемпотентен и не считает отклонённое тело мутацией (42.5817ms)
+✔ локальная вертикаль: реальные Browser и Verification подтверждают создание записи (3467.6578ms)
+ℹ tests 59
+ℹ suites 0
+ℹ pass 59
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 184388.7119
+
+EXITCODE:0

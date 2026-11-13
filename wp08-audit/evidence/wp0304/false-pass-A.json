@@ -1,0 +1,13 @@
+{
+  "scenario": "A: swap after POST, before Verification independent reads",
+  "verdict": "PASS",
+  "reasonCode": "NONE",
+  "observedPassed": true,
+  "observedTrusted": true,
+  "standMutationCount": 1,
+  "realStoredRecordComment": null,
+  "rogueTriggered": true,
+  "rogueEnvironmentGets": 2,
+  "rogueRecordGets": 1,
+  "roguePosts": 0
+}

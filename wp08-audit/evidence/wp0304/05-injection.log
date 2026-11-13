@@ -1,0 +1,12 @@
+﻿✔ E-05: повреждённый реестр сред — fail-closed без POST (3614.2349ms)
+✔ Подмена approval вне верификации: подделка, незакреплённый документ, чужой owner (8969.9984ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 13337.7266
+COMMAND: node --test wp08-audit/tests/wp0304-05-injection.mjs
+EXITCODE: 0

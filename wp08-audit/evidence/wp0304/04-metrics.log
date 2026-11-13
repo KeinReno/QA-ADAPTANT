@@ -1,0 +1,23 @@
+﻿{
+  "portOwnerCheckMs": {
+    "samples": [
+      55.45,
+      41,
+      43.23,
+      41.53,
+      48.46
+    ],
+    "average": 45.93
+  },
+  "e04": {
+    "verdict": "INCONCLUSIVE",
+    "reasonCode": "EVIDENCE_MISSING",
+    "message": "Для завершения обязательных проверок недостаточно независимых данных",
+    "standPostCount": 1,
+    "foreignSecretDeliveredToStand": true,
+    "recordCredentialRef": "prod:foreign-secret-7",
+    "standRejectedToken": true
+  },
+  "atestCount": 3
+}
+EXITCODE: 0

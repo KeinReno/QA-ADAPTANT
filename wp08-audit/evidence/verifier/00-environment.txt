@@ -1,0 +1,8 @@
+﻿date=2026-11-13T10:14:33.6053009+03:00
+cwd=C:\Users\gvi\Desktop\QA-ADAPTANT-WP08-AUDIT
+node=v24.16.0
+npm=11.13.0
+git=git version 2.55.0.windows.2
+head=07c21c4db936627df9a3c874015327ea992a335a
+status=?? wp08-audit/
+ps=5.1.26100.8875

@@ -1,0 +1,27 @@
+﻿✔ PDP: policy.mjs не импортирует I/O-модули и не вызывает сеть/диск (3.2858ms)
+✔ PDP: decide работает при заглушенных fs/net/http/fetch (никакого I/O) (4.6054ms)
+✔ PDP: decisions/obligations по фазам, ALLOW не проецируется в verdict (10.7814ms)
+✔ PDP: невозможен ALLOW без approval (10.0619ms)
+✔ PDP: невозможен ALLOW без attestation и при чужой среде (11.0153ms)
+✔ PDP: невозможен ALLOW при отозванном/чужом principal и слабой аутентификации (26.7731ms)
+✔ PDP: связка approval с входами/операцией/эффектами/ресурсом/fixture (3.3007ms)
+✔ PDP: порядок проверок (revoked principal раньше SID; missing approval раньше среды) (8.9493ms)
+✔ PDP: trustStore недоступен -> INDETERMINATE TRUST_STORE_UNAVAILABLE (1.2202ms)
+✔ PDP: fail-closed на противоречивых фактах (ошибка при валидном теле) (2.4984ms)
+✔ PDP: форма facts строгая, на некорректной форме DENY CONTRACT_INVALID без TypeError (3.5265ms)
+✔ PDP: расход approval — replay/consumed/incomplete (4.249ms)
+✔ PDP: реестр операций 0.1 обязателен (0.6815ms)
+✔ ГРАНИЦА: PDP выдаёт ALLOW на вручную собранных facts без проверки подписи approval и аттестации (0.6ms)
+✔ R-09 подтверждён: чтение ALLOW при поколении реестра != ожидаемого и без живой аттестации (1.5032ms)
+✔ Проекция: точные коды 0.1 по таблице контракта (0.4731ms)
+✔ PDP: facts не мутируются и phase входит в контракт (0.8755ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 957.5847
+COMMAND: node --test wp08-audit/tests/wp0304-01-pdp.mjs
+EXITCODE: 0
