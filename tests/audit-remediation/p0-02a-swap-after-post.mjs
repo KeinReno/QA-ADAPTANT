@@ -20,18 +20,26 @@ await runScenario({
     let attackWorld = null;
     let rogue = null;
     try {
-      // 0) Честный контроль: доверенный путь на этом стенде вообще работает.
-      controlWorld = await makeWorld(M, { standOptions: { storeRecords: 'full' } });
-      const controlCase = controlWorld.prepare({ runId: 'reaudit-p002a-control' });
-      const controlApproval = controlWorld.approvalFor(controlCase);
-      const controlResult = await M.trusted.startTrusted(controlCase.bundle, controlWorld.trustedOptions(controlApproval));
-      const controlObserved = await M.trusted.observeTrusted({ root: controlWorld.root, trustRoot: controlWorld.trustRoot, runId: controlCase.runId });
-      const honestOk = controlResult?.verdict?.verdict === 'PASS' && controlObserved.passed === true && controlWorld.stand.mutationCount === 1;
+      // 0) Честный контроль: доверенный путь на этом стенде вообще работает (до 2 попыток).
+      let honestOk = false;
+      let controlResult = null;
+      let controlObserved = null;
+      let controlMutation = null;
+      for (let controlAttempt = 1; controlAttempt <= 2 && !honestOk; controlAttempt++) {
+        controlWorld = await makeWorld(M, { standOptions: { storeRecords: 'full' } });
+        try {
+          const controlCase = controlWorld.prepare({ runId: 'reaudit-p002a-control-' + controlAttempt });
+          const controlApproval = controlWorld.approvalFor(controlCase);
+          controlResult = await M.trusted.startTrusted(controlCase.bundle, controlWorld.trustedOptions(controlApproval));
+          controlObserved = await M.trusted.observeTrusted({ root: controlWorld.root, trustRoot: controlWorld.trustRoot, runId: controlCase.runId });
+          controlMutation = controlWorld.stand.mutationCount;
+          honestOk = controlResult?.verdict?.verdict === 'PASS' && controlObserved.passed === true && controlMutation === 1;
+        } catch { honestOk = false; }
+        finally { await controlWorld.cleanup(); controlWorld = null; }
+      }
       check(checks, 'честный доверенный прогон даёт PASS и ровно один POST (иначе атака не доказательна)', honestOk, {
-        verdict: controlResult?.verdict?.verdict || null, passed: controlObserved.passed, mutationCount: controlWorld.stand.mutationCount
+        verdict: controlResult?.verdict?.verdict || null, passed: controlObserved?.passed ?? null, mutationCount: controlMutation
       });
-      await controlWorld.cleanup();
-      controlWorld = null;
       if (!honestOk) return { defectObserved: false, actual: 'честный контроль не прошёл: атака не выполнена', evidence: {}, checks };
 
       // 1) Атака: неполная запись реального стенда, затем подмена в окне после POST.

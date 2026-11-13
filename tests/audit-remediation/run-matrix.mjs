@@ -18,14 +18,18 @@ import { gitInfo } from './audit-lib.mjs';
 
 export const SCENARIOS = [
   { id: 'AUD-P0-01', script: 'p0-01-forge-candidate.mjs', title: 'P0-01: подложный candidate + годный анкер' },
+  { id: 'AUD-P0-01B', script: 'p0-01b-key-provenance.mjs', title: 'P0-01B: происхождение ключа Verification' },
   { id: 'AUD-P0-02-A', script: 'p0-02a-swap-after-post.mjs', title: 'P0-02-A: подмена стенда после POST' },
   { id: 'AUD-P0-02-B', script: 'p0-02b-window-swap.mjs', title: 'P0-02-B: подмена в окне T-C→POST, утечка Bearer' },
+  { id: 'AUD-P0-02C', script: 'p0-02c-replay-pinned.mjs', title: 'P0-02C: pinned-соединение, гибель стенда, replay подписанных ответов' },
   { id: 'AUD-P1-01', script: 'p1-01-weak-observer.mjs', title: 'P1-01: наблюдатель слабее 0.1' },
   { id: 'AUD-P1-02', script: 'p1-02-v07-recovery.mjs', title: 'P1-02: V-07 потеря анкерованного PASS' },
+  { id: 'AUD-P1-03', script: 'p1-03-substitution-after-anchor.mjs', title: 'P1-03: подмена candidate/read-set/attestation после подписи' },
   { id: 'AUD-P2-R02', script: 'p2-r02-junction.mjs', title: 'P2: R-02 junction в runs' },
   { id: 'AUD-P2-APPROVALID', script: 'p2-approval-id-only.mjs', title: 'P2: путь только approvalId' },
   { id: 'AUD-P2-PUBLICATION', script: 'p2-publication-no-choice.mjs', title: 'P2: verdict без terminal-choice' },
-  { id: 'AUD-P2-E04', script: 'p2-e04-credential-ref.mjs', title: 'P2: E-04 credentialRef' }
+  { id: 'AUD-P2-E04', script: 'p2-e04-credential-ref.mjs', title: 'P2: E-04 credentialRef' },
+  { id: 'AUD-P2-OLDENTRY', script: 'p2-old-entry-trust.mjs', title: 'P2: обход через старый вход start()' }
 ];
 
 export const VERDICT_EXIT = { PASS: 0, FAIL: 1, INCONCLUSIVE: 3 };

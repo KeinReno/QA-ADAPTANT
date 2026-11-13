@@ -15,7 +15,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomUUID, sign as signBytes } from 'node:crypto';
 
 export const TOOL = 'WP08-REAUDIT';
 export const HEREWORKTREE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -199,6 +199,39 @@ form.addEventListener('submit',async event=>{
 });
 </script></html>`;
 
+// §10.2: подпись ответа стенда доменом stand-response (совместимо с R-B; на 0.1 заголовок игнорируется).
+export const STAND_CHALLENGE_HEADER = 'x-qa-stand-challenge';
+export const STAND_RESPONSE_HEADER = 'x-qa-stand-response';
+export const STAND_RUN_ID_HEADER = 'x-qa-run-id';
+const hex64Pattern = /^[a-f0-9]{64}$/;
+
+export function publicKeyIdOf(publicKey) {
+  return createHash('sha256').update(Buffer.from(publicKey.export({ format: 'jwk' }).x, 'base64url')).digest('hex');
+}
+
+export function signStandResponse(keys, fields, canonical) {
+  const body = { schemaVersion: '0.2.1', domain: 'stand-response', ...fields, keyId: keys.standKeyId };
+  const signature = signBytes(null, Buffer.from(canonical(body), 'utf8'), keys.privateKey).toString('hex');
+  return { ...body, signature, signatureAlgorithm: 'Ed25519' };
+}
+
+export function encodeStandResponse(statement) {
+  return Buffer.from(JSON.stringify(statement), 'utf8').toString('base64url');
+}
+
+export async function captureSignedStandResponse(stand, requestPath, challenge) {
+  const response = await fetch(new URL(requestPath, stand.baseUrl), {
+    method: 'GET', headers: { accept: 'application/json', [STAND_CHALLENGE_HEADER]: challenge }
+  });
+  const raw = response.headers.get(STAND_RESPONSE_HEADER);
+  let statement = null;
+  if (raw) {
+    try { statement = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')); } catch { statement = null; }
+  }
+  const body = await response.json().catch(() => null);
+  return { status: response.status, body, statement, challenge };
+}
+
 export async function startControlledStand(M, options = {}) {
   const {
     port = 0, environmentId = randomUUID(), generation = 1, fingerprint = 'audit-fingerprint-' + randomUUID().slice(0, 8),
@@ -209,7 +242,8 @@ export async function startControlledStand(M, options = {}) {
   const authToken = randomUUID();
   const state = {
     attestCount: 0, postCount: 0, getRecordCount: 0, environmentCount: 0,
-    attestAt: [], postAt: [], posts: [], attestRequests: [], records: [], requests: [], notes: [], closed: false
+    attestAt: [], postAt: [], posts: [], attestRequests: [], records: [], requests: [], notes: [], closed: false,
+    signedChallenges: new Set()
   };
   let origin = null;
   const stand = {
@@ -221,14 +255,31 @@ export async function startControlledStand(M, options = {}) {
     get readCount() { return state.getRecordCount; }
   };
   const authorized = req => !rejectToken && (acceptAnyToken || req.headers.authorization === 'Bearer ' + authToken);
-  const send = (res, status, body) => {
+  const writeJson = (res, status, body, req, url) => {
     const bytes = Buffer.from(JSON.stringify(body));
-    res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': bytes.length, 'cache-control': 'no-store' });
+    const headers = { 'content-type': 'application/json; charset=utf-8', 'content-length': bytes.length, 'cache-control': 'no-store' };
+    const challengeHeader = req && typeof req.headers[STAND_CHALLENGE_HEADER] === 'string' ? req.headers[STAND_CHALLENGE_HEADER] : null;
+    const signResponse = challengeHeader !== null && url && (url.pathname === '/records' || url.pathname === '/attest');
+    if (signResponse) {
+      state.signedChallenges.add(challengeHeader);
+      const statement = signStandResponse(keys, {
+        environmentId, generation, origin, standKeyId: keys.standKeyId, challenge: challengeHeader,
+        method: req.method, path: url.pathname, status,
+        bodySha256: createHash('sha256').update(M.canonical.canonical(body), 'utf8').digest('hex'),
+        pid: process.pid, issuedAt: new Date().toISOString()
+      }, M.canonical.canonical);
+      headers[STAND_RESPONSE_HEADER] = encodeStandResponse(statement);
+    }
+    res.writeHead(status, headers);
     res.end(bytes);
   };
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
-    state.requests.push({ at: Date.now(), method: req.method, path: url.pathname, authorization: req.headers.authorization || null });
+    const challengeHeader = typeof req.headers[STAND_CHALLENGE_HEADER] === 'string' ? req.headers[STAND_CHALLENGE_HEADER] : null;
+    state.requests.push({ at: Date.now(), method: req.method, path: url.pathname, authorization: req.headers.authorization || null, challenge: challengeHeader });
+    if (challengeHeader !== null && !hex64Pattern.test(challengeHeader)) { writeJson(res, 400, { error: 'challenge_invalid' }, req, url); return; }
+    if (challengeHeader !== null && state.signedChallenges.has(challengeHeader)) { writeJson(res, 409, { error: 'replay_challenge' }, req, url); return; }
+    const send = (res2, status, body) => writeJson(res2, status, body, req, url);
     if (req.method === 'GET' && url.pathname === '/') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
       res.end(fixtureHtml);
@@ -299,8 +350,8 @@ export async function startControlledStand(M, options = {}) {
 // Rogue-стенд на освободившемся порту.
 // recordMode: 'static' — фиксированная запись; 'learn' — запись строится из фактического POST.
 // attestMode: 'none' — /attest отвечает 404; 'replay' — воспроизводит захваченную подпись.
-export async function startRogue({ port, environmentId, fingerprint, recordMode = 'static', record = null, attestMode = 'none', attestation = null }) {
-  const state = { envGets: 0, recordGets: 0, attestGets: 0, posts: [], requests: [], closed: false, record };
+export async function startRogue({ port, environmentId, fingerprint, recordMode = 'static', record = null, attestMode = 'none', attestation = null, responseReplay = null, responseReplayPath = null }) {
+  const state = { envGets: 0, recordGets: 0, attestGets: 0, posts: [], requests: [], closed: false, record, replayServed: 0 };
   const send = (res, status, body) => {
     const bytes = Buffer.from(JSON.stringify(body));
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': bytes.length, 'cache-control': 'no-store' });
@@ -331,7 +382,18 @@ export async function startRogue({ port, environmentId, fingerprint, recordMode 
       const fixtureId = url.searchParams.get('fixtureId');
       state.recordGets++;
       const matches = state.record ? [state.record] : [];
-      send(res, 200, { records: matches.filter(item => !fixtureId || item.fixtureId === fixtureId) });
+      const body = { records: matches.filter(item => !fixtureId || item.fixtureId === fixtureId) };
+      const challengeHeader = typeof req.headers[STAND_CHALLENGE_HEADER] === 'string' ? req.headers[STAND_CHALLENGE_HEADER] : null;
+      if (responseReplay && challengeHeader !== null && (responseReplayPath === null || responseReplayPath === url.pathname)) {
+        const headers = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', [STAND_RESPONSE_HEADER]: encodeStandResponse(responseReplay) };
+        const bytes = Buffer.from(JSON.stringify(body));
+        headers['content-length'] = bytes.length;
+        state.replayServed++;
+        res.writeHead(200, headers);
+        res.end(bytes);
+        return;
+      }
+      send(res, 200, body);
       return;
     }
     if (req.method === 'POST' && url.pathname === '/records') {
@@ -662,6 +724,34 @@ export function fileExists(file) {
 
 export function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+}
+
+// Процесс-двойник Verification: тот же образ apps/verification/trusted-worker.mjs, но из копии
+// по другому физическому пути. Используется атаками на происхождение ключа.
+export async function spawnFakeTrustedWorker({ baseDir, withSuffix = true }) {
+  const directory = withSuffix ? path.join(baseDir, 'apps', 'verification') : path.join(baseDir, 'copy');
+  fs.mkdirSync(directory, { recursive: true });
+  const file = path.join(directory, 'trusted-worker.mjs');
+  fs.writeFileSync(file, "process.on('SIGTERM', () => process.exit(0));\nsetInterval(() => {}, 1000);\n");
+  const child = spawn(process.execPath, [file], { stdio: 'ignore', windowsHide: true });
+  await new Promise(resolve => setTimeout(resolve, 250));
+  return {
+    file, withSuffix, pid: child.pid, alive: () => { try { process.kill(child.pid, 0); return true; } catch { return false; } },
+    kill: () => { try { child.kill('SIGKILL'); } catch { /* уже мёртв */ } }
+  };
+}
+
+// Подготовка подложного прогона + расход настоящего approval (без анкера).
+export function prepareForgeWithConsumption(M, world, { runId, mode = 'normal' }) {
+  const forged = forgeRun(M, world, { runId, mode });
+  const approval = world.approvalFor({ bundle: forged.bundle, contract: forged.contract });
+  const expected = world.expectedFor({ bundle: forged.bundle, contract: forged.contract });
+  const consumed = M.approval.consumeDispatch({
+    trust: world.trust, trustRoot: world.trustRoot, approval,
+    issuer: world.cards.owner, subject: world.cards.operator, windowsSid: world.sid,
+    expected, runId, decisionId: 'decision-' + runId
+  });
+  return { forged, approval, expected, consumed };
 }
 
 export function spawnNode(script, args, options = {}) {
