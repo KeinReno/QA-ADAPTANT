@@ -535,8 +535,8 @@ export async function makeWorld(M, options = {}) {
       return {
         root, trustRoot, approvalId: approval.approvalId, approval,
         issuer: cards.owner, subject: cards.operator,
-        signerPipe: signer ? signer.pipePath : null,
-        ...(privateSigner ? { anchorKeyPath } : {}),
+        anchorKeyPath,
+        credentials: { 'local:fixture-token': stand.authToken },
         standPublicKey: stand.standPublicKey, fixtureToken: stand.authToken,
         ...extra
       };

@@ -1,5 +1,5 @@
 // AUD-P2-04: ошибка trust.publish не должна приводить к терминальному verdict без terminal-choice.
-// Инъекция: доверенный контекст, чей publish() бросает TERMINAL_CHOICE_INCOMPLETE.
+// Инъекция: trusted publication прерывается после durable signed receipt и до candidate/choice.
 //
 // FAIL = дефект: записан verdict без terminal-choice (состояние PUBLICATION_PENDING нарушено).
 // PASS = verdict без terminal-choice не пишется; состояние остаётся pending/ошибкой.
@@ -12,23 +12,17 @@ await runScenario({
   async body() {
     const checks = [];
     const M = await loadModules(targetRoot());
-    const world = await makeWorld(M);
-    const publishState = { called: 0, error: null };
-    const context = {
-      async preflight() { return { allow: true }; },
-      async dispatch() { return { allow: true }; },
-      async beforeRequestAck() { return { allow: true }; },
-      async publish() {
-        publishState.called++;
-        publishState.error = 'TERMINAL_CHOICE_INCOMPLETE';
-        throw Object.assign(new Error('публикация не выполнена (инъекция аудита)'), { code: 'TERMINAL_CHOICE_INCOMPLETE' });
-      }
-    };
+    const world = await makeWorld(M, { privateSigner: true });
     try {
       const prepared = world.prepare({ runId: 'reaudit-p204' });
+      const approval = world.approvalFor(prepared);
       let runError = null;
       let result = null;
-      try { result = await M.run.run(prepared.bundle, { root: world.root, trust: context, fixtureToken: world.stand.authToken }); }
+      try {
+        result = await M.trusted.startTrusted(prepared.bundle, world.trustedOptions(approval, {
+          fault: 'throwAfterVerificationReceiptBeforeCandidate'
+        }));
+      }
       catch (error) { runError = { code: error?.code || null, message: String(error?.message || error) }; }
       const store = new M.store.RunStore(world.root);
       const runDir = store.runPath(prepared.runId);
@@ -38,8 +32,6 @@ await runScenario({
       const yes = (() => { try { return store.readEvidence(runDir).filter(item => item.envelope.kind === 'verdict').length; } catch { return -1; } })();
       const evidence = {
         runId: prepared.runId,
-        publishCalled: publishState.called,
-        injectedError: publishState.error,
         runError,
         resultVerdict: result?.verdict?.verdict || null,
         evidenceKinds: kinds,
@@ -47,7 +39,7 @@ await runScenario({
         terminalChoice: choice ? { outcome: choice.outcome } : null,
         standMutationCount: world.stand.mutationCount
       };
-      check(checks, 'инъекция publish() действительно выполнена (мутация была)', publishState.called === 1 && world.stand.mutationCount === 1, { called: publishState.called, mutationCount: world.stand.mutationCount });
+      check(checks, 'ошибка после receipt возникла после ровно одной мутации', runError?.code === 'ANCHOR_CONFLICT' && world.stand.mutationCount === 1, { code: runError?.code || null, mutationCount: world.stand.mutationCount });
       const defect = yes >= 1 && choice === null;
       if (!defect) {
         check(checks, 'verdict без terminal-choice отсутствует', yes === 0 || choice !== null, { verdicts: yes, choice: evidence.terminalChoice });

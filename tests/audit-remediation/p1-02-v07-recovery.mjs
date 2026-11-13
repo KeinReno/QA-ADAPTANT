@@ -19,33 +19,18 @@ function childSource() {
     "const [target, requestFile] = process.argv.slice(2);",
     "const request = JSON.parse(fs.readFileSync(requestFile, 'utf8'));",
     "const imp = rel => import(pathToFileURL(path.join(target, rel)).href);",
-    "const identity = await imp('packages/trust/identity.mjs');",
     "const trusted = await imp('apps/control/trusted.mjs');",
-    "const runModule = await imp('apps/control/run.mjs');",
-    "const signerModule = await imp('packages/trust/anchor-signer.mjs');",
-    "const trust = identity.loadTrustRoot(request.trustRoot);",
     "const approval = JSON.parse(fs.readFileSync(path.join(request.trustRoot, 'approvals', request.approvalId + '.json'), 'utf8'));",
     "const issuer = JSON.parse(fs.readFileSync(request.issuerFile, 'utf8'));",
     "const subject = JSON.parse(fs.readFileSync(request.subjectFile, 'utf8'));",
     "const bundle = JSON.parse(fs.readFileSync(request.bundleFile, 'utf8'));",
-    "const signerServer = signerModule.startAnchorSigner({ trustRoot: request.trustRoot, secretsDir: request.secretsDir });",
-    "await signerServer.ready;",
-    "const signer = {",
-    "  async sign(signRequest) {",
-    "    const statement = await signerServer.signAndPublish ? await signerServer.signAndPublish(signRequest) : null;",
-    "    if (!statement) throw Object.assign(new Error('signer has no sign method'), { code: 'ANCHOR_UNAVAILABLE' });",
-    "    fs.writeFileSync(request.anchorFile, JSON.stringify(statement) + '\\n');",
-    "    process.exit(42);", // гибель после записи анкера, до terminal-choice/verdict
-    "  },",
-    "  registerVerificationKey: (...args) => signerServer.registerVerificationKey ? signerServer.registerVerificationKey(...args) : Promise.reject(Object.assign(new Error('no register'), { code: 'CONTRACT_INVALID' }))",
-    "};",
-    "const context = trusted.createTrustContext({",
-    "  trust, trustRoot: request.trustRoot, approvalId: request.approvalId, approval, issuer, subject,",
-    "  sid: request.sid, standPublicKey: request.standPublicKey, signer, anchorKeyPath: request.anchorKeyPath || undefined,",
-    "  fixtureToken: request.fixtureToken",
-    "});",
     "try {",
-    "  const result = await runModule.start(bundle, { root: request.root, trust: context, fixtureToken: request.fixtureToken });",
+    "  const result = await trusted.startTrusted(bundle, {",
+    "    root: request.root, trustRoot: request.trustRoot, approvalId: request.approvalId, approval, issuer, subject,",
+    "    standPublicKey: request.standPublicKey, anchorKeyPath: request.anchorKeyPath,",
+    "    credentials: { 'local:fixture-token': request.fixtureToken }, fixtureToken: request.fixtureToken,",
+    "    fault: 'afterAnchorBeforeTerminalChoice'",
+    "  });",
     "  fs.writeFileSync(request.resultFile, JSON.stringify({ verdict: result?.verdict?.verdict || null, reasonCode: result?.verdict?.reasonCode || null }));",
     "  process.exit(43);",
     "} catch (error) {",
@@ -69,25 +54,36 @@ async function crashAtAnchor(M, world, workDir, { runId, tamperAfterAnchor = fal
   const requestFile = path.join(workDir, runId + '-request.json');
   const resultFile = path.join(workDir, runId + '-result.json');
   const errorFile = path.join(workDir, runId + '-error.json');
-  const anchorFile = path.join(workDir, runId + '-anchor.json');
   fs.writeFileSync(bundleFile, JSON.stringify(casePrepared.bundle));
   fs.writeFileSync(issuerFile, JSON.stringify(world.cards.owner));
   fs.writeFileSync(subjectFile, JSON.stringify(world.cards.operator));
   fs.writeFileSync(requestFile, JSON.stringify({
-    target: targetRoot(), trustRoot: world.trustRoot, approvalId: approval.approvalId,
+    target: targetRoot(), trustRoot: world.trustRoot,
     issuerFile, subjectFile, sid: world.sid, standPublicKey: world.stand.standPublicKey,
-    pipePath: world.signer ? world.signer.pipePath : null, secretsDir: world.secretsDir, root: world.root, fixtureToken: world.stand.authToken,
-    bundleFile, resultFile, errorFile, anchorFile,
+    secretsDir: world.secretsDir, root: world.root, fixtureToken: world.stand.authToken,
+    approvalId: approval.approvalId, bundleFile, resultFile, errorFile,
     anchorKeyPath: path.join(world.secretsDir, 'anchor.key')
   }));
   const childScript = path.join(workDir, 'crash-child.mjs');
   fs.writeFileSync(childScript, childSource());
+  const anchorDir = path.join(world.trustRoot, 'anchors');
+  const initialAnchors = fs.existsSync(anchorDir) ? fs.readdirSync(anchorDir).filter(name => name.endsWith('.json')) : [];
   const { spawn } = await import('node:child_process');
   const child = spawn(process.execPath, [childScript, targetRoot(), requestFile], { stdio: 'ignore', windowsHide: true });
+  let sawNewAnchor = false;
+  const observeAnchor = setInterval(() => {
+    const current = fs.existsSync(anchorDir) ? fs.readdirSync(anchorDir).filter(name => name.endsWith('.json')) : [];
+    if (current.some(name => !initialAnchors.includes(name))) {
+      sawNewAnchor = true;
+      clearInterval(observeAnchor);
+      killTree(child.pid);
+    }
+  }, 25);
+  observeAnchor.unref();
   const exitCode = await new Promise(resolve => {
-    const timer = setTimeout(() => { killTree(child.pid); resolve('TIMEOUT'); }, 120000);
-    child.once('exit', code => { clearTimeout(timer); resolve(code); });
-    child.once('error', () => { clearTimeout(timer); resolve('ERROR'); });
+    const timer = setTimeout(() => { clearInterval(observeAnchor); killTree(child.pid); resolve('TIMEOUT'); }, 120000);
+    child.once('exit', code => { clearTimeout(timer); clearInterval(observeAnchor); resolve(code); });
+    child.once('error', () => { clearTimeout(timer); clearInterval(observeAnchor); resolve('ERROR'); });
   });
   await sleep(400);
   killTree(child.pid);
@@ -95,7 +91,6 @@ async function crashAtAnchor(M, world, workDir, { runId, tamperAfterAnchor = fal
   const runDir = store.runPath(runId);
   let verdicts = 0;
   try { verdicts = store.readEvidence(runDir).filter(item => item.envelope.kind === 'verdict').length; } catch { verdicts = -1; }
-  const anchorDir = path.join(world.trustRoot, 'anchors');
   const anchorFiles = fs.existsSync(anchorDir) ? fs.readdirSync(anchorDir).filter(name => name.endsWith('.json')) : [];
   const candidateFile = path.join(runDir, 'trust', 'candidate.json');
   const candidateExists = fs.existsSync(candidateFile);
@@ -110,7 +105,7 @@ async function crashAtAnchor(M, world, workDir, { runId, tamperAfterAnchor = fal
   return {
     casePrepared, approval, store, runDir, exitCode, anchorFiles, candidateExists, tamperedCandidate,
     verdictsAtKill: verdicts,
-    anchorSeen: fs.existsSync(anchorFile),
+    anchorSeen: sawNewAnchor,
     childResult: fs.existsSync(resultFile) ? JSON.parse(fs.readFileSync(resultFile, 'utf8')) : null,
     childError: fs.existsSync(errorFile) ? JSON.parse(fs.readFileSync(errorFile, 'utf8')) : null
   };
@@ -150,8 +145,9 @@ await runScenario({
         reconciled = await M.trusted.reconcileTrusted({
           root: world.root, trustRoot: world.trustRoot, approvalId: crash.approval.approvalId, approval: crash.approval,
           issuer: world.cards.owner, subject: world.cards.operator,
-          standPublicKey: world.stand.standPublicKey, signerPipe: world.signer ? world.signer.pipePath : null,
+          standPublicKey: world.stand.standPublicKey,
           anchorKeyPath: path.join(world.secretsDir, 'anchor.key'),
+          credentials: { 'local:fixture-token': world.stand.authToken },
           runId: crash.casePrepared.runId
         });
       } catch (error) {

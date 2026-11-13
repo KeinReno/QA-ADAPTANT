@@ -1,0 +1,673 @@
+{
+  "tool": "WP08-REAUDIT-MATRIX",
+  "target": "C:\\Users\\gvi\\Desktop\\QA-ADAPTANT-harness\\remediation",
+  "revision": "9dc2dc649084ca062d0ae93d01b066df2105f2a6",
+  "targetDirty": false,
+  "generatedAt": "2026-11-13T14:47:14.634Z",
+  "node": "v24.16.0",
+  "total": 15,
+  "counts": {
+    "PASS": 6,
+    "UNVERIFIABLE": 9
+  },
+  "verdict": "INCONCLUSIVE",
+  "exitCode": 3,
+  "rows": [
+    {
+      "id": "AUD-P0-01",
+      "title": "P0-01: подложный candidate + годный анкер",
+      "script": "p0-01-forge-candidate.mjs",
+      "status": "PASS",
+      "reason": null,
+      "exitCode": 0,
+      "ms": 3845,
+      "expected": "Подложный candidate не анкеруется; доверенный PASS не публикуется; второго verdict/анкера нет",
+      "actual": "подложный candidate не анкерован (код отказа: CONTRACT_INVALID); доверенный PASS не опубликован",
+      "defect": "NOT_REPRODUCED",
+      "checks": [
+        {
+          "name": "атакующий израсходовал настоящий approval на этот runId",
+          "ok": true
+        },
+        {
+          "name": "скормленная цепочка evidence собрана (intent/request/response/read)",
+          "ok": true
+        },
+        {
+          "name": "отказ подписанта относится к проверке связки/происхождения",
+          "ok": true
+        },
+        {
+          "name": "после отказа подписанта доверенного PASS нет",
+          "ok": true
+        },
+        {
+          "name": "после отказа подписанта не записан терминальный verdict",
+          "ok": true
+        }
+      ],
+      "evidence": {
+        "runId": "reaudit-p001",
+        "realStandMutationCount": 0,
+        "signer": {
+          "ok": false,
+          "code": "CONTRACT_INVALID",
+          "message": "sign() требует verification-attestation"
+        },
+        "trustedObserver": {
+          "state": "candidate-ready",
+          "trusted": false,
+          "passed": false,
+          "verdict": null,
+          "anchorStatus": null,
+          "reasonCode": "PUBLICATION_PENDING"
+        },
+        "verdictCount": 0
+      },
+      "stderr": null
+    },
+    {
+      "id": "AUD-P0-01B",
+      "title": "P0-01B: происхождение ключа Verification",
+      "script": "p0-01b-key-provenance.mjs",
+      "status": "PASS",
+      "reason": null,
+      "exitCode": 0,
+      "ms": 6812,
+      "expected": "Ни одна попытка не даёт подписанного анкера/доверенного PASS; подписант требует происхождение ключа Verification",
+      "actual": "все атаки на происхождение ключа Verification отвергнуты (5 попыток)",
+      "defect": "NOT_REPRODUCED",
+      "checks": [
+        {
+          "name": "публичный канал подписанта доступен для проверки (иначе INCONCLUSIVE)",
+          "ok": true
+        },
+        {
+          "name": "ни одна попытка не дала подписанного анкера",
+          "ok": true
+        },
+        {
+          "name": "ни одна попытка не дала trusted PASS",
+          "ok": true
+        }
+      ],
+      "evidence": {
+        "scope": "legacy-public-signer-channel; для доверенной топологии требуется отдельный процесс-родитель Control",
+        "registerSupported": true,
+        "attempts": [
+          {
+            "name": "A1-foreign-key-fake-worker",
+            "registered": null,
+            "signed": false,
+            "code": "ANCHOR_BINDING_REJECTED",
+            "message": "Ключ Verification для этого runId не зарегистрирован в сессии подписанта",
+            "anchorPublish": null,
+            "observer": null,
+            "registrationCode": "CONTRACT_INVALID",
+            "registrationMessage": "Регистрация ключа Verification требует sessionNonce 32 байта hex"
+          },
+          {
+            "name": "A2-dead-verification-pid",
+            "registered": null,
+            "signed": false,
+            "code": "ANCHOR_BINDING_REJECTED",
+            "message": "Ключ Verification для этого runId не зарегистрирован в сессии подписанта",
+            "anchorPublish": null,
+            "observer": null,
+            "deadWorkerAlive": false
+          },
+          {
+            "name": "A3-worker-copy-another-path",
+            "registered": null,
+            "signed": false,
+            "code": "ANCHOR_BINDING_REJECTED",
+            "message": "Ключ Verification для этого runId не зарегистрирован в сессии подписанта",
+            "anchorPublish": null,
+            "observer": null,
+            "registrationCode": "CONTRACT_INVALID",
+            "registrationMessage": "Регистрация ключа Verification требует sessionNonce 32 байта hex"
+          },
+          {
+            "name": "A4-key-from-runDir",
+            "registered": null,
+            "signed": false,
+            "code": "ANCHOR_BINDING_REJECTED",
+            "message": "Ключ Verification для этого runId не зарегистрирован в сессии подписанта",
+            "anchorPublish": null,
+            "observer": null
+          },
+          {
+            "name": "A5-reregister-pid-and-nonce",
+            "registered": {
+              "error": "CONTRACT_INVALID"
+            },
+            "reRegister": {
+              "refused": true,
+              "code": "CONTRACT_INVALID",
+              "message": "Регистрация ключа Verification требует sessionNonce 32 байта hex"
+            },
+            "signed": false,
+            "code": "ANCHOR_BINDING_REJECTED",
+            "message": "Ключ Verification для этого runId не зарегистрирован в сессии подписанта",
+            "observer": {
+              "trusted": false,
+              "passed": false
+            }
+          }
+        ],
+        "anchoredCount": 0,
+        "trustedPassCount": 0
+      },
+      "stderr": null
+    },
+    {
+      "id": "AUD-P0-01C",
+      "title": "P0-01C: приватный канал подписанта",
+      "script": "p0-01c-private-signer-channel.mjs",
+      "status": "UNVERIFIABLE",
+      "reason": "новый протокол не прошёл честный прогон: атака на канал не выполнена (INCONCLUSIVE)",
+      "exitCode": 3,
+      "ms": 4564,
+      "expected": "Публичные pipe подписанта не подписывают подложный candidate доверенного прогона; канал приватный (fork IPC)",
+      "actual": "новый протокол не прошёл честный прогон: атака на канал не выполнена (INCONCLUSIVE)",
+      "defect": "UNPROVEN",
+      "checks": [
+        {
+          "name": "ревизия поддерживает новый протокол (trusted-worker и подписанные ответы)",
+          "ok": true
+        },
+        {
+          "name": "доверенный вход не передаёт публичный pipe (только anchorKeyPath)",
+          "ok": true
+        },
+        {
+          "name": "честный прогон на новом протоколе дошёл до доверенного PASS",
+          "ok": false
+        }
+      ],
+      "evidence": {
+        "error": null,
+        "observedPassed": false
+      },
+      "stderr": null
+    },
+    {
+      "id": "AUD-P0-02-A",
+      "title": "P0-02-A: подмена стенда после POST",
+      "script": "p0-02a-swap-after-post.mjs",
+      "status": "UNVERIFIABLE",
+      "reason": "честный контроль не прошёл: атака не выполнена",
+      "exitCode": 3,
+      "ms": 7903,
+      "expected": "Подмена среды даёт ENVIRONMENT_CHANGED/INCONCLUSIVE; доверенный PASS не публикуется; второй POST нет",
+      "actual": "честный контроль не прошёл: атака не выполнена",
+      "defect": "UNPROVEN",
+      "checks": [
+        {
+          "name": "честный доверенный прогон даёт PASS и ровно один POST (иначе атака не доказательна)",
+          "ok": false
+        }
+      ],
+      "evidence": {},
+      "stderr": null
+    },
+    {
+      "id": "AUD-P0-02-B",
+      "title": "P0-02-B: подмена в окне T-C→POST, утечка Bearer",
+      "script": "p0-02b-window-swap.mjs",
+      "status": "UNVERIFIABLE",
+      "reason": "честный контроль не прошёл: атака не выполнена",
+      "exitCode": 3,
+      "ms": 8069,
+      "expected": "На исправленной ревизии rogue не получает ни POST, ни Bearer (roguePosts=0, bearerLeaked=false); ложного PASS нет",
+      "actual": "честный контроль не прошёл: атака не выполнена",
+      "defect": "UNPROVEN",
+      "checks": [
+        {
+          "name": "честный доверенный прогон даёт PASS и ровно один POST (иначе атака не доказательна)",
+          "ok": false
+        }
+      ],
+      "evidence": {},
+      "stderr": null
+    },
+    {
+      "id": "AUD-P0-02C",
+      "title": "P0-02C: pinned-соединение, гибель стенда, replay подписанных ответов",
+      "script": "p0-02c-replay-pinned.mjs",
+      "status": "UNVERIFIABLE",
+      "reason": "честный контроль не прошёл: атаки не выполнены",
+      "exitCode": 3,
+      "ms": 4493,
+      "expected": "Гибель стенда при закреплённом сокете и replay подписанных ответов не дают доверенного PASS",
+      "actual": "честный контроль не прошёл: атаки не выполнены",
+      "defect": "UNPROVEN",
+      "checks": [
+        {
+          "name": "честный контроль: доверенный PASS и ровно один POST",
+          "ok": false
+        }
+      ],
+      "evidence": {},
+      "stderr": null
+    },
+    {
+      "id": "AUD-P0-02D",
+      "title": "P0-02D: подмена после чтений и неподписанный ответ POST",
+      "script": "p0-02d-post-response.mjs",
+      "status": "UNVERIFIABLE",
+      "reason": "новый протокол не прошёл честный контроль: атаки не выполнены (INCONCLUSIVE)",
+      "exitCode": 3,
+      "ms": 8359,
+      "expected": "Ни подмена после чтений, ни ответ POST без подписи стенда не дают доверенного PASS",
+      "actual": "новый протокол не прошёл честный контроль: атаки не выполнены (INCONCLUSIVE)",
+      "defect": "UNPROVEN",
+      "checks": [
+        {
+          "name": "честный контроль на новом протоколе: доверенный PASS и один POST",
+          "ok": false
+        }
+      ],
+      "evidence": {
+        "control": {
+          "ok": false,
+          "mutationCount": null
+        }
+      },
+      "stderr": null
+    },
+    {
+      "id": "AUD-P1-01",
+      "title": "P1-01: наблюдатель слабее 0.1",
+      "script": "p1-01-weak-observer.mjs",
+      "status": "PASS",
+      "reason": null,
+      "exitCode": 0,
+      "ms": 4232,
+      "expected": "Если 0.1-паритет (assertEvidenceRefs/assertTerminalEvidence/validateVerdictCoverage) нарушен, trusted/PASS не показывается",
+      "actual": "наблюдатель отказал при нарушенном паритете (reasonCode: INTEGRITY_ERROR)",
+      "defect": "NOT_REPRODUCED",
+      "checks": [
+        {
+          "name": "0.1-паритет действительно нарушен (assertEvidenceRefs/coverage)",
+          "ok": true
+        }
+      ],
+      "evidence": {
+        "runId": "reaudit-p101",
+        "anchor": {
+          "method": "direct-anchor-key",
+          "anchorId": "anchor-reaudit-p101",
+          "verdict": "PASS"
+        },
+        "candidateVerdict": "PASS",
+        "candidateChecks": [
+          {
+            "id": "title-saved",
+            "status": "SATISFIED",
+            "evidenceIds": [
+              "7ed53f40-c088-4bff-aedf-fddd38092e58"
+            ]
+          },
+          {
+            "id": "executor-saved",
+            "status": "SATISFIED",
+            "evidenceIds": [
+              "7ed53f40-c088-4bff-aedf-fddd38092e58"
+            ]
+          },
+          {
+            "id": "comment-saved",
+            "status": "SATISFIED",
+            "evidenceIds": [
+              "7ed53f40-c088-4bff-aedf-fddd38092e58"
+            ]
+          }
+        ],
+        "parity": {
+          "evidenceRefs": "ok",
+          "terminal": null,
+          "coverage": null,
+          "error": "Эффект не подтверждён независимым чтением",
+          "verdict": null
+        },
+        "trustedObserver": {
+          "state": "inconsistent",
+          "trusted": false,
+          "passed": false,
+          "verdict": null,
+          "anchorStatus": "INTEGRITY_ERROR",
+          "reasonCode": "INTEGRITY_ERROR"
+        },
+        "publicObserveTrusted": {
+          "trusted": false,
+          "passed": false,
+          "verdict": null,
+          "anchorStatus": "INTEGRITY_ERROR"
+        }
+      },
+      "stderr": null
+    },
+    {
+      "id": "AUD-P1-02",
+      "title": "P1-02: V-07 потеря анкерованного PASS",
+      "script": "p1-02-v07-recovery.mjs",
+      "status": "UNVERIFIABLE",
+      "reason": "аварию после анкера зафиксировать не удалось: V-07 не проверен (INCONCLUSIVE)",
+      "exitCode": 3,
+      "ms": 6799,
+      "expected": "reconcile дописывает ровно выбранный candidate; 1 verdict; anchorId сохранён; нет второго анкера/verdict/POST",
+      "actual": "аварию после анкера зафиксировать не удалось: V-07 не проверен (INCONCLUSIVE)",
+      "defect": "UNPROVEN",
+      "checks": [
+        {
+          "name": "удалось зафиксировать состояние anchor-held (гибель после анкера до verdict)",
+          "ok": false
+        }
+      ],
+      "evidence": {
+        "attempts": [
+          {
+            "attempt": 1,
+            "exitCode": 44,
+            "childResult": null,
+            "childError": {
+              "code": "CONTRACT_INVALID",
+              "message": "Старый вход не принимает аргумент доверенного режима: trust"
+            },
+            "anchorSeen": false,
+            "anchorFiles": [],
+            "verdictsAtKill": 0
+          },
+          {
+            "attempt": 2,
+            "exitCode": 44,
+            "childResult": null,
+            "childError": {
+              "code": "CONTRACT_INVALID",
+              "message": "Старый вход не принимает аргумент доверенного режима: trust"
+            },
+            "anchorSeen": false,
+            "anchorFiles": [],
+            "verdictsAtKill": 0
+          },
+          {
+            "attempt": 3,
+            "exitCode": 44,
+            "childResult": null,
+            "childError": {
+              "code": "CONTRACT_INVALID",
+              "message": "Старый вход не принимает аргумент доверенного режима: trust"
+            },
+            "anchorSeen": false,
+            "anchorFiles": [],
+            "verdictsAtKill": 0
+          }
+        ]
+      },
+      "stderr": null
+    },
+    {
+      "id": "AUD-P1-03",
+      "title": "P1-03: подмена candidate/read-set/attestation после подписи",
+      "script": "p1-03-substitution-after-anchor.mjs",
+      "status": "UNVERIFIABLE",
+      "reason": "честный доверенный PASS не получен: подмены не проверены",
+      "exitCode": 3,
+      "ms": 3407,
+      "expected": "Подмена файлов после подписи не даёт trusted PASS",
+      "actual": "честный доверенный PASS не получен: подмены не проверены",
+      "defect": "UNPROVEN",
+      "checks": [
+        {
+          "name": "положительный контроль: честный доверенный PASS до подмен",
+          "ok": false
+        }
+      ],
+      "evidence": {
+        "error": {
+          "code": "CONTRACT_INVALID",
+          "message": "Legacy signerPipe не поддерживает receipt-протокол; используйте Anchor-Signer через anchorKeyPath"
+        }
+      },
+      "stderr": null
+    },
+    {
+      "id": "AUD-P2-R02",
+      "title": "P2: R-02 junction в runs",
+      "script": "p2-r02-junction.mjs",
+      "status": "PASS",
+      "reason": null,
+      "exitCode": 0,
+      "ms": 2863,
+      "expected": "keygen отвергает физический путь внутрь runs; секреты в runDir не появляются",
+      "actual": "keygen отверг физический путь внутрь runs (exit=1)",
+      "defect": "NOT_REPRODUCED",
+      "checks": [
+        {
+          "name": "keygen.mjs присутствует на проверяемой ревизии",
+          "ok": true
+        },
+        {
+          "name": "положительный контроль: keygen работает на обычных путях",
+          "ok": true
+        },
+        {
+          "name": "junction на каталог прогона создан",
+          "ok": true
+        },
+        {
+          "name": "keygen отказал (ненулевой exit)",
+          "ok": true
+        },
+        {
+          "name": "секретов внутри каталога прогона нет",
+          "ok": true
+        }
+      ],
+      "evidence": {
+        "junction": "C:\\Users\\gvi\\AppData\\Local\\Temp\\wp08-r02-0z7Eer\\aliased-run",
+        "runDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\wp08-r02-0z7Eer\\store\\runs\\run-02",
+        "attackExit": 1,
+        "attackStdout": "",
+        "attackStderr": "TRUST_STORE_UNAVAILABLE\n",
+        "secretsInRunDir": [],
+        "realpathRunDir": "C:\\Users\\gvi\\AppData\\Local\\Temp\\wp08-r02-0z7Eer\\store\\runs\\run-02"
+      },
+      "stderr": null
+    },
+    {
+      "id": "AUD-P2-APPROVALID",
+      "title": "P2: путь только approvalId",
+      "script": "p2-approval-id-only.mjs",
+      "status": "UNVERIFIABLE",
+      "reason": "сценарий не выполнен: CONTRACT_INVALID Legacy signerPipe не поддерживает receipt-протокол; используйте Anchor-Signer через anchorKeyPath",
+      "exitCode": 3,
+      "ms": 3959,
+      "expected": "startTrusted({approvalId}) читает approval из trust root: доверенный PASS, один POST",
+      "actual": "сценарий не выполнен: CONTRACT_INVALID Legacy signerPipe не поддерживает receipt-протокол; используйте Anchor-Signer через anchorKeyPath",
+      "defect": "UNPROVEN",
+      "checks": [
+        {
+          "name": "обвязка сценария выполнена",
+          "ok": false
+        }
+      ],
+      "evidence": {
+        "error": {
+          "code": "CONTRACT_INVALID",
+          "message": "Legacy signerPipe не поддерживает receipt-протокол; используйте Anchor-Signer через anchorKeyPath"
+        }
+      },
+      "stderr": null
+    },
+    {
+      "id": "AUD-P2-PUBLICATION",
+      "title": "P2: verdict без terminal-choice",
+      "script": "p2-publication-no-choice.mjs",
+      "status": "UNVERIFIABLE",
+      "reason": "verdict без terminal-choice не записан; публикация осталась незавершённой",
+      "exitCode": 3,
+      "ms": 3901,
+      "expected": "При ошибке trust.publish терминальный verdict без terminal-choice не пишется",
+      "actual": "verdict без terminal-choice не записан; публикация осталась незавершённой",
+      "defect": "UNPROVEN",
+      "checks": [
+        {
+          "name": "инъекция publish() действительно выполнена (мутация была)",
+          "ok": false
+        },
+        {
+          "name": "verdict без terminal-choice отсутствует",
+          "ok": true
+        },
+        {
+          "name": "состояние публикации не терминальное PASS",
+          "ok": true
+        }
+      ],
+      "evidence": {
+        "runId": "reaudit-p204",
+        "publishCalled": 0,
+        "injectedError": null,
+        "runError": {
+          "code": "CONTRACT_INVALID",
+          "message": "Старый вход не принимает аргумент доверенного режима: trust"
+        },
+        "resultVerdict": null,
+        "evidenceKinds": [],
+        "verdictCount": 0,
+        "terminalChoice": null,
+        "standMutationCount": 0
+      },
+      "stderr": null
+    },
+    {
+      "id": "AUD-P2-E04",
+      "title": "P2: E-04 credentialRef",
+      "script": "p2-e04-credential-ref.mjs",
+      "status": "PASS",
+      "reason": null,
+      "exitCode": 0,
+      "ms": 3366,
+      "expected": "Секрет другой среды не выдаётся и не отправляется стенду; отказ до мутации",
+      "actual": "отказ до выдачи секрета: запросов с Authorization нет (вердикт: нет, код: нет)",
+      "defect": "NOT_REPRODUCED",
+      "checks": [
+        {
+          "name": "запись среды с чужим credentialRef закреплена",
+          "ok": true
+        },
+        {
+          "name": "прогон действительно дошёл до доверенной проверки (есть решение)",
+          "ok": true
+        },
+        {
+          "name": "ни одного запроса с Authorization (секрет не выдан)",
+          "ok": true
+        },
+        {
+          "name": "мутации на стенде нет",
+          "ok": true
+        },
+        {
+          "name": "доверенного PASS нет",
+          "ok": true
+        }
+      ],
+      "evidence": {
+        "runId": "reaudit-p205",
+        "credentialRef": "prod:foreign-secret-7",
+        "error": {
+          "code": "CONTRACT_INVALID",
+          "message": "Legacy signerPipe не поддерживает receipt-протокол; используйте Anchor-Signer через anchorKeyPath"
+        },
+        "verdict": null,
+        "reasonCode": null,
+        "observedPassed": null,
+        "standMutationCount": 0,
+        "standRequestCount": 0,
+        "authorizedRequests": [],
+        "delivered": false
+      },
+      "stderr": null
+    },
+    {
+      "id": "AUD-P2-OLDENTRY",
+      "title": "P2: обход через старый вход start()",
+      "script": "p2-old-entry-trust.mjs",
+      "status": "PASS",
+      "reason": null,
+      "exitCode": 0,
+      "ms": 631,
+      "expected": "Старый вход не принимает ни одного аргумента доверенного режима",
+      "actual": "старый вход отверг все аргументы доверенного режима",
+      "defect": "NOT_REPRODUCED",
+      "checks": [
+        {
+          "name": "старый вход отверг все аргументы доверенного режима",
+          "ok": true
+        }
+      ],
+      "evidence": {
+        "results": [
+          {
+            "option": "trust",
+            "accepted": false,
+            "code": "CONTRACT_INVALID",
+            "message": "Старый вход не принимает аргумент доверенного режима: trust"
+          },
+          {
+            "option": "approvalId",
+            "accepted": false,
+            "code": "CONTRACT_INVALID",
+            "message": "Старый вход не принимает аргумент доверенного режима: approvalId"
+          },
+          {
+            "option": "approval",
+            "accepted": false,
+            "code": "CONTRACT_INVALID",
+            "message": "Старый вход не принимает аргумент доверенного режима: approval"
+          },
+          {
+            "option": "trustRoot",
+            "accepted": false,
+            "code": "CONTRACT_INVALID",
+            "message": "Старый вход не принимает аргумент доверенного режима: trustRoot"
+          },
+          {
+            "option": "adapter",
+            "accepted": false,
+            "code": "CONTRACT_INVALID",
+            "message": "Старый вход не принимает аргумент доверенного режима: adapter"
+          },
+          {
+            "option": "adapterId",
+            "accepted": false,
+            "code": "CONTRACT_INVALID",
+            "message": "Старый вход не принимает аргумент доверенного режима: adapterId"
+          },
+          {
+            "option": "standPublicKey",
+            "accepted": false,
+            "code": "CONTRACT_INVALID",
+            "message": "Старый вход не принимает аргумент доверенного режима: standPublicKey"
+          },
+          {
+            "option": "signerPipe",
+            "accepted": false,
+            "code": "CONTRACT_INVALID",
+            "message": "Старый вход не принимает аргумент доверенного режима: signerPipe"
+          },
+          {
+            "option": "anchorKeyPath",
+            "accepted": false,
+            "code": "CONTRACT_INVALID",
+            "message": "Старый вход не принимает аргумент доверенного режима: anchorKeyPath"
+          }
+        ]
+      },
+      "stderr": null
+    }
+  ]
+}
