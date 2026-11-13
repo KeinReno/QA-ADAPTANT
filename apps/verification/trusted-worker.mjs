@@ -23,7 +23,8 @@ const expectedManifestHash = process.argv[3] || '';
 const trustRoot = process.env.QA_TRUST_ROOT || '';
 const approvalId = process.env.QA_TRUSTED_APPROVAL_ID || '';
 const standPublicKey = process.env.QA_STAND_PUBLIC_KEY || '';
-const allowUnsignedStand = process.env.QA_TRUSTED_ALLOW_UNSIGNED_STAND === '1';
+// Условие владельца: режима без подписи стенда нет.
+const allowUnsignedStand = false;
 const now = () => new Date().toISOString();
 const MAX_BODY_BYTES = 1_048_576;
 

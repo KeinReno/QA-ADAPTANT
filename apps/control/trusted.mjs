@@ -95,7 +95,8 @@ export async function verifyWithTrustedWorker({ runDir, frozen, trustRoot, appro
   if (!runDir || !frozen || !trustRoot || !approvalId) throw new TypeError('Нужны runDir, frozen, trustRoot и approvalId');
   const store = new RunStore(path.dirname(path.dirname(path.resolve(runDir))));
   const entry = fileURLToPath(new URL('../verification/trusted-worker.mjs', import.meta.url));
-  const allowUnsigned = !standChannelAvailable();
+  // Условие владельца: режима без подписи стенда нет — канал R-B обязателен (fail-closed).
+  const allowUnsigned = false;
   const env = {
     QA_ADAPTANT_FIXTURE_TOKEN: fixtureToken,
     QA_TRUST_ROOT: trustRoot,
@@ -177,6 +178,7 @@ export function createTrustContext(options = {}) {
   let currentEnvironment = null;
   let trustStoreUnavailable = false;
   let lastDecision = null;
+  let pinnedConnection = null;
 
   async function refreshEnvironment(runId, frozen) {
     const expected = expectedFromFrozen(frozen);
@@ -277,15 +279,101 @@ export function createTrustContext(options = {}) {
       return { allow: true, decision };
     },
 
+    // P0-02: закреплённое соединение открывается один раз после T-A и передаётся доверенному
+    // Browser Worker как handle net.Socket. Новых TCP после T-A не открывается.
+    async preparePinnedDispatch({ frozen, token, child }) {
+      try {
+        const record = currentEnvironment?.record;
+        if (!record) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Среда не подтверждена до pinned-соединения');
+        if (!child || typeof child.send !== 'function') fail('CONTRACT_INVALID', 'Нужен дочерний Browser Worker');
+        pinnedConnection = await environment.openPinnedStandConnection({ record, trust, standPublicKey });
+        const mutationStep = frozen.scenario.nodes.find(node => node.action?.type === 'click' && node.action?.mutation);
+        if (!mutationStep) fail('CONTRACT_INVALID', 'В сценарии нет шага мутации');
+        const stepId = mutationStep.id;
+        const job = {
+          type: 'PINNED_JOB',
+          runId: frozen.manifest.runId,
+          manifestSha256: frozen.manifestSha256,
+          stepId,
+          intentId: frozen.manifest.runId + ':' + stepId,
+          operationId: frozen.operation.id,
+          mutationName: frozen.operation.mutation?.name,
+          inputsSha256: digest(frozen.operation.inputs),
+          fixtureId: frozen.fixture.fixtureId,
+          entityKind: frozen.operation.entityKind,
+          origin: frozen.manifest.environment.baseUrl,
+          token: token || '',
+          fields: { ...frozen.operation.inputs, fixtureId: frozen.fixture.fixtureId },
+          trustRoot,
+          standPublicKey: typeof standPublicKey === 'string' ? standPublicKey : Buffer.from(standPublicKey.export({ type: 'spki', format: 'der' })).toString('base64'),
+          environmentRecord: record,
+          timeoutMs: frozen.manifest.budget?.deadlineMs || 30000
+        };
+        await new Promise((resolve, reject) => {
+          child.send(job, pinnedConnection.socket, error => error ? reject(fail('CONTRACT_INVALID', 'Закреплённый сокет не передан Worker: ' + error.message)) : resolve());
+        });
+        return { allow: true };
+      } catch (error) {
+        try { pinnedConnection?.close?.(); } catch { /* уже закрыто */ }
+        pinnedConnection = null;
+        return { allow: false, denial: errorDenial(error, 'preflight') };
+      }
+    },
+
+    // T-C: проверяем, что закреплённое соединение всё ещё ведёт к тому же живому процессу стенда.
     async beforeRequestAck({ frozen }) {
       try {
         const record = currentEnvironment?.record;
         if (!record) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Среда не подтверждена до отправки');
-        await attestLiveEnvironment({ trust, record, standPublicKey });
+        if (!pinnedConnection) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Закреплённое соединение отсутствует');
+        // Сокет уже передан Worker'у, в родителе он закрыт: проверяем живость процесса стенда и владельца порта,
+        // повторная аттестация самого соединения выполняется в Worker'е непосредственно перед POST.
+        const pid = pinnedConnection.attestation?.pid;
+        if (!environment.processAlive(pid)) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Процесс стенда не жив перед отправкой');
+        const owner = await environment.portOwnerPid(record.origin);
+        if (owner !== pid) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Порт стенда обслуживает другой процесс перед отправкой');
         return { allow: true };
       } catch (error) {
         return { allow: false, denial: errorDenial(error, 'dispatch') };
       }
+    },
+
+    // P0-02: ответ POST принимается только с подписью стенда на том же закреплённом соединении.
+    async verifyDispatchResponse({ payload }) {
+      try {
+        const record = currentEnvironment?.record;
+        if (!record) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Среда не подтверждена');
+        if (!payload?.prePostAttestation) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Нет переаттестации закреплённого соединения перед POST');
+        environment.verifyEnvironmentAttestation(trust, record, payload.prePostAttestation, { challenge: payload.prePostAttestation.challenge, standPublicKey });
+        const body = environment.verifyStandResponse({
+          trust,
+          record,
+          challenge: payload?.responseChallenge,
+          body: payload?.responseBody,
+          signature: payload?.responseSignature,
+          method: 'POST',
+          path: '/records',
+          status: payload?.status,
+          standPublicKey
+        });
+        return { allow: true, body };
+      } catch (error) {
+        return { allow: false, denial: errorDenial(error, 'dispatch') };
+      }
+    },
+
+    // Окружение доверенного Verification Worker: только не-секретные факты + Bearer в env.
+    verificationEnv() {
+      const record = currentEnvironment?.record;
+      return {
+        QA_ADAPTANT_TRUSTED_VERIFIER: '1',
+        QA_ADAPTANT_TRUST_ROOT: trustRoot,
+        QA_ADAPTANT_ENVIRONMENT_ID: record?.environmentId || '',
+        QA_ADAPTANT_ENVIRONMENT_GENERATION: String(record?.generation || ''),
+        QA_ADAPTANT_STAND_PUBLIC_KEY: typeof standPublicKey === 'string' ? standPublicKey : '',
+        QA_ADAPTANT_APPROVAL_ID: approvalId,
+        QA_ADAPTANT_AUTHORIZATION: fixtureToken || ''
+      };
     },
 
     async publish({ store, runDir, frozen, verdict }) {
@@ -294,8 +382,9 @@ export function createTrustContext(options = {}) {
       let signerHandle = null;
       try {
         let chosen = verdict;
-        if (!existing && verdict.verdict === 'PASS') {
-          // P0-01: кандидат PASS принимается только вместе с подписанной аттестацией доверенного Verification.
+        if (!existing) {
+          // P0-01/P0-02: вердикт даёт только доверенный Verification Worker; он же аттестует среду
+          // и подписывает read-set. Внешний verdict не используется.
           worker = await verifyWithTrustedWorker({
             runDir, frozen, trustRoot, approvalId, fixtureToken, standPublicKey,
             timeoutMs: workerTimeoutMs

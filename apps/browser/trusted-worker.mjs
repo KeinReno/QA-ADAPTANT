@@ -8,8 +8,10 @@
 // Worker отдаёт HTTP_FAILED/ERROR, Control обязан завершить прогон INCONCLUSIVE.
 import { randomUUID } from 'node:crypto';
 import {
-  createPinnedAgent, newChallenge, pinnedStandRequest, readStandResponseSignature, STAND_CHALLENGE_HEADER
+  attestPinnedConnection, createPinnedAgent, newChallenge, pinnedStandRequest, readStandResponseSignature,
+  STAND_CHALLENGE_HEADER
 } from '../../packages/trust/environment.mjs';
+import { loadTrustRoot } from '../../packages/trust/identity.mjs';
 
 const requestId = randomUUID();
 let job = null;
@@ -122,6 +124,13 @@ async function execute(handle) {
   await evidenceAck;
   if (controlLost || !process.connected) throw fail('WORKER_LOST', 'Control IPC отключён перед POST');
 
+  // T-C в Worker'е: закреплённое соединение переаттестуется на самом сокете непосредственно перед POST.
+  const prePost = await attestPinnedConnection(socket, {
+    trust: loadTrustRoot(job.trustRoot),
+    record: job.environmentRecord,
+    standPublicKey: job.standPublicKey
+  });
+
   let posted;
   try {
     posted = await postMutation();
@@ -141,7 +150,8 @@ async function execute(handle) {
     responseChallenge: posted.challenge,
     responseBody: posted.body,
     method: 'POST',
-    path: '/records'
+    path: '/records',
+    prePostAttestation: prePost.attestation
   });
   await responseAck;
   await event('STEP', { stepId: job.stepId, status: 'ACTION_RETURNED' });

@@ -11,7 +11,6 @@ import { serveLocalFixture } from '../adapters/local/server.mjs';
 import { createTrustRoot, loadTrustRoot, signTrustedDocument, unwrapPrivateKey } from '../packages/trust/identity.mjs';
 import { revokeApproval, signApproval } from '../packages/trust/approval.mjs';
 import { commitEnvironmentRecord, signEnvironmentRecord } from '../packages/trust/environment.mjs';
-import { startAnchorSigner } from '../packages/trust/anchor-signer.mjs';
 import { verifyAnchorStatement, loadAnchor, readCandidate, readTerminalChoice } from '../packages/trust/anchor.mjs';
 import { currentUserSid } from '../packages/trust/windows-sid.mjs';
 import { start } from '../apps/control/run.mjs';
@@ -41,8 +40,6 @@ async function world(t, { standOptions = {}, recordOverrides = {} } = {}) {
     ...recordOverrides
   });
   commitEnvironmentRecord(trust, trustRoot, record);
-  const signer = startAnchorSigner({ trustRoot, secretsDir });
-  await signer.ready;
   const owner = signTrustedDocument(ownerKey, {
     schemaVersion: '0.2.0', domain: 'principal', principalId: 'local-owner',
     roles: ['owner'], keyId: created.ownerKeyId, windowsSid: sid, status: 'active'
@@ -54,11 +51,10 @@ async function world(t, { standOptions = {}, recordOverrides = {} } = {}) {
     roles: ['operator'], keyId: created.ownerKeyId, windowsSid: sid, status: 'active'
   });
   t.after(async () => {
-    await signer.close();
     await stand.close();
     fs.rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
-  return { base, root, secretsDir, trustRoot, trust, ownerKey, stand, record, signer, owner, operator, created };
+  return { base, root, secretsDir, trustRoot, trust, ownerKey, stand, record, owner, operator, created };
 }
 
 function prepare(w, { runId = 'trust-run-' + randomUUID().slice(0, 8) } = {}) {
@@ -104,7 +100,7 @@ function trustedOptions(w, approval, extra = {}) {
     approval,
     issuer: w.owner,
     subject: w.operator,
-    signerPipe: w.signer.pipePath,
+    anchorKeyPath: path.join(w.secretsDir, 'anchor.key'),
     standPublicKey: w.stand.standPublicKey,
     fixtureToken: w.stand.authToken,
     ...extra
@@ -212,7 +208,7 @@ test('T-08: без анкера PASS не публикуется, POST оста�
   const w = await world(t);
   const { bundle, contract } = prepare(w);
   const approval = signApproval(w.ownerKey, approvalFields(w, { bundle, contract }), w.trust, w.trustRoot);
-  const result = await startTrusted(bundle, trustedOptions(w, approval, { signerPipe: null }));
+  const result = await startTrusted(bundle, trustedOptions(w, approval, { anchorKeyPath: null }));
   assert.equal(result.verdict.verdict, 'INCONCLUSIVE');
   assert.equal(result.verdict.reasonCode, 'EVIDENCE_MISSING');
   assert.equal(w.stand.mutationCount, 1);
@@ -285,7 +281,7 @@ test('T-12: потеря анкера закрывает доверенный PA
   await assert.rejects(
     () => import('../apps/control/trusted.mjs').then(module => module.reconcileTrusted({
       root: w.root, trustRoot: w.trustRoot, approvalId: approval.approvalId, approval,
-      issuer: w.owner, subject: w.operator, signerPipe: w.signer.pipePath,
+      issuer: w.owner, subject: w.operator, anchorKeyPath: path.join(w.secretsDir, 'anchor.key'),
       standPublicKey: w.stand.standPublicKey, runId: bundle.manifest.runId
     })),
     error => error.code === 'INTEGRITY_ERROR'
@@ -303,4 +299,17 @@ test('T-13: повреждённый реестр сред даёт AUTH_UNAVAIL
   assert.equal(result.verdict.verdict, 'BLOCKED');
   assert.equal(result.verdict.reasonCode, 'AUTH_UNAVAILABLE');
   assert.equal(w.stand.mutationCount, 0);
+});
+test('T-14: подмена аттестации Verification закрывает доверенный PASS для наблюдателя', { timeout: 90000 }, async t => {
+  const w = await world(t);
+  const { bundle, contract } = prepare(w);
+  const approval = signApproval(w.ownerKey, approvalFields(w, { bundle, contract }), w.trust, w.trustRoot);
+  const first = await startTrusted(bundle, trustedOptions(w, approval));
+  assert.equal(first.verdict.verdict, 'PASS');
+  const attestationFile = path.join(w.trustRoot, 'verification', bundle.manifest.runId + '.json');
+  assert.equal(fs.existsSync(attestationFile), true);
+  fs.rmSync(attestationFile);
+  const observed = await observeTrusted({ root: w.root, trustRoot: w.trustRoot, runId: bundle.manifest.runId });
+  assert.equal(observed.passed, false);
+  assert.equal(observed.verdict, null);
 });

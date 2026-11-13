@@ -258,15 +258,26 @@ export async function run(bundle, options = {}) {
         tampered.inputs.title = 'Подмена после проверки Control';
         fs.writeFileSync(path.join(runDir, 'operation.json'), `${JSON.stringify(tampered)}\n`);
       }
-      const browserFile = new URL('../browser/worker.mjs', import.meta.url);
+      // Доверенный путь использует отдельный Browser Worker, который получает закреплённый сокет
+      // и Bearer по IPC, а не открывает новое TCP-соединение к стенду.
+      const browserFile = trust
+        ? new URL('../browser/trusted-worker.mjs', import.meta.url)
+        : new URL('../browser/worker.mjs', import.meta.url);
       const browserNonce = randomUUID();
       const browser = spawnWorker(browserFile, [runDir, frozen.manifestSha256, browserNonce], {
         QA_ADAPTANT_HEADED: headed ? '1' : '0',
-        QA_ADAPTANT_FIXTURE_TOKEN: fixtureToken,
+        ...(trust ? {} : { QA_ADAPTANT_FIXTURE_TOKEN: fixtureToken }),
         ...(fault ? { QA_ADAPTANT_FAULT: fault } : {})
       });
       activeBrowsers.set(runId, browser);
       fs.writeFileSync(path.join(runDir, 'browser.pid'), `${JSON.stringify({ pid: browser.pid, nonce: browserNonce })}\n`);
+      if (trust) {
+        const pinned = await trust.preparePinnedDispatch({ frozen, token: fixtureToken, child: browser, store, runDir });
+        if (!pinned || pinned.allow !== true) {
+          trustDenial = pinned?.denial || { verdictCode: 'ENVIRONMENT_CHANGED', message: 'Закреплённое соединение со стендом не установлено' };
+          throw fail(trustDenial.verdictCode, trustDenial.message);
+        }
+      }
       const cancelPoll = setInterval(() => {
         if (cancelRequested(runDir, runId)) { cancellations.set(runId, true); killTree(browser.pid); }
       }, 40);
@@ -326,6 +337,14 @@ export async function run(bundle, options = {}) {
           }
           if (message.type === 'HTTP_RESPONSE') {
             const p = message.payload || {};
+            if (trust && requestRecord && p.requestId === requestRecord.artifact.requestId) {
+              // Подмена стенда после POST (P0-02): ответ без валидной подписи стенда не становится evidence.
+              const responseCheck = await trust.verifyDispatchResponse({ payload: p });
+              if (!responseCheck || responseCheck.allow !== true) {
+                trustDenial = responseCheck?.denial || { verdictCode: 'ENVIRONMENT_CHANGED', message: 'Ответ стенда не подтверждён подписью' };
+                throw fail('ENVIRONMENT_CHANGED', trustDenial.message);
+              }
+            }
             if (!requestRecord || p.requestId !== requestRecord.artifact.requestId || !p.entity?.id || p.responseFixtureId !== fixture.fixtureId) {
               store.appendEvent(runDir, { type: 'RESPONSE_UNCONFIRMED', requestId: p.requestId || null });
             } else if (fault !== 'missingEvidence') {
@@ -337,7 +356,7 @@ export async function run(bundle, options = {}) {
             return;
           }
           if (message.type === 'DONE') { gotDone = true; store.appendEvent(runDir, { type: 'BROWSER_DONE', status: message.payload?.status }); return; }
-          if (message.type === 'ERROR') { workerError = message.payload; store.appendEvent(runDir, { type: 'BROWSER_ERROR', code: workerError?.code || 'BROWSER_ERROR' }); return; }
+          if (message.type === 'ERROR') { workerError = message.payload; store.appendEvent(runDir, { type: 'BROWSER_ERROR', code: workerError?.code || 'BROWSER_ERROR', message: String(workerError?.message || '').slice(0, 300) }); return; }
           if (['READY', 'STEP', 'HTTP_FAILED'].includes(message.type)) {
             store.appendEvent(runDir, { type: message.type, payload: message.payload || {} });
             return;
@@ -444,6 +463,16 @@ async function verifyAndPersist(store, runDir, { fault = null, browserUncertain 
   const frozen = verifyFrozenBundle(store, runDir);
   const finished = terminalResult(store, runDir, frozen);
   if (finished) return finished;
+  if (trust) {
+    // Доверенный путь: Verification и публикация выполняются доверенным Worker'ом внутри trust.publish.
+    // Замороженный Verification 0.1 здесь не запускается и его вердикт не используется.
+    store.appendEvent(runDir, { type: 'STATE', state: 'TRUSTED_VERIFYING' });
+    return await trust.publish({
+      store, runDir, frozen,
+      canceled: canceled || cancelRequested(runDir, frozen.manifest.runId),
+      browserUncertain
+    });
+  }
   const verificationFile = new URL('../verification/worker.mjs', import.meta.url);
   const args = [runDir, frozen.manifestSha256];
   if (browserUncertain) args.push('--browser-unconfirmed');
