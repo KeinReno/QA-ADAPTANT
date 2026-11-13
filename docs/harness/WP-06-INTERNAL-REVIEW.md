@@ -1,12 +1,31 @@
 # WP-06 — внутреннее независимое ревью: интеграция доверенного входа
 
 Ревьюер: Agent B (автор WP-05, код WP-06 не писал). Код интеграции не изменялся.
-Проверяемая ревизия: `feat/adaptant-02-trust-integration`, SHA `53b1115b5efd4c9c2be48452c3fc523b19b56df8`.
-Предыдущая проверенная ревизия: `077bca4` (FIX REQUIRED по F-01). Дата повторной проверки: 13.11.2026.
+Проверяемая ревизия (финал): `feat/adaptant-02-trust-integration`, SHA `21edda60fb9ab2c0815efba775038db52af1f585`.
+Предыдущая проверенная ревизия: `53b1115b5efd4c9c2be48452c3fc523b19b56df8` (ACCEPT), до неё `077bca4` (FIX REQUIRED по F-01). Дата: 13.11.2026.
 
-**Вердикт по ревизии `53b1115`: ACCEPT (в границах внутреннего ревью WP-06).**
+**Вердикт: ACCEPT по `53b1115` и ACCEPT по финальной ревизии `21edda6` (дельта чистая, в границах внутреннего ревью WP-06).**
 
 Метод: чтение `git diff 077bca4..53b1115` по файлам WP-06 и фактический запуск кода в отдельном detached-worktree ровно на `53b1115` (ветка может уезжать вперёд; прогоны сделаны на зафиксированном SHA). Код интеграции не изменялся; worktree после проверки удалён. Пробы — во временных каталогах вне репозитория.
+
+## 0. Дельта до финальной ревизии 21edda6
+
+После ACCEPT на `53b1115` изменились только `apps/control/trusted.mjs` (+9/-2), `tests/trust-integration.test.mjs` (+10, T-13), документы и слияние Red Team (`tests/redteam/**`, только тесты/доки). Продуктовые инварианты WP-06 не переписывались.
+
+Суть правки `trusted.mjs`: в `refreshEnvironment` введён флаг `trustStoreUnavailable`; коды `CONTRACT_INVALID`/`TRUST_STORE_UNAVAILABLE` из `environmentFact` проецируются в факт `trustStore: {available:false, code:'TRUST_STORE_UNAVAILABLE'}`. PDP по первому правилу даёт `INDETERMINATE/TRUST_STORE_UNAVAILABLE`, проекция 0.1 — `BLOCKED/AUTH_UNAVAILABLE`. Остальные ветки (approval, principal, attestation, dispatch, publish) не менялись.
+
+| Проверка на `21edda6` | Факт |
+|---|---|
+| `node --test tests/trust-integration.test.mjs` | **13 tests / 13 pass / 0 fail**, exit 0, ~74 s (T-13 зелёный) |
+| E-05: повреждённый JSON реестра (`environments/<envId>/1.json` = `{`) | verdict `BLOCKED`, reason `AUTH_UNAVAILABLE`, decision `preflight: INDETERMINATE/TRUST_STORE_UNAVAILABLE`, mutationCount 0, consumption нет, `READY` нет, request evidence 0, verdict 1 |
+| E-02: каталог среды удалён | verdict `BLOCKED`, reason `ENVIRONMENT_CHANGED`, decision `DENY/ENVIRONMENT_UNKNOWN`, mutation 0 — отличие E-02/E-05 сохранено |
+| E-05 при повреждении реестра между preflight и INTENT | preflight `ALLOW/TRUST_OK`, dispatch `INDETERMINATE/TRUST_STORE_UNAVAILABLE` → verdict `BLOCKED/AUTH_UNAVAILABLE`, intent 0, mutation 0 — повреждённый реестр не даёт ALLOW и не доходит до ACK |
+| E-05 с неверной подписью записи реестра | verdict `BLOCKED`, reason `CONTRACT_INVALID`, decision `DENY/CONTRACT_INVALID`, mutation 0 — fail-closed, но не проецируется в AUTH_UNAVAILABLE; информационное расширение E-05 на `APPROVAL_SIGNATURE_INVALID` не входит в дельту |
+| Инварианты после дельты | T-01 (PASS только с анкером), T-08 (без подписанта единственный INCONCLUSIVE/EVIDENCE_MISSING), T-10 (T-A без READY/consumption), T-11/T-12 (F-01), T-B/T-C/T-D/T-E пробы — без изменений: PASS без анкера, расход и второй POST не ослаблены |
+
+Полный `npm test` по указанию Lead не перезапускался: на `53b1115` он был 257/257 exit 0, а дельта не меняет продуктовые пути вне `trusted.mjs` и покрыта 13/13 плюс пробами E-05/E-02 и инвариантов.
+
+Вывод по дельте: правка усиливает fail-closed (недоступность trust root вместо «неизвестной среды»), не добавляет путей ALLOW/PASS и не ослабляет T-A/T-B/T-C. Единственное наблюдение — повреждение подписи записи реестра остаётся `BLOCKED/CONTRACT_INVALID`, а не `AUTH_UNAVAILABLE`; инвариант «не ALLOW» соблюдён.
 
 ## 1. Что изменилось с 077bca4
 
@@ -65,4 +84,4 @@ F-01 закрыт. Регрессии T-11/T-12 проходят в состав
 
 ## 7. Вердикт
 
-**ACCEPT** для ревизии `53b1115b5efd4c9c2be48452c3fc523b19b56df8` в границах внутреннего ревью WP-06: F-01 закрыт и покрыт регрессиями, обязательные вопросы 1–9 подтверждены фактическими прогонами, инварианты 0.1 не ослаблены. Это внутреннее ревью, не внешняя приёмка WP-08; остаточный флейк T-08 и границы R-04/D-02 остаются зафиксированными.
+**ACCEPT** для ревизии `21edda60fb9ab2c0815efba775038db52af1f585` (и подтверждён ACCEPT для `53b1115`) в границах внутреннего ревью WP-06: F-01 закрыт и покрыт регрессиями, обязательные вопросы 1–9 подтверждены фактическими прогонами, инварианты 0.1 не ослаблены. Это внутреннее ревью, не внешняя приёмка WP-08; остаточный флейк T-08 и границы R-04/D-02 остаются зафиксированными.
