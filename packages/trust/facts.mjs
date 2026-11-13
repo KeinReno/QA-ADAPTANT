@@ -79,3 +79,24 @@ export function buildFacts(parts = {}) {
     registry: parts.registry || { operationAllowed: false, effectsMatch: false }
   };
 }
+// E-04: credentialRef среды обязан участвовать в выдаче секрета.
+// Секрет берётся только из owner-конфигурируемого хранилища по точному credentialRef;
+// «сырой» секрет, переданный вызывающим, при непустом credentialRef не принимается.
+// Иначе запись среды с чужим credentialRef снова получала бы секрет другой среды.
+export function resolveCredential({ credentialRef, credentials = null, fixtureToken = null } = {}) {
+  if (typeof credentialRef !== 'string') return { ok: false, code: 'CONTRACT_INVALID', message: 'credentialRef записи среды не строка' };
+  if (credentialRef === '') {
+    // Среда не привязала секрет к credentialRef (пустая ссылка): секрет не требуется.
+    return { ok: true, secret: typeof fixtureToken === 'string' ? fixtureToken : '', source: 'unbound' };
+  }
+  let stored = null;
+  if (credentials instanceof Map) stored = credentials.get(credentialRef);
+  else if (credentials && typeof credentials === 'object' && Object.hasOwn(credentials, credentialRef)) stored = credentials[credentialRef];
+  if (typeof stored !== 'string' || stored.length === 0) {
+    return { ok: false, code: 'ENVIRONMENT_ATTESTATION_FAILED', message: 'credentialRef среды не разрешён в хранилище секретов' };
+  }
+  if (typeof fixtureToken === 'string' && fixtureToken.length > 0 && fixtureToken !== stored) {
+    return { ok: false, code: 'ENVIRONMENT_ATTESTATION_FAILED', message: 'секрет не принадлежит credentialRef среды' };
+  }
+  return { ok: true, secret: stored, source: 'store' };
+}

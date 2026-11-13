@@ -113,6 +113,7 @@ await caseMain({ id: 'GAP-01', title: 'Ложный PASS без анкера н�
   check(checks, '(D) observeTrusted не показывает PASS для подделанной цепочки', forgedTrusted.passed === false, { passed: forgedTrusted.passed, state: forgedTrusted.publication, reasonCode: forgedTrusted.reasonCode });
   const oldObserve = await modules.run.observe({ root: noSignerWorld.root, runId: forgedRunId });
   check(checks, '(D) старый observe() показывает PASS — он не является доказательством доверенного PASS', oldObserve.verdict?.verdict === 'PASS', { oldVerdict: oldObserve.verdict?.verdict || null });
-  check(checks, '(D) подделанный прогон не имеет анкера/потребления и POST не было', noSignerWorld.stand.mutationCount === 1, { mutationCount: noSignerWorld.stand.mutationCount });
+  // Имя проверки совпадает со смыслом: подделка не добавила ни одного POST.
+  check(checks, '(D) подделанный прогон не добавил POST (мутация только от эталонного no-signer прогона)', noSignerWorld.stand.mutationCount === 1, { mutationCount: noSignerWorld.stand.mutationCount });
   return { checks };
 } });

@@ -133,8 +133,14 @@ test('Grok P1: удаление fixture lock не разрешает два POST
   const second = await start(secondBundle, { root: first.root, fixtureToken: first.fixture.authToken });
   const owner = await pending;
   await new Promise(resolve => setTimeout(resolve, 500));
-  assert.ok(first.fixture.mutationCount <= 1, `Допущены параллельные мутации: ${first.fixture.mutationCount}`);
-  assert.ok(owner.verdict.verdict !== 'PASS' || second.verdict.verdict !== 'PASS');
+  // F-WP08-02: регрессия «POST не выполняется вообще» тоже должна ловиться, поэтому
+  // ожидание точное: ровно одна мутация и ровно один PASS из двух прогонов.
+  assert.equal(first.fixture.mutationCount, 1, `Ожидалась ровно одна мутация fixture, фактически: ${first.fixture.mutationCount}`);
+  assert.equal(
+    [owner.verdict.verdict, second.verdict.verdict].filter(verdict => verdict === 'PASS').length,
+    1,
+    `Ожидался ровно один PASS из двух прогонов: ${owner.verdict.verdict}/${second.verdict.verdict}`
+  );
 });
 
 test('Grok P2: временные HTTP 503 при независимом чтении не обрывают budget', async t => {

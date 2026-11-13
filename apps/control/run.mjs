@@ -6,6 +6,9 @@ import { RunStore } from '../../packages/core/store.mjs';
 import { verifyFrozenBundle } from '../../packages/core/bundle.mjs';
 import { digest } from '../../packages/core/canonical.mjs';
 import { assertTerminalEvidence } from '../../packages/core/evidence-policy.mjs';
+import {
+  buildTerminalChoice, publishTerminalChoice, readCandidate, readCandidateBody, readTerminalChoice, verifyAnchorStatement
+} from '../../packages/trust/anchor.mjs';
 import { assertApprovedOperation } from '../../packages/core/approved-registry.mjs';
 import { IntentCommand, IntentAck, reasonCodes, validate, validateVerdictCoverage } from '../../packages/contracts/index.mjs';
 
@@ -264,15 +267,19 @@ export async function run(bundle, options = {}) {
         ? new URL('../browser/trusted-worker.mjs', import.meta.url)
         : new URL('../browser/worker.mjs', import.meta.url);
       const browserNonce = randomUUID();
+      // E-04: доверенный путь доставляет только секрет, выданный по credentialRef среды.
+      const deliveredToken = trust && typeof trust.credentialSecret === 'function'
+        ? (trust.credentialSecret() ?? fixtureToken)
+        : fixtureToken;
       const browser = spawnWorker(browserFile, [runDir, frozen.manifestSha256, browserNonce], {
         QA_ADAPTANT_HEADED: headed ? '1' : '0',
-        ...(trust ? {} : { QA_ADAPTANT_FIXTURE_TOKEN: fixtureToken }),
+        ...(trust ? {} : { QA_ADAPTANT_FIXTURE_TOKEN: deliveredToken }),
         ...(fault ? { QA_ADAPTANT_FAULT: fault } : {})
       });
       activeBrowsers.set(runId, browser);
       fs.writeFileSync(path.join(runDir, 'browser.pid'), `${JSON.stringify({ pid: browser.pid, nonce: browserNonce })}\n`);
       if (trust) {
-        const pinned = await trust.preparePinnedDispatch({ frozen, token: fixtureToken, child: browser, store, runDir });
+        const pinned = await trust.preparePinnedDispatch({ frozen, token: deliveredToken, child: browser, store, runDir });
         if (!pinned || pinned.allow !== true) {
           trustDenial = pinned?.denial || { verdictCode: 'ENVIRONMENT_CHANGED', message: 'Закреплённое соединение со стендом не установлено' };
           throw fail(trustDenial.verdictCode, trustDenial.message);
@@ -396,7 +403,7 @@ export async function run(bundle, options = {}) {
       const browserUncertain = Boolean(workerError) || !gotDone || exit.code !== 0;
       const lossDetail = `exit=${exit.code ?? 'null'}, signal=${exit.signal || 'none'}, done=${gotDone}, phase=${workerError?.code || (gotDone ? 'DONE' : 'NO_DONE')}${workerError?.message ? `, ipc=${String(workerError.message).slice(0, 160)}` : ''}`;
       cancellations.delete(runId);
-      return await verifyAndPersist(store, runDir, { fault, browserUncertain, canceled, fixtureToken, lossDetail, trust });
+      return await verifyAndPersist(store, runDir, { fault, browserUncertain, canceled, fixtureToken: deliveredToken, lossDetail, trust });
     } finally {
       try { fs.unlinkSync(lockFile); } catch {}
     }
@@ -405,6 +412,15 @@ export async function run(bundle, options = {}) {
     cancellations.delete(runId);
     if (!runDir) throw error;
     if (process.env.QA_ADAPTANT_DEBUG === '1') console.error(error);
+    if (trust && error && error.trustedPublication) {
+      // P2-04: состояние остаётся PUBLICATION_PENDING, терминальный verdict без terminal-choice не пишется.
+      // Повторный reconcile дочитывает durable candidate/choice и завершает публикацию.
+      const code = typeof error.code === 'string' ? error.code : 'CONTRACT_INVALID';
+      try {
+        store.appendEvent(runDir, { type: 'STATE', state: 'PUBLICATION_PENDING', reasonCode: code, message: String(error.message || '').slice(0, 200) });
+      } catch { /* журнал может быть недоступен: ошибка публикации важнее */ }
+      throw error;
+    }
     const frozen = verifyFrozenBundle(store, runDir);
     const evidence = store.readEvidence(runDir);
     const possiblyMutated = evidence.some(r => r.envelope.kind === 'mutation-intent');
@@ -492,7 +508,15 @@ async function verifyAndPersist(store, runDir, { fault = null, browserUncertain 
   }
   const verdict = validateVerdictCoverage(result.verdict, frozen.operation, result.reads);
   if (verdict.runId !== frozen.manifest.runId || verdict.manifestSha256 !== frozen.manifestSha256) throw fail('INTEGRITY_ERROR', 'Verifier вернул другой run/manifest');
-  if (trust) return await trust.publish({ store, runDir, frozen, verdict });
+  if (trust) {
+    try {
+      return await trust.publish({ store, runDir, frozen, verdict });
+    } catch (error) {
+      // P2-04: ошибка публикации доверенного прогона не должна превращаться в verdict без terminal-choice.
+      if (error && typeof error === 'object') error.trustedPublication = true;
+      throw error;
+    }
+  }
   const finalEvidence = store.appendEvidence(runDir, {
     runId: frozen.manifest.runId,
     manifestSha256: frozen.manifestSha256,
@@ -572,6 +596,54 @@ export async function observe(options = {}) {
   };
 }
 
+// P1-02/V-06: уже выданный анкер и durable candidate восстанавливаются без нового раунда бюджета.
+// Возвращает null, если восстанавливать нечего (публикация ещё не начиналась).
+function findReusableAnchorId({ trust, trustRoot, runId, candidateSha256 }) {
+  if (!trust || typeof trustRoot !== 'string' || trustRoot.length === 0) return null;
+  const directory = path.join(trustRoot, 'anchors');
+  if (!fs.existsSync(directory)) return null;
+  for (const name of fs.readdirSync(directory).filter(item => item.endsWith('.json')).sort()) {
+    let statement;
+    try { statement = JSON.parse(fs.readFileSync(path.join(directory, name), 'utf8')); }
+    catch { continue; }
+    let body;
+    try { body = verifyAnchorStatement(trust, statement); }
+    catch { continue; }
+    if (body.runId === runId && body.candidateSha256 === candidateSha256) return body.anchorId;
+  }
+  return null;
+}
+
+async function recoverPendingPublication({ store, runDir, frozen, trust }) {
+  if (!trust || typeof trust.publish !== 'function') return null;
+  // Здесь trust — контекст доверенного входа; публичные ключи лежат в trust.trust (loadTrustRoot).
+  const trustStore = trust.trust && typeof trust.trust === 'object' ? trust.trust : trust;
+  // Битый terminal-choice не перезаписывается: отказ fail-closed, verdict не пишется.
+  const choice = readTerminalChoice(runDir);
+  let candidate = null;
+  try { candidate = readCandidate(runDir); }
+  catch (error) { if (!choice) throw error; }
+  if (!choice && !candidate) return null;
+  let verdict;
+  if (choice) {
+    const body = readCandidateBody(runDir, choice.candidateSha256);
+    if (!body) fail('EVIDENCE_MISSING', 'Тело выбранного candidate отсутствует; verdict не пересчитывается');
+    // Ровно выбранные байты: новый раунд Verification и новый бюджет не запускаются.
+    verdict = body.candidate;
+  } else {
+    verdict = candidate.candidate;
+    // Анкер мог быть записан до аварии: он переиспользуется, второе заявление не выпускается.
+    if (verdict.verdict === 'PASS') {
+      const anchorId = findReusableAnchorId({ trust: trustStore, trustRoot: trust.trustRoot, runId: frozen.manifest.runId, candidateSha256: digest(verdict) });
+      if (anchorId) {
+        publishTerminalChoice(runDir, buildTerminalChoice({ outcome: 'anchor', candidateSha256: digest(verdict), anchorId }));
+      }
+    }
+  }
+  store.appendEvent(runDir, { type: 'STATE', state: 'PUBLICATION_RECOVERING', candidateSha256: digest(verdict), outcome: choice?.outcome || null });
+  return trust.publish({ store, runDir, frozen, verdict });
+}
+
 export async function reconcile(options = {}) {
   assertOldEntryOptions(options);
   const { root, runId, fault = null, canceled = false, fixtureToken = process.env.QA_ADAPTANT_FIXTURE_TOKEN || '', trust = null } = options;
@@ -591,7 +663,12 @@ export async function reconcile(options = {}) {
     return persistVerdict(store, runDir, frozen, verdict);
   }
   store.appendEvent(runDir, { type: 'STATE', state: 'RECONCILING' });
-  return verifyAndPersist(store, runDir, { fault, browserUncertain: true, canceled, fixtureToken, trust });
+  const recovered = await recoverPendingPublication({ store, runDir, frozen, trust });
+  if (recovered) return recovered;
+  // E-04: чтение при восстановлении тоже получает только секрет, разрешённый credentialRef среды.
+  let deliveredToken = fixtureToken;
+  if (trust && typeof trust.ensureCredential === 'function') deliveredToken = await trust.ensureCredential({ frozen });
+  return verifyAndPersist(store, runDir, { fault, browserUncertain: true, canceled, fixtureToken: deliveredToken, trust });
 }
 
 export async function cancel(options = {}) {

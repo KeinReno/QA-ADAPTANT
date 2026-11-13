@@ -174,6 +174,8 @@ export async function makeWorld(modules, options = {}) {
         signerPipe: signer ? signer.pipePath : null,
         standPublicKey: stand.standPublicKey,
         fixtureToken: stand.authToken,
+        // E-04: секрет выдаётся только по credentialRef подписанной записи среды.
+        credentials: record ? { [record.credentialRef]: stand.authToken } : {},
         ...extra
       };
     },
@@ -380,6 +382,8 @@ export async function trustedContext(modules, world, approval, signer, extra = {
     sid: world.sid,
     standPublicKey: world.stand.standPublicKey,
     signer,
+    credentials: world.record ? { [world.record.credentialRef]: world.stand.authToken } : {},
+    fixtureToken: world.stand.authToken,
     ...extra
   });
 }

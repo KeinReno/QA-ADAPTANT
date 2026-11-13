@@ -26,7 +26,7 @@ import {
 } from '../../packages/trust/anchor.mjs';
 import { connectAnchorSigner, spawnAnchorSigner } from '../../packages/trust/anchor-signer.mjs';
 import { currentUserSid } from '../../packages/trust/windows-sid.mjs';
-import { approvalFact, buildFacts, environmentFact, expectedFromFrozen, principalFact } from '../../packages/trust/facts.mjs';
+import { approvalFact, buildFacts, environmentFact, expectedFromFrozen, principalFact, resolveCredential } from '../../packages/trust/facts.mjs';
 import { cancel, observe, reconcile, start } from './run.mjs';
 
 function fail(code, message) {
@@ -201,7 +201,7 @@ export async function verifyWithTrustedWorker({ runDir, frozen, trustRoot, appro
 export function createTrustContext(options = {}) {
   const {
     trust, trustRoot, approvalId, approval = null, issuer, subject, sid, standPublicKey,
-    signer = null, anchorKeyPath = null, fixtureToken = '', workerTimeoutMs
+    signer = null, anchorKeyPath = null, credentials = null, fixtureToken = null, workerTimeoutMs
   } = options;
   if (!trust || !trustRoot || !approvalId) throw new TypeError('Нужны trust, trustRoot и approvalId');
   let currentEnvironment = null;
@@ -209,6 +209,8 @@ export function createTrustContext(options = {}) {
   let lastDecision = null;
   // Закреплённое соединение Control→стенд и PINNED_JOB для доверенного Browser Worker (P0-02).
   let pinned = null;
+  // E-04: секрет среды, разрешённый по credentialRef подписанной записи.
+  let credential = null;
 
   async function refreshEnvironment(runId, frozen) {
     const expected = expectedFromFrozen(frozen);
@@ -231,6 +233,12 @@ export function createTrustContext(options = {}) {
         const code = error?.code;
         attestation = { ok: false, body: null, error: code === 'ENVIRONMENT_UNAVAILABLE' ? 'ENVIRONMENT_UNAVAILABLE' : 'ENVIRONMENT_ATTESTATION_FAILED' };
       }
+    }
+    // E-04: секрет среды выдаётся только по credentialRef из подписанной записи реестра.
+    const resolved = resolveCredential({ credentialRef: environment.record.credentialRef, credentials, fixtureToken });
+    credential = resolved;
+    if (!resolved.ok) {
+      attestation = { ok: false, body: null, error: resolved.code || 'ENVIRONMENT_ATTESTATION_FAILED' };
     }
     currentEnvironment = { record: environment.record, error: null, attestation };
     expected.environmentGeneration = generation;
@@ -386,6 +394,22 @@ export function createTrustContext(options = {}) {
     verifyDispatchResponse,
     verificationEnv,
     async close() { await closePinnedConnection(); },
+    // E-04: выданный секрет (null, если среда не привязала credentialRef и секрет не нужен).
+    credentialSecret() {
+      return credential && credential.ok ? credential.secret : null;
+    },
+    // Разрешение секрета для доверенного чтения (reconcile): без живой аттестации стенда,
+    // но только по подписанной записи реестра и точному credentialRef.
+    async ensureCredential({ frozen }) {
+      const expected = expectedFromFrozen(frozen);
+      const environment = environmentFact({ trust, trustRoot, environmentId: expected.environmentId, origin: frozen.manifest.environment.baseUrl, generation: null });
+      if (!environment.record) fail(environment.error || 'ENVIRONMENT_UNKNOWN', 'Среда не разрешена для выдачи секрета');
+      if (environment.record.environmentId !== expected.environmentId) fail('ENVIRONMENT_UNKNOWN', 'Запись реестра относится к другой среде');
+      const resolved = resolveCredential({ credentialRef: environment.record.credentialRef, credentials, fixtureToken });
+      if (!resolved.ok) fail(resolved.code || 'ENVIRONMENT_ATTESTATION_FAILED', resolved.message);
+      credential = resolved;
+      return resolved.secret;
+    },
 
     async preflight({ runDir, frozen }) {
       const expected = await refreshEnvironment(frozen.manifest.runId, frozen);
@@ -554,15 +578,16 @@ export async function startTrusted(bundle, options = {}) {
   const trust = loadTrustRoot(options.trustRoot);
   const sid = currentUserSid();
   const signer = await signerFor(options);
+  const fixtureToken = options.fixtureToken || process.env.QA_ADAPTANT_FIXTURE_TOKEN || '';
   const context = createTrustContext({
     trust, trustRoot: options.trustRoot, approvalId: options.approvalId, approval: options.approval || null,
     issuer: options.issuer, subject: options.subject, sid, standPublicKey: options.standPublicKey || null,
     signer, anchorKeyPath: options.anchorKeyPath || null,
-    fixtureToken: options.fixtureToken || process.env.QA_ADAPTANT_FIXTURE_TOKEN || '',
+    credentials: options.credentials || null, fixtureToken,
     workerTimeoutMs: options.workerTimeoutMs
   });
   try {
-    const result = await start(bundle, { root: options.root, headed: options.headed || false, fault: options.fault || null, fixtureToken: options.fixtureToken || process.env.QA_ADAPTANT_FIXTURE_TOKEN || '', trust: context });
+    const result = await start(bundle, { root: options.root, headed: options.headed || false, fault: options.fault || null, fixtureToken, trust: context });
     return assertTrustedPass(result, { root: options.root, trustRoot: options.trustRoot, trust });
   } finally {
     try { await context.close(); } catch { /* соединение уже закрыто */ }
@@ -570,8 +595,10 @@ export async function startTrusted(bundle, options = {}) {
   }
 }
 
-export async function observeTrusted({ root, trustRoot, runId } = {}) {
+export async function observeTrusted({ root, trustRoot, runId, approvalId = null } = {}) {
   assertTrustedOptions({ root, trustRoot, runId }, ['root', 'trustRoot', 'runId']);
+  // P2-02: наблюдение не требует документа approval; approvalId принимается как необязательная ссылка.
+  if (approvalId !== null && (typeof approvalId !== 'string' || approvalId.length === 0)) throw fail('CONTRACT_INVALID', 'approvalId наблюдения имеет неверную форму');
   const trust = loadTrustRoot(trustRoot);
   const base = await observe({ root, runId });
   const store = new RunStore(root);
@@ -591,8 +618,10 @@ export async function observeTrusted({ root, trustRoot, runId } = {}) {
   };
 }
 
-export async function cancelTrusted({ root, trustRoot, runId, subject } = {}) {
+export async function cancelTrusted({ root, trustRoot, runId, subject, approvalId = null } = {}) {
   assertTrustedOptions({ root, trustRoot, runId, subject }, ['root', 'trustRoot', 'runId', 'subject']);
+  // P2-02: отмена не требует документа approval; approvalId принимается как необязательная ссылка.
+  if (approvalId !== null && (typeof approvalId !== 'string' || approvalId.length === 0)) throw fail('CONTRACT_INVALID', 'approvalId отмены имеет неверную форму');
   const trust = loadTrustRoot(trustRoot);
   const sid = currentUserSid();
   const card = principalFact(trust, subject, { windowsSid: sid });
@@ -600,12 +629,16 @@ export async function cancelTrusted({ root, trustRoot, runId, subject } = {}) {
   return cancel({ root, runId });
 }
 
-export async function reconcileTrusted({ root, trustRoot, approvalId, approval = null, issuer, subject, standPublicKey = null, signerPipe = null, anchorKeyPath = null, fixtureToken = '', workerTimeoutMs, runId, fault = null } = {}) {
+export async function reconcileTrusted({ root, trustRoot, approvalId, approval = null, issuer, subject, standPublicKey = null, signerPipe = null, anchorKeyPath = null, credentials = null, fixtureToken = null, workerTimeoutMs, runId, fault = null } = {}) {
   assertTrustedOptions({ root, trustRoot, approvalId, issuer, subject, runId }, ['root', 'trustRoot', 'approvalId', 'issuer', 'subject', 'runId']);
   const trust = loadTrustRoot(trustRoot);
   const sid = currentUserSid();
   const signer = await signerFor({ signerPipe });
-  const context = createTrustContext({ trust, trustRoot, approvalId, approval, issuer, subject, sid, standPublicKey, signer, anchorKeyPath, fixtureToken, workerTimeoutMs });
+  const context = createTrustContext({
+    trust, trustRoot, approvalId, approval, issuer, subject, sid, standPublicKey, signer,
+    anchorKeyPath, credentials, workerTimeoutMs,
+    fixtureToken: fixtureToken || process.env.QA_ADAPTANT_FIXTURE_TOKEN || ''
+  });
   try {
     const result = await reconcile({ root, runId, trust: context, fault });
     return assertTrustedPass(result, { root, trustRoot, trust });
