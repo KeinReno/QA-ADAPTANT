@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const script = `
 $ErrorActionPreference = 'Stop'
@@ -43,4 +43,29 @@ export function protect(bytes) {
 
 export function unprotect(bytes) {
   return dpapi('unprotect', bytes);
+}
+
+// Синхронный вариант нужен там, где загрузка корня доверия исторически синхронна
+// (loadTrustRoot вызывается из синхронных проверок и recovery-путей).
+function dpapiSync(mode, bytes) {
+  if (process.platform !== 'win32') throw Object.assign(new Error('DPAPI доступен только на Windows'), { code: 'UNSUPPORTED' });
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
+    windowsHide: true,
+    env: { ...process.env, QA_DPAPI_MODE: mode },
+    input: Buffer.from(bytes).toString('base64'),
+    encoding: 'utf8'
+  });
+  if (result.status !== 0) {
+    throw Object.assign(new Error(String(result.stderr || 'DPAPI недоступен').trim() || 'DPAPI недоступен'), { code: 'TRUST_STORE_UNAVAILABLE' });
+  }
+  return Buffer.from(String(result.stdout || '').replace(/^\uFEFF/, '').trim(), 'base64');
+}
+
+export function protectSync(bytes) {
+  return dpapiSync('protect', bytes);
+}
+
+export function unprotectSync(bytes) {
+  return dpapiSync('unprotect', bytes);
 }

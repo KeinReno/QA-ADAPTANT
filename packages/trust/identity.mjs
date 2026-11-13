@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { canonical } from '../core/canonical.mjs';
 import { restrictToCurrentUser } from './acl.mjs';
-import { protect, unprotect } from './dpapi.mjs';
+import { protect, protectSync, unprotect, unprotectSync } from './dpapi.mjs';
 
 const ownerDomains = new Set(['approval', 'revocation', 'principal', 'environment-record']);
 const anchorDomains = new Set(['anchor-statement', 'verification-recovery-receipt']);
@@ -84,15 +84,79 @@ function readPublic(file, purpose) {
   return { purpose, keyId: value.keyId, publicKey };
 }
 
+// --- Закрепление корня доверия (QWEN-F1) ---------------------------------
+// Публичные файлы trust root лежат в каталоге, доступном атакующему. Закрепление
+// хранит ожидаемые keyId и хэш пути в конверте DPAPI CurrentUser, который нельзя
+// изготовить, имея только запись файлов. Отсутствие/повреждение/несовпадение
+// закрепления — отказ, а не принятие новых ключей.
+const TRUST_PIN_FILE = 'trust-pin.json';
+const TRUST_PIN_DOMAIN = 'trust-root-pin';
+const TRUST_PIN_SCHEMA = '0.2.1';
+
+function trustRootPathHash(trustRoot) {
+  const physical = physicalPath(trustRoot);
+  return createHash('sha256').update(process.platform === 'win32' ? physical.toLowerCase() : physical).digest('hex');
+}
+
+function pinBody({ trustRoot, ownerKeyId, anchorKeyId }) {
+  return {
+    schemaVersion: TRUST_PIN_SCHEMA,
+    domain: TRUST_PIN_DOMAIN,
+    trustRootPathHash: trustRootPathHash(trustRoot),
+    ownerKeyId,
+    anchorKeyId
+  };
+}
+
+function sealTrustPin(trustRoot, ownerKeyId, anchorKeyId) {
+  const body = pinBody({ trustRoot, ownerKeyId, anchorKeyId });
+  const sealed = protectSync(Buffer.from(canonical(body), 'utf8'));
+  return { ...body, sealing: 'dpapi-current-user', sealed: sealed.toString('base64') };
+}
+
+const verifiedPins = new Map();
+
+function pinCacheSignature(trustRoot) {
+  const files = [TRUST_PIN_FILE, 'owner.pub', 'anchor.pub', 'ready.json'].map(name => path.join(trustRoot, name));
+  return files.map(file => {
+    try { const stat = fs.statSync(file); return stat.mtimeMs + ':' + stat.size; }
+    catch { return 'missing'; }
+  }).join('|');
+}
+
+function verifyTrustPin(trustRoot, { ownerKeyId, anchorKeyId }) {
+  const cacheKey = trustRootPathHash(trustRoot);
+  const signature = pinCacheSignature(trustRoot);
+  if (verifiedPins.get(cacheKey) === signature) return;
+  const file = path.join(trustRoot, TRUST_PIN_FILE);
+  let pin;
+  try { pin = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch (error) {
+    if (error.code === 'ENOENT') fail('TRUST_ROOT_UNPINNED', 'Корень доверия не закреплён: trust-pin.json отсутствует');
+    fail('TRUST_ROOT_PIN_INVALID', 'Закрепление корня доверия не читается');
+  }
+  if (!pin || pin.domain !== TRUST_PIN_DOMAIN || pin.schemaVersion !== TRUST_PIN_SCHEMA || typeof pin.sealed !== 'string') fail('TRUST_ROOT_PIN_INVALID', 'Закрепление корня доверия повреждено');
+  let body;
+  try { body = JSON.parse(unprotectSync(Buffer.from(pin.sealed, 'base64')).toString('utf8')); }
+  catch { fail('TRUST_ROOT_PIN_INVALID', 'Не удалось распечатать закрепление корня доверия'); }
+  if (!body || body.domain !== TRUST_PIN_DOMAIN || body.schemaVersion !== TRUST_PIN_SCHEMA) fail('TRUST_ROOT_PIN_INVALID', 'Закрепление корня доверия не соответствует формату');
+  const expectedPathHash = trustRootPathHash(trustRoot);
+  if (body.trustRootPathHash !== expectedPathHash) fail('TRUST_ROOT_KEY_SUBSTITUTION', 'Закрепление относится к другому корню доверия');
+  if (body.ownerKeyId !== ownerKeyId || body.anchorKeyId !== anchorKeyId) fail('TRUST_ROOT_KEY_SUBSTITUTION', 'Публичные ключи не совпадают с закреплёнными');
+  if (pin.ownerKeyId !== ownerKeyId || pin.anchorKeyId !== anchorKeyId || pin.trustRootPathHash !== body.trustRootPathHash) fail('TRUST_ROOT_KEY_SUBSTITUTION', 'Закрепление корня доверия не согласовано');
+  verifiedPins.set(cacheKey, signature);
+}
+
 export function loadTrustRoot(trustRoot) {
   try {
     const owner = readPublic(path.join(trustRoot, 'owner.pub'), 'owner');
     const anchor = readPublic(path.join(trustRoot, 'anchor.pub'), 'anchor-signer');
     const ready = JSON.parse(fs.readFileSync(path.join(trustRoot, 'ready.json'), 'utf8'));
     if (ready.domain !== 'trust-root-ready' || ready.schemaVersion !== '0.2.0' || ready.ownerKeyId !== owner.keyId || ready.anchorKeyId !== anchor.keyId) fail('TRUST_STORE_UNAVAILABLE', 'Корень доверия не завершён');
+    verifyTrustPin(trustRoot, { ownerKeyId: owner.keyId, anchorKeyId: anchor.keyId });
     return { owner, 'anchor-signer': anchor };
   } catch (error) {
-    if (error.code === 'TRUST_STORE_UNAVAILABLE') throw error;
+    if (['TRUST_STORE_UNAVAILABLE', 'TRUST_ROOT_UNPINNED', 'TRUST_ROOT_PIN_INVALID', 'TRUST_ROOT_KEY_SUBSTITUTION'].includes(error.code)) throw error;
     fail('TRUST_STORE_UNAVAILABLE', 'Корень доверия не читается');
   }
 }
@@ -162,7 +226,7 @@ async function writeKey(secretsDir, trustRoot, purpose, privateName, publicName,
 export async function createTrustRoot({ secretsDir, trustRoot, runDir, fault } = {}) {
   const placed = placeTrustRoot({ secretsDir, trustRoot, runDir });
   const targets = ['owner.key', 'anchor.key'].map(name => path.join(placed.secrets, name))
-    .concat(['owner.pub', 'anchor.pub', 'ready.json'].map(name => path.join(placed.trust, name)));
+    .concat(['owner.pub', 'anchor.pub', 'ready.json', 'trust-pin.json'].map(name => path.join(placed.trust, name)));
   if (targets.some(file => fs.existsSync(file))) fail('TRUST_STORE_UNAVAILABLE', 'Существующие ключи не перезаписываются');
   fs.mkdirSync(placed.secrets, { recursive: true });
   fs.mkdirSync(placed.trust, { recursive: true });
@@ -175,12 +239,27 @@ export async function createTrustRoot({ secretsDir, trustRoot, runDir, fault } =
     const ready = path.join(placed.trust, 'ready.json');
     fs.writeFileSync(ready, `${JSON.stringify({ schemaVersion: '0.2.0', domain: 'trust-root-ready', ownerKeyId, anchorKeyId })}\n`, { flag: 'wx' });
     createdFiles.push(ready);
+    const pinFile = path.join(placed.trust, TRUST_PIN_FILE);
+    fs.writeFileSync(pinFile, `${JSON.stringify(sealTrustPin(placed.trust, ownerKeyId, anchorKeyId))}\n`, { flag: 'wx' });
+    createdFiles.push(pinFile);
     return { ownerKeyId, anchorKeyId };
   } catch (error) {
     for (const file of createdFiles.reverse()) fs.rmSync(file, { force: true });
     if (error.code) throw error;
     fail('TRUST_STORE_UNAVAILABLE', 'Корень доверия не создан');
   }
+}
+
+// Штатная ротация: перезакрепление допускается только при владении приватным ключом
+// владельца (DPAPI-обёртка в secretsDir) — произвольное обновление файлов его не даёт.
+export async function resealTrustRootPin({ trustRoot, secretsDir }) {
+  const owner = readPublic(path.join(trustRoot, 'owner.pub'), 'owner');
+  const anchor = readPublic(path.join(trustRoot, 'anchor.pub'), 'anchor-signer');
+  const privateKey = await unwrapPrivateKey(path.join(secretsDir, 'owner.key'));
+  if (publicKeyId(createPublicKey(privateKey)) !== owner.keyId) fail('TRUST_ROOT_PIN_INVALID', 'Приватный ключ владельца не соответствует owner.pub');
+  const pin = sealTrustPin(trustRoot, owner.keyId, anchor.keyId);
+  fs.writeFileSync(path.join(trustRoot, TRUST_PIN_FILE), `${JSON.stringify(pin)}\n`);
+  return { ownerKeyId: owner.keyId, anchorKeyId: anchor.keyId };
 }
 
 export async function unwrapPrivateKey(file) {
