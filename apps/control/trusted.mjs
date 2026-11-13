@@ -12,7 +12,7 @@ import { verifyFrozenBundle } from '../../packages/core/bundle.mjs';
 import { assertApprovedOperation } from '../../packages/core/approved-registry.mjs';
 import { loadTrustRoot } from '../../packages/trust/identity.mjs';
 import { consumeDispatch } from '../../packages/trust/approval.mjs';
-import { attestEnvironment, newChallenge, processAlive, portOwnerPid } from '../../packages/trust/environment.mjs';
+import { attestLiveEnvironment } from '../../packages/trust/environment.mjs';
 import { decide, projectToVerdict } from '../../packages/trust/policy.mjs';
 import {
   anchorWithinBudget, observeTrustedVerdict, publishBudgetInconclusiveOutcome, publishCandidate,
@@ -92,11 +92,8 @@ export function createTrustContext(options = {}) {
     const generation = environment.record.generation;
     let attestation;
     try {
-      const body = await attestEnvironment({ record: environment.record, trust, challenge: newChallenge(), standPublicKey });
-      if (!processAlive(body.pid)) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Процесс стенда не жив');
-      const owner = await portOwnerPid(body.origin);
-      if (owner !== body.pid) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Endpoint обслуживает другой процесс');
-      attestation = { ok: true, body, error: null };
+      const live = await attestLiveEnvironment({ trust, record: environment.record, standPublicKey });
+      attestation = { ok: true, body: live.attestation, error: null };
     } catch (error) {
       attestation = { ok: false, body: null, error: error?.code || 'ENVIRONMENT_ATTESTATION_FAILED' };
     }
@@ -171,10 +168,7 @@ export function createTrustContext(options = {}) {
       try {
         const record = currentEnvironment?.record;
         if (!record) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Среда не подтверждена до отправки');
-        const body = await attestEnvironment({ record, trust, challenge: newChallenge(), standPublicKey });
-        if (!processAlive(body.pid)) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Процесс стенда завершился до отправки POST');
-        const owner = await portOwnerPid(body.origin);
-        if (owner !== body.pid) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Порт стенда занят другим процессом до отправки POST');
+        await attestLiveEnvironment({ trust, record, standPublicKey });
         return { allow: true };
       } catch (error) {
         return { allow: false, denial: errorDenial(error, 'dispatch') };

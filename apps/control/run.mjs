@@ -15,6 +15,13 @@ const now = () => new Date().toISOString();
 const equal = (a, b) => digest(a) === digest(b);
 const fail = (code, message) => Object.assign(new Error(message), { code });
 
+// Старый принятый вход не принимает аргументы доверенного режима: иначе появился бы обход PEP.
+function assertOldEntryOptions(options) {
+  for (const key of ['approvalId', 'approval', 'trustRoot', 'adapter', 'adapterId', 'standPublicKey', 'signerPipe']) {
+    if (options && options[key] !== undefined) throw fail('CONTRACT_INVALID', 'Старый вход не принимает аргумент доверенного режима: ' + key);
+  }
+}
+
 function safeRunId(value) {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(value)) throw fail('CONTRACT_INVALID', 'Некорректный runId');
   return value;
@@ -201,7 +208,9 @@ async function waitForChild(child, timeoutMs = 30000) {
   });
 }
 
-export async function run(bundle, { root, headed = false, fault = null, fixtureToken = process.env.QA_ADAPTANT_FIXTURE_TOKEN || '', trust = null } = {}) {
+export async function run(bundle, options = {}) {
+  const { root, headed = false, fault = null, fixtureToken = process.env.QA_ADAPTANT_FIXTURE_TOKEN || '', trust = null } = options;
+  assertOldEntryOptions(options);
   if (!root) throw new TypeError('Нужен корень локального хранилища');
   let runId;
   let lease = null;
@@ -488,6 +497,7 @@ function openFrozen(store, runDir) {
 }
 
 export async function start(bundle, options = {}) {
+  assertOldEntryOptions(options);
   if (!options.root) throw new TypeError('Нужен корень локального хранилища');
   const runId = safeRunId(bundle?.manifest?.runId);
   const store = new RunStore(options.root);
@@ -512,7 +522,9 @@ export async function start(bundle, options = {}) {
   return reconcile({ root: options.root, runId, fault: options.fault || null, fixtureToken: options.fixtureToken || process.env.QA_ADAPTANT_FIXTURE_TOKEN || '', trust: options.trust || null });
 }
 
-export async function observe({ root, runId }) {
+export async function observe(options = {}) {
+  assertOldEntryOptions(options);
+  const { root, runId } = options;
   const store = new RunStore(root);
   const safeId = safeRunId(runId);
   const runDir = store.runPath(safeId);
@@ -531,7 +543,9 @@ export async function observe({ root, runId }) {
   };
 }
 
-export async function reconcile({ root, runId, fault = null, canceled = false, fixtureToken = process.env.QA_ADAPTANT_FIXTURE_TOKEN || '', trust = null } = {}) {
+export async function reconcile(options = {}) {
+  assertOldEntryOptions(options);
+  const { root, runId, fault = null, canceled = false, fixtureToken = process.env.QA_ADAPTANT_FIXTURE_TOKEN || '', trust = null } = options;
   const store = new RunStore(root);
   const safeId = safeRunId(runId);
   const runDir = store.runPath(safeId);
@@ -551,7 +565,9 @@ export async function reconcile({ root, runId, fault = null, canceled = false, f
   return verifyAndPersist(store, runDir, { fault, browserUncertain: true, canceled, fixtureToken, trust });
 }
 
-export async function cancel({ root, runId }) {
+export async function cancel(options = {}) {
+  assertOldEntryOptions(options);
+  const { root, runId } = options;
   const store = new RunStore(root);
   const safeId = safeRunId(runId);
   const runDir = store.runPath(safeId);
