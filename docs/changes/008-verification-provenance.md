@@ -49,3 +49,37 @@ Anchor-signer запускается Control как дочерний проце�
 
 Секрет среды выдаётся только при совпадении `credentialRef` из записи среды с выданным секретом;
 несовпадение — отказ до мутации (E-04).
+
+## 6. Уточнение по условиям владельца (APPROVED WITH MANDATORY CONDITIONS)
+
+### 6.1. Поля verification-attestation 0.2.1 (расширены)
+
+```
+{ schemaVersion: '0.2.1', domain: 'verification-attestation',
+  runId, manifestSha256, approvalId, candidateSha256, readSetSha256,
+  evidenceChainHead: { sequence, envelopeSha256 },
+  decision: { verdict, reasonCode },
+  verificationKeyId, pid, startedAt, nonce,
+  keyId, signature, signatureAlgorithm }
+```
+
+Приватный ключ Verification не покидает процесс. По IPC передаются только публичный ключ, аттестация и результаты.
+
+### 6.2. Происхождение публичного ключа
+
+Anchor-signer принимает ключ только при выполнении всех условий:
+его собственный родитель — Control этого прогона; зарегистрированный verification-pid — потомок того же Control;
+образ процесса — доверенный `apps/verification/trusted-worker.mjs`; процесс жив в момент подписи; ключ совпадает
+с зарегистрированным в сессии подписанта для runId. Ключ из candidate/runDir не принимается.
+
+### 6.3. Закреплённое соединение (P0-02, утечка Bearer)
+
+- Control открывает соединение к стенду и выполняет challenge-response **на этом же соединении**;
+  соединение закрепляется (pinned keep-alive).
+- Сокет передаётся доверенному Browser Worker как handle через fork IPC; единственный POST выполняется только
+  по этому сокету. Новых TCP-соединений на origin доверенный путь не открывает.
+- Если стенд погиб между T-C и POST, закреплённое соединение разрывается: rogue не получает ни POST, ни Bearer.
+- Verification использует собственное закреплённое соединение, аттестует его до и после чтений и принимает
+  только подписанные ответы стенда; повтор challenge отвергается стендом.
+- Новые процессы доверенного пути: `apps/browser/trusted-worker.mjs`, `apps/verification/trusted-worker.mjs`.
+  Замороженные `apps/browser/worker.mjs` и `apps/verification/worker.mjs` 0.1 не меняются.
