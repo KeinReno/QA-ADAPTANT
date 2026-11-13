@@ -619,7 +619,9 @@ export async function openPinnedStandConnection({ record, trust, standPublicKey:
 
 // AUD-P0-02: Verification сам подтверждает среду — свежая аттестация до и после набора чтений
 // на собственном закреплённом соединении; каждое чтение обязано нести подпись стенда.
-// read(ctx) — набор чтений вызывающего; ctx.verifiedRead(url, {headers, method}) подписывает каждое чтение.
+// read(ctx) — набор чтений вызывающего; ctx.verifiedRead(url, {headers, method, timeoutMs}) подписывает
+// каждое чтение и возвращает { status, body, bytes, headers, bodySha256, attestation }.
+// Возврат функции = ровно то, что вернул read(ctx); метаданные канала — result.standReads (неперечислимо).
 export async function attestationVerifiedReads({
   trust, record, standPublicKey: publicKey, timeoutMs, headers = {}, read, maxReads = 64
 } = {}) {
@@ -675,7 +677,14 @@ export async function attestationVerifiedReads({
         method, path: url.pathname, status: response.status, challenge,
         bodySha256: verified.bodySha256, issuedAt: verified.issuedAt
       });
-      return { status: response.status, body: response.body, headers: response.headers, bodySha256: verified.bodySha256, attestation: verified };
+      return {
+        status: response.status,
+        body: response.body,
+        bytes: Buffer.from(response.text, 'utf8'),
+        headers: response.headers,
+        bodySha256: verified.bodySha256,
+        attestation: verified
+      };
     }
   };
   try {
@@ -692,7 +701,14 @@ export async function attestationVerifiedReads({
       const afterValue = field === 'pid' ? after.attestation.pid : recordFields[field];
       if (afterValue !== identity[field]) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Среда изменилась во время набора чтений: ' + field);
     }
-    return { result, before, after, reads };
+    // Контракт для Verification Worker: возвращается ровно readResult. Метаданные канала
+    // (before/after/reads) — неперечислимое standReads, чтобы не менять форму результата.
+    if (result !== null && typeof result === 'object') {
+      Object.defineProperty(result, 'standReads', {
+        value: { before, after, reads }, enumerable: false, configurable: true
+      });
+    }
+    return result;
   } finally {
     connection.close();
   }

@@ -44,7 +44,7 @@ attestPinnedConnection(connection, { trust, record, standPublicKey, headers?, ti
 openPinnedStandConnection({ record, trust, standPublicKey, headers?, timeoutMs? })
   -> { socket, agent, attestation, portOwnerPid, request(), close() }
 attestationVerifiedReads({ trust, record, standPublicKey, headers?, timeoutMs?, read, maxReads? })
-  -> { result, before, after, reads }
+  -> ровно то, что вернул read(ctx); метаданные канала — result.standReads (неперечислимо)
 ```
 
 - `verifyStandResponse` сверяет environmentId/generation/origin/standKeyId/challenge/method/path/status/
@@ -59,6 +59,10 @@ attestationVerifiedReads({ trust, record, standPublicKey, headers?, timeoutMs?, 
   до и после набора чтений (свежий challenge каждый раз), принимает только подписанные ответы,
   сверяет pid/владельца порта до и после. Ошибки fail-closed: `ENVIRONMENT_ATTESTATION_FAILED` /
   `ENVIRONMENT_UNAVAILABLE`; PASS из них не следует (Control проецирует в `ENVIRONMENT_CHANGED`/INCONCLUSIVE).
+  Контракт для Verification Worker (R-A, согласован): функция возвращает **ровно readResult**;
+  `ctx.verifiedRead(url, { method, headers?, timeoutMs? })` резолвится в
+  `{ status, body, bytes, headers, bodySha256, attestation }`, где `body` — распарсенный JSON,
+  `bytes` — Buffer точных байт; `before/after/reads` доступны как неперечислимое `readResult.standReads`.
 
 ### 1.3. Новый `apps/browser/trusted-worker.mjs`
 
@@ -145,8 +149,9 @@ attestationVerifiedReads({ trust, record, standPublicKey, headers?, timeoutMs?, 
   события и отчёты не пишется. Противник, читающий память доверенных процессов/DPAPI, — вне модели A1–A3
   (§3, R-04); это не признаётся допустимой утечкой канала.
 - `attestationVerifiedReads` больше не использует `fetchImpl` (закреплённое соединение — только raw
-  socket/http.request); параметр не документирован как обязательный. Для R-A: передавайте
-  `headers: { authorization: 'Bearer …' }` для чтений стенда.
+  socket/http.request) и не требует его. Для R-A: передавайте `headers: { authorization: 'Bearer …' }`
+  для чтений стенда; `standPublicKey` — base64 SPKI из `QA_STAND_PUBLIC_KEY`, `record` —
+  результат `loadEnvironmentRecord` (подписанная/уже проверенная запись принимается).
 - Replay-challenge хранится в памяти процесса стенда; перезапуск стенда сбрасывает множество (у нового
   процесса новый ключ стенда и новая регистрация поколения, подписи старого процесса не пройдут).
 
@@ -154,5 +159,6 @@ attestationVerifiedReads({ trust, record, standPublicKey, headers?, timeoutMs?, 
 
 - База: `07c21c4`.
 - Код пакета: `dadd13667e3e8813e459d0104c51d0852246321e` (стенд + библиотека),
-  `89f1d38e51400ed7616d66f5f17171afc373faca` (доверенный Browser Worker + регрессии).
+  `89f1d38e51400ed7616d66f5f17171afc373faca` (доверенный Browser Worker + регрессии),
+  `f1cd8d903061fd4ed89c5d4c2892a7d29cba2af7` (контракт `attestationVerifiedReads` для Verification Worker: readResult + bytes).
 - HEAD ветки `fix/wp08-p0-02-stand-channel`: коммит с этим отчётом (см. `git rev-parse HEAD` при сдаче).

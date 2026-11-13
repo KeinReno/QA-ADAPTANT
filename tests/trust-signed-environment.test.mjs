@@ -451,23 +451,32 @@ test('attestationVerifiedReads: до/после аттестации, владе
     read: async context => {
       const one = await context.verifiedRead(pathname);
       const two = await context.verifiedRead(pathname);
-      return [one.body, two.body];
+      // Контракт чтения для Verification Worker: { status, body, bytes, attestation }.
+      assert.equal(one.status, 200);
+      assert.ok(Buffer.isBuffer(one.bytes));
+      assert.deepEqual(JSON.parse(one.bytes.toString('utf8')), one.body);
+      return { bodies: [one.body, two.body] };
     }
   });
 
-  assert.equal(outcome.reads.length, 2);
-  assert.notEqual(outcome.reads[0].challenge, outcome.reads[1].challenge, 'challenge новый на каждое чтение');
-  for (const read of outcome.reads) {
+  // Функция возвращает ровно readResult; метаданные канала — неперечислимое standReads.
+  assert.deepEqual(Object.keys(outcome), ['bodies']);
+  assert.equal(outcome.bodies.length, 2);
+  assert.equal(outcome.bodies.every(body => body.records.length === 1), true);
+  assert.equal(outcome.bodies[0].records[0].id, seed.id);
+  const channel = outcome.standReads;
+  assert.ok(channel, 'метаданные канала доступны через standReads');
+  assert.equal(channel.reads.length, 2);
+  assert.notEqual(channel.reads[0].challenge, channel.reads[1].challenge, 'challenge новый на каждое чтение');
+  for (const read of channel.reads) {
     assert.equal(read.status, 200);
     assert.equal(read.path, '/records');
     assert.match(read.bodySha256, /^[a-f0-9]{64}$/);
   }
-  assert.equal(outcome.result[0].records[0].id, seed.id);
-  assert.equal(outcome.result.every(body => body.records.length === 1), true);
-  assert.equal(outcome.before.record.environmentId, record.environmentId);
-  assert.equal(outcome.after.attestation.pid, outcome.before.attestation.pid);
-  assert.equal(outcome.after.portOwnerPid, outcome.before.portOwnerPid);
-  assert.notEqual(outcome.before.attestation.challenge, outcome.after.attestation.challenge, 'аттестации до и после — свежие');
+  assert.equal(channel.before.record.environmentId, record.environmentId);
+  assert.equal(channel.after.attestation.pid, channel.before.attestation.pid);
+  assert.equal(channel.after.portOwnerPid, channel.before.portOwnerPid);
+  assert.notEqual(channel.before.attestation.challenge, channel.after.attestation.challenge, 'аттестации до и после — свежие');
 
   // Неподписанный ответ (/environment не подписывается) не принимается как чтение.
   await expectThrow(() => attestationVerifiedReads({
