@@ -27,7 +27,7 @@
     "schemas": "exit 0",
     "rdMatrix": "15/15 PASS",
     "stable": "58/59 ×2, UNVERIFIABLE",
-    "e02": "7/7 PASS"
+    "e02": "7/7 PASS (ревизия 2: strict replay, sidecar split, observe после Trust Root)"
   },
   "conditions": [
     "F-06: отдельное решение владельца об исключении либо стабильный прогон; UNVERIFIABLE не переводится в PASS",
@@ -219,7 +219,7 @@
     {
       "id": "E-02",
       "status": "PASS",
-      "evidence": "WP08-13 (7/7, e02.log)"
+      "evidence": "WP08-13 ревизия 2; evidence/stage2/e02.log; repro/e02-suite.mjs"
     },
     {
       "id": "E-03",
@@ -291,5 +291,12 @@
       "status": "PASS",
       "evidence": "WP08-08..WP08-15 + матрица"
     }
-  ]
+  ],
+  "targetValidation": {
+    "mode": "explicit --target + --sha",
+    "checks": [
+      "HEAD == --sha",
+      "worktree clean"
+    ]
+  }
 }

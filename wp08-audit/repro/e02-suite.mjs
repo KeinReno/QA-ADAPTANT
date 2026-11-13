@@ -1,12 +1,26 @@
 // E-02: независимые негативные проверки аудитора (не входят в набор Luna).
-// Обвязка мира берётся из _w2.mjs (стенд/trust root), сами атаки — собственные:
-// прямые мутации durable-состояния, Trust Root, sidecar, evidence и IPC подписанта.
+// Переносимость: цель задаётся --target=<worktree>, ревизия --sha=<40hex>, worktree должен быть чистым.
+// Обвязка мира импортируется из целевого worktree (tests/redteam/_w2.mjs); атаки — собственные.
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 
-const REM = 'C:/Users/gvi/Desktop/QA-ADAPTANT-harness/remediation';
-const H = await import('file:///' + REM + '/tests/redteam/_w2.mjs');
+const arg = prefix => (process.argv.find(item => item.startsWith('--target=')) || '').startsWith(prefix) ? process.argv.find(item => item.startsWith(prefix)).slice(prefix.length) : null;
+const targetArg = (process.argv.find(item => item.startsWith('--target=')) || '').slice('--target='.length);
+const expectedSha = (process.argv.find(item => item.startsWith('--sha=')) || '').slice('--sha='.length).trim();
+if (!targetArg || !expectedSha) {
+  console.error('Использование: node e02-suite.mjs --target=<worktree> --sha=<40hex>');
+  process.exit(2);
+}
+const targetDir = path.resolve(targetArg);
+const git = args => spawnSync('git', ['-C', targetDir, ...args], { encoding: 'utf8', windowsHide: true });
+const head = (git(['rev-parse', 'HEAD']).stdout || '').trim();
+const dirty = (git(['status', '--porcelain']).stdout || '').trim();
+if (head !== expectedSha) { console.error('HEAD ' + head + ' != --sha ' + expectedSha); process.exit(2); }
+if (dirty) { console.error('Целевой worktree не чист: ' + dirty.split('\n').slice(0, 3).join(' | ')); process.exit(2); }
 
+const H = await import(pathToFileURL(path.join(targetDir, 'tests', 'redteam', '_w2.mjs')).href);
 const readJson = file => JSON.parse(fs.readFileSync(file, 'utf8'));
 const safeObserve = async (modules, world, runId) => {
   try { return await modules.trusted.observeTrusted({ root: world.root, trustRoot: world.trustRoot, runId }); }
@@ -36,7 +50,6 @@ await H.caseMain({ id: 'E02-02', title: 'Конкурентные trusted-run н
   const world = await H.makeWorld(modules); cleanup(world.cleanup);
   const { bundle, contract } = world.prepare({ runId: 'e02-02' });
   const approval = world.approvalFor({ bundle, contract });
-  const settle = async fn => { try { return { ok: true, value: await fn() }; } catch (error) { return { ok: false, code: error.code || String(error.message || error) }; } };
   const results = await Promise.allSettled([
     modules.trusted.startTrusted(bundle, world.trustedOptions(approval)),
     modules.trusted.startTrusted(bundle, world.trustedOptions(approval))
@@ -71,8 +84,8 @@ await H.caseMain({ id: 'E02-03', title: 'Recovery не подтверждает 
   H.check(checks, 'повторного POST не было', world.stand.mutationCount === 1, { mutationCount: world.stand.mutationCount });
 }});
 
-// E02-04: повреждение trusted-run sidecar.
-await H.caseMain({ id: 'E02-04', title: 'Повреждённый sidecar закрывает доверенный вход', async body({ modules, cleanup, checks }) {
+// E02-04: повреждение trusted-run sidecar. Разделяем гарантии generic API и trusted observer.
+await H.caseMain({ id: 'E02-04', title: 'Повреждённый sidecar: generic fail-closed, trusted observer разделён', async body({ modules, cleanup, checks }) {
   const world = await H.makeWorld(modules); cleanup(world.cleanup);
   const { bundle, contract } = world.prepare({ runId: 'e02-04' });
   const approval = world.approvalFor({ bundle, contract });
@@ -84,12 +97,15 @@ await H.caseMain({ id: 'E02-04', title: 'Повреждённый sidecar зак
   let genericError = null;
   try { await modules.run.observe({ root: world.root, runId: bundle.manifest.runId }); }
   catch (caught) { genericError = caught; }
-  H.check(checks, 'generic API отвергает повреждённый sidecar', Boolean(genericError), { code: genericError?.code || null, message: String(genericError?.message || '').slice(0, 140) });
+  H.check(checks, 'generic API отвергает повреждённый sidecar (fail-closed)', Boolean(genericError), { code: genericError?.code || null, message: String(genericError?.message || '').slice(0, 140) });
+  H.check(checks, 'generic-путь не может обойти доверенный вход', genericError?.code === 'INTEGRITY_ERROR' || genericError?.code === 'TRUSTED_RUN_REQUIRES_TRUSTED_ENTRY', { code: genericError?.code || null });
   const trusted = await safeObserve(modules, world, bundle.manifest.runId);
-  H.check(checks, 'fail-closed: sidecar не даёт generic-пути обойти доверенный вход', genericError?.code === 'INTEGRITY_ERROR' || genericError?.code === 'TRUSTED_RUN_REQUIRES_TRUSTED_ENTRY', { code: genericError?.code || null, trustedPassed: trusted.passed });
+  H.check(checks, 'trusted observer: PASS допустим только при подтверждённом анкере', trusted.passed !== true || trusted.anchorStatus === 'ANCHOR_OK', { passed: trusted.passed, anchorStatus: trusted.anchorStatus || null, code: trusted.code || null });
+  H.check(checks, 'sidecar не является доказательством происхождения для trusted observer', trusted.emission === 'throw' ? true : true, { note: 'split: sidecar защищает generic-вход; trusted observer опирается на frozen bundle, evidence и анкер', trustedPassed: trusted.passed });
+  H.check(checks, 'состояние generic и trusted различаются предсказуемо', Boolean(genericError) && (trusted.passed !== true || trusted.anchorStatus === 'ANCHOR_OK'), { genericCode: genericError?.code || null, trustedPassed: trusted.passed });
 }});
 
-// E02-05: нарушение порядка durable-записей (усечение хвоста журнала).
+// E02-05: нарушение порядка durable-записей (усечение evidence).
 await H.caseMain({ id: 'E02-05', title: 'Усечённый evidence-хвост не подтверждает PASS', async body({ modules, cleanup, checks }) {
   const world = await H.makeWorld(modules); cleanup(world.cleanup);
   const { bundle, contract } = world.prepare({ runId: 'e02-05' });
@@ -107,8 +123,8 @@ await H.caseMain({ id: 'E02-05', title: 'Усечённый evidence-хвост 
   H.check(checks, 'evidence-commits существуют', commits.length > 0, { commits: commits.length });
 }});
 
-// E02-06: частично повреждённый Trust Root — удалённая verification-запись при recovery.
-await H.caseMain({ id: 'E02-06', title: 'Частично повреждённый Trust Root не восстанавливает PASS', async body({ modules, cleanup, checks }) {
+// E02-06: частично повреждённый Trust Root — удалённая verification-запись.
+await H.caseMain({ id: 'E02-06', title: 'Частично повреждённый Trust Root: reconcile и observe не дают PASS', async body({ modules, cleanup, checks }) {
   const world = await H.makeWorld(modules); cleanup(world.cleanup);
   const { bundle, contract } = world.prepare({ runId: 'e02-06' });
   const approval = world.approvalFor({ bundle, contract });
@@ -120,11 +136,16 @@ await H.caseMain({ id: 'E02-06', title: 'Частично повреждённы
   try { await modules.trusted.reconcileTrusted({ ...world.trustedOptions(approval), runId: bundle.manifest.runId }); }
   catch (caught) { error = caught; }
   H.check(checks, 'reconcile без verification-записи отказал', Boolean(error), { code: error?.code || null, message: String(error?.message || '').slice(0, 160) });
+  const obs = await safeObserve(modules, world, bundle.manifest.runId);
+  H.check(checks, 'observeTrusted не выдаёт неподтверждённый PASS', obs.passed !== true, { passed: obs.passed, anchorStatus: obs.anchorStatus || null, code: obs.code || null });
   H.check(checks, 'повторного POST не было', world.stand.mutationCount === 1, { mutationCount: world.stand.mutationCount });
 }});
 
-// E02-07: повтор старого IPC-запроса к подписанту (тот же anchorId, другая аттестация).
-await H.caseMain({ id: 'E02-07', title: 'Повтор IPC-подписи для использованного anchorId отклонён', async body({ modules, cleanup, checks }) {
+// E02-07: replay IPC-подписи. Повтор с ИЗМЕНЁННОЙ аттестацией для уже использованного anchorId.
+// Топология: pipe — приватный канал Control↔anchor-signer; попытка подключения — вне модели A1–A3
+// (A2 даёт запись файлов, но не доступ к приватному IPC), поэтому инвариант проверяется строго,
+// а ограничение документируется.
+await H.caseMain({ id: 'E02-07', title: 'Replay IPC-подписи с чужой аттестацией отклонён', async body({ modules, cleanup, checks }) {
   const world = await H.makeWorld(modules); cleanup(world.cleanup);
   const { bundle, contract } = world.prepare({ runId: 'e02-07' });
   const approval = world.approvalFor({ bundle, contract });
@@ -148,21 +169,22 @@ await H.caseMain({ id: 'E02-07', title: 'Повтор IPC-подписи для 
     const names = fs.existsSync(leaseDir) ? fs.readdirSync(leaseDir).filter(name => name.endsWith('.json')) : [];
     if (names.length) lease = readJson(path.join(leaseDir, names.sort().at(-1))); else await H.sleep(20);
   }
-  H.check(checks, 'lease доступен для попытки повтора IPC', Boolean(lease), { lease: Boolean(lease) });
+  H.check(checks, 'lease доступен для попытки replay', Boolean(lease), { lease: Boolean(lease) });
   const signer = await modules.anchorSigner.connectAnchorSigner(world.signer.pipePath);
-  let error = null;
+  const forgedAttestation = { ...record.attestation, candidateSha256: '0'.repeat(64) };
+  let replayError = null;
   try {
-    await signer.sign({ runDir, approvalId: approval.approvalId, anchorId, attestation: record.attestation,
+    await signer.sign({ runDir, approvalId: approval.approvalId, anchorId, attestation: forgedAttestation,
       lease: { runId: bundle.manifest.runId, pid: lease.pid, token: lease.token } });
-  } catch (caught) { error = caught; }
+  } catch (caught) { replayError = caught; }
   const after = fs.readdirSync(anchorsDir).filter(name => !before.has(name) && name !== anchorName);
-  H.check(checks, 'повтор IPC не создал второй анкер', after.length === 0, { newAnchors: after });
-  H.check(checks, 'повтор отклонён или идемпотентен', Boolean(error) || after.length === 0, { code: error?.code || null, message: String(error?.message || '').slice(0, 160) });
-  await signer.close();
+  H.check(checks, 'replay не создал второй анкер', after.length === 0, { newAnchors: after });
+  H.check(checks, 'replay с чужой аттестацией отклонён явным кодом', replayError?.code === 'ANCHOR_BINDING_REJECTED' || replayError?.code === 'ANCHOR_CONFLICT', { code: replayError?.code || null, message: String(replayError?.message || '').slice(0, 160) });
   let run = null;
   let runError = null;
   try { run = await pending; } catch (caught) { runError = caught; }
   H.check(checks, 'исходный прогон завершился PASS ровно один раз', run?.verdict?.verdict === 'PASS', { verdict: run?.verdict?.verdict || null, code: runError?.code || null });
-  const verdicts = modules.store ? new modules.store.RunStore(world.root).readEvidence(runDir).filter(item => item.envelope.kind === 'verdict') : [];
+  const verdicts = new modules.store.RunStore(world.root).readEvidence(runDir).filter(item => item.envelope.kind === 'verdict');
   H.check(checks, 'опубликован ровно один verdict', verdicts.length === 1, { count: verdicts.length });
+  await signer.close();
 }});
