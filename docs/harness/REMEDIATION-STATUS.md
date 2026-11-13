@@ -31,3 +31,25 @@
 Замена формулировки модели доверия (WP08-REMEDIATION-ARCHITECTURE.md §3): A1–A3 и явный остаточный риск
 (код того же Windows SID с правами инъекции/DPAPI — вне модели; для Dev/ЦИЗ нужен отдельный SID).
 Это единственное архитектурное решение, которое требуется до финальной ревизии.
+
+## Промежуточный результат: исходные P0-скрипты WP-08 на исправленной ревизии (1791dec)
+
+Проверено запуском **исходных** аудиторских скриптов (копия wp08-audit/tests в рабочем дереве, после прогона удалена;
+аудиторская ветка не изменялась). Логи: docs/harness/evidence/.
+
+| Скрипт | Было на 07c21c4 | Стало на исправленной ревизии |
+|---|---|---|
+| wp08-r07-forge-candidate.mjs (AUD-P0-01) | SIGNER ok:true verdict PASS, trusted observe passed:true, false PASS shown | SIGNER ok:false CONTRACT_INVALID «sign() требует verification-attestation»; observeTrusted trusted:false passed:false; VERDICT_FALSE_PASS_SHOWN false |
+| wp0304-06-false-pass.mjs (AUD-P0-02) | A и B воспроизводились: ложный PASS, roguePosts=1, bearerLeaked=true | Ни A, ни B не воспроизводятся: verdict BLOCKED/ENVIRONMENT_CHANGED, standMutationCount=0, roguePosts=0, rogueRecordGets=0, bearerLeakedToRogue=false |
+
+Оговорка: контролируемый стенд аудиторского скрипта не подписывает ответы доменом stand-response, поэтому
+доверенный путь отказывает ещё на аттестации закреплённого соединения. Это fail-closed и закрывает дефект,
+но сценарий «подмена стенда, который умеет подписывать» проверяется отдельными регрессиями R-B
+(tests/trust-signed-environment.test.mjs, сценарий B: roguePosts=0, bearerLeaked=false) и независимым R-D.
+
+## Текущее состояние интеграции
+
+- Ветка fix/adaptant-02-wp08-remediation; P0-01 (R-A) и P0-02 (R-B) слиты, wiring Control выполнен Lead.
+- Сквозной доверенный прогон: PASS только с аттестацией Verification; POST только по закреплённому сокету;
+  переаттестация перед POST; ответ проверяется подписью стенда; независимые чтения только подписанные.
+- Осталось до финальной ревизии: сведение P1/P2 (R-C), независимый прогон R-D, полная регрессия, отчёт на SHA.
