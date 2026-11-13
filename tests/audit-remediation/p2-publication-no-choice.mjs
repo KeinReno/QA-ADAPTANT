@@ -1,0 +1,68 @@
+// AUD-P2-04: ошибка trust.publish не должна приводить к терминальному verdict без terminal-choice.
+// Инъекция: доверенный контекст, чей publish() бросает TERMINAL_CHOICE_INCOMPLETE.
+//
+// FAIL = дефект: записан verdict без terminal-choice (состояние PUBLICATION_PENDING нарушено).
+// PASS = verdict без terminal-choice не пишется; состояние остаётся pending/ошибкой.
+import { loadModules, makeWorld, runScenario, check, targetRoot } from './audit-lib.mjs';
+
+await runScenario({
+  id: 'AUD-P2-PUBLICATION',
+  title: 'Ошибка публикации не создаёт verdict без terminal-choice',
+  expected: 'При ошибке trust.publish терминальный verdict без terminal-choice не пишется',
+  async body() {
+    const checks = [];
+    const M = await loadModules(targetRoot());
+    const world = await makeWorld(M);
+    const publishState = { called: 0, error: null };
+    const context = {
+      async preflight() { return { allow: true }; },
+      async dispatch() { return { allow: true }; },
+      async beforeRequestAck() { return { allow: true }; },
+      async publish() {
+        publishState.called++;
+        publishState.error = 'TERMINAL_CHOICE_INCOMPLETE';
+        throw Object.assign(new Error('публикация не выполнена (инъекция аудита)'), { code: 'TERMINAL_CHOICE_INCOMPLETE' });
+      }
+    };
+    try {
+      const prepared = world.prepare({ runId: 'reaudit-p204' });
+      let runError = null;
+      let result = null;
+      try { result = await M.run.run(prepared.bundle, { root: world.root, trust: context, fixtureToken: world.stand.authToken }); }
+      catch (error) { runError = { code: error?.code || null, message: String(error?.message || error) }; }
+      const store = new M.store.RunStore(world.root);
+      const runDir = store.runPath(prepared.runId);
+      let kinds = [];
+      try { kinds = store.readEvidence(runDir).map(item => item.envelope.kind); } catch { kinds = ['UNREADABLE']; }
+      const choice = M.anchor.readTerminalChoice(runDir);
+      const yes = (() => { try { return store.readEvidence(runDir).filter(item => item.envelope.kind === 'verdict').length; } catch { return -1; } })();
+      const evidence = {
+        runId: prepared.runId,
+        publishCalled: publishState.called,
+        injectedError: publishState.error,
+        runError,
+        resultVerdict: result?.verdict?.verdict || null,
+        evidenceKinds: kinds,
+        verdictCount: yes,
+        terminalChoice: choice ? { outcome: choice.outcome } : null,
+        standMutationCount: world.stand.mutationCount
+      };
+      check(checks, 'инъекция publish() действительно выполнена (мутация была)', publishState.called === 1 && world.stand.mutationCount === 1, { called: publishState.called, mutationCount: world.stand.mutationCount });
+      const defect = yes >= 1 && choice === null;
+      if (!defect) {
+        check(checks, 'verdict без terminal-choice отсутствует', yes === 0 || choice !== null, { verdicts: yes, choice: evidence.terminalChoice });
+        check(checks, 'состояние публикации не терминальное PASS', evidence.resultVerdict !== 'PASS', { verdict: evidence.resultVerdict });
+      }
+      return {
+        defectObserved: defect,
+        actual: defect
+          ? 'ошибка publish привела к verdict без terminal-choice (' + (evidence.resultVerdict || 'verdict') + ')'
+          : 'verdict без terminal-choice не записан; публикация осталась незавершённой',
+        evidence,
+        checks
+      };
+    } finally {
+      await world.cleanup();
+    }
+  }
+});
