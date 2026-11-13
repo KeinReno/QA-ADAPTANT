@@ -219,7 +219,8 @@ export function createTrustContext(options = {}) {
           });
         }
       }
-      const published = publishTerminalVerdict({ store, runDir, frozen });
+      // Проверка анкера для исхода anchor выполняется внутри publishTerminalVerdict (WP-05 D-01).
+      const published = publishTerminalVerdict({ store, runDir, frozen, trust, trustRoot });
       store.appendEvent(runDir, { type: 'TRUST_VERDICT_DURABLE', evidenceId: published.evidenceId, verdict: published.verdict.verdict, anchorId: readTerminalChoice(runDir)?.anchorId || null });
       store.appendEvent(runDir, { type: 'STATE', state: 'FINISHED', verdict: published.verdict.verdict, reasonCode: published.verdict.reasonCode });
       return {

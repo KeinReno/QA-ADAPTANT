@@ -233,3 +233,24 @@ test('T-09: старый start() отвергает аргументы дове�
   );
   assert.equal(w.stand.mutationCount, 0);
 });
+test('T-10: отказ на T-A не запускает Browser и не выдаёт секрет мутации', { timeout: 60000 }, async t => {
+  const w = await world(t);
+  const { bundle, contract } = prepare(w);
+  const approval = signApproval(w.ownerKey, approvalFields(w, { bundle, contract }), w.trust, w.trustRoot);
+  const expired = signApproval(w.ownerKey, {
+    ...approvalFields(w, { bundle, contract }),
+    issuedAt: new Date(Date.now() - 3_600_000).toISOString(),
+    expiresAt: new Date(Date.now() - 3_000_000).toISOString()
+  }, w.trust, w.trustRoot);
+  const result = await startTrusted(bundle, trustedOptions(w, expired));
+  assert.equal(result.verdict.verdict, 'BLOCKED');
+  assert.equal(w.stand.mutationCount, 0);
+  const store = new RunStore(w.root);
+  const events = store.readEvents(result.runDir).map(event => event.type);
+  assert.equal(events.includes('READY'), false);
+  assert.equal(events.includes('REQUEST_DURABLE'), false);
+  const items = store.readEvidence(result.runDir);
+  assert.equal(items.some(item => item.envelope.kind === 'request'), false);
+  assert.equal(items.filter(item => item.envelope.kind === 'verdict').length, 1);
+  assert.equal(fs.existsSync(path.join(w.trustRoot, 'consumption', approval.approvalId + '.json')), false);
+});
