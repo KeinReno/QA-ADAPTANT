@@ -19,7 +19,7 @@ function decodeStatement(header) {
 }
 
 async function honestControl(M, label) {
-  const world = await makeWorld(M, {});
+  const world = await makeWorld(M, { privateSigner: true });
   try {
     const prepared = world.prepare({ runId: 'reaudit-p002c-control-' + label });
     const approval = world.approvalFor(prepared);
@@ -51,7 +51,7 @@ await runScenario({
         let killedAt = null;
         const stand = await startControlledStand(M, {});
         standRef = stand;
-        const world = await makeWorld(M, { standalone: stand, withSigner: false });
+        const world = await makeWorld(M, { standalone: stand, privateSigner: true, withSigner: false });
         try {
           const prepared = world.prepare({ runId: 'reaudit-p002c-death' });
           const approval = world.approvalFor(prepared);
@@ -136,7 +136,7 @@ await runScenario({
           capturedAttestation = await response.json().catch(() => null);
           capturedAttestationStatement = decodeStatement(response.headers.get(STAND_RESPONSE_HEADER));
         }
-        const world = await makeWorld(M, { standalone: stand, withSigner: true });
+        const world = await makeWorld(M, { standalone: stand, privateSigner: true });
         try {
           const prepared = world.prepare({ runId: 'reaudit-p002c-replay' });
           const approval = world.approvalFor(prepared);

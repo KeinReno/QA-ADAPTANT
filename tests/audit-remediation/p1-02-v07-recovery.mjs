@@ -28,14 +28,16 @@ function childSource() {
     "const issuer = JSON.parse(fs.readFileSync(request.issuerFile, 'utf8'));",
     "const subject = JSON.parse(fs.readFileSync(request.subjectFile, 'utf8'));",
     "const bundle = JSON.parse(fs.readFileSync(request.bundleFile, 'utf8'));",
-    "const real = signerModule.connectAnchorSigner(request.pipePath);",
+    "const signerServer = signerModule.startAnchorSigner({ trustRoot: request.trustRoot, secretsDir: request.secretsDir });",
+    "await signerServer.ready;",
     "const signer = {",
     "  async sign(signRequest) {",
-    "    const statement = await real.sign(signRequest);",
+    "    const statement = await signerServer.signAndPublish ? await signerServer.signAndPublish(signRequest) : null;",
+    "    if (!statement) throw Object.assign(new Error('signer has no sign method'), { code: 'ANCHOR_UNAVAILABLE' });",
     "    fs.writeFileSync(request.anchorFile, JSON.stringify(statement) + '\\n');",
     "    process.exit(42);", // гибель после записи анкера, до terminal-choice/verdict
     "  },",
-    "  registerVerificationKey: (...args) => real.registerVerificationKey(...args)",
+    "  registerVerificationKey: (...args) => signerServer.registerVerificationKey ? signerServer.registerVerificationKey(...args) : Promise.reject(Object.assign(new Error('no register'), { code: 'CONTRACT_INVALID' }))",
     "};",
     "const context = trusted.createTrustContext({",
     "  trust, trustRoot: request.trustRoot, approvalId: request.approvalId, approval, issuer, subject,",
@@ -74,7 +76,7 @@ async function crashAtAnchor(M, world, workDir, { runId, tamperAfterAnchor = fal
   fs.writeFileSync(requestFile, JSON.stringify({
     target: targetRoot(), trustRoot: world.trustRoot, approvalId: approval.approvalId,
     issuerFile, subjectFile, sid: world.sid, standPublicKey: world.stand.standPublicKey,
-    pipePath: world.signer ? world.signer.pipePath : null, root: world.root, fixtureToken: world.stand.authToken,
+    pipePath: world.signer ? world.signer.pipePath : null, secretsDir: world.secretsDir, root: world.root, fixtureToken: world.stand.authToken,
     bundleFile, resultFile, errorFile, anchorFile,
     anchorKeyPath: path.join(world.secretsDir, 'anchor.key')
   }));
@@ -126,14 +128,16 @@ await runScenario({
     try {
       // 1) Авария сразу после записи анкера (до терминального verdict).
       let crash = null;
-      for (let attempt = 1; attempt <= 4; attempt++) {
+      const attempts = [];
+      for (let attempt = 1; attempt <= 3; attempt++) {
         const current = await crashAtAnchor(M, world, workDir, { runId: 'reaudit-p102-' + attempt });
+        attempts.push({ attempt, exitCode: current.exitCode, childResult: current.childResult, childError: current.childError, anchorSeen: current.anchorSeen, anchorFiles: current.anchorFiles, verdictsAtKill: current.verdictsAtKill });
         if (current.anchorSeen && current.anchorFiles.length >= 1 && current.verdictsAtKill === 0) { crash = current; break; }
         // Не целое состояние: повторяем на новом runId.
       }
       if (!crash) {
         check(checks, 'удалось зафиксировать состояние anchor-held (гибель после анкера до verdict)', false);
-        return { defectObserved: false, actual: 'аварию после анкера зафиксировать не удалось: V-07 не проверен', evidence: {}, checks };
+        return { defectObserved: false, actual: 'аварию после анкера зафиксировать не удалось: V-07 не проверен (INCONCLUSIVE)', evidence: { attempts }, checks };
       }
       check(checks, 'состояние anchor-held зафиксировано', true, { attemptsRunId: crash.casePrepared.runId, anchorFiles: crash.anchorFiles, verdictsAtKill: crash.verdictsAtKill });
       const candidateBefore = M.anchor.readCandidate(crash.runDir);

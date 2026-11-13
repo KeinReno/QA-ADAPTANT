@@ -26,7 +26,7 @@ await runScenario({
       let controlObserved = null;
       let controlMutation = null;
       for (let controlAttempt = 1; controlAttempt <= 2 && !honestOk; controlAttempt++) {
-        controlWorld = await makeWorld(M, { standOptions: { storeRecords: 'full' } });
+        controlWorld = await makeWorld(M, { privateSigner: true, standOptions: { storeRecords: 'full' } });
         try {
           const controlCase = controlWorld.prepare({ runId: 'reaudit-p002a-control-' + controlAttempt });
           const controlApproval = controlWorld.approvalFor(controlCase);
@@ -68,7 +68,7 @@ await runScenario({
       if (attestationResponse.status === 200) capturedAttestation = await attestationResponse.json();
       check(checks, 'у аудитора есть захваченная настоящая аттестация стенда для replay', capturedAttestation !== null, { status: attestationResponse.status });
 
-      attackWorld = await makeWorld(M, { standalone: stand, withSigner: true });
+      attackWorld = await makeWorld(M, { standalone: stand, privateSigner: true });
       const attackCase = attackWorld.prepare({ runId: 'reaudit-p002a-attack' });
       const approval = attackWorld.approvalFor(attackCase);
       let result = null;

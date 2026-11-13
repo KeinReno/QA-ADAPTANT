@@ -11,7 +11,7 @@
 // PASS = все атаки отвергнуты.
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto';
 import {
   loadModules, makeWorld, prepareForgeWithConsumption, spawnFakeTrustedWorker, runScenario, check,
   targetRoot, tempDir, removeDir, sleep
@@ -90,7 +90,7 @@ await runScenario({
           decision: { verdict: forged.candidate.verdict, reasonCode: forged.candidate.reasonCode },
           pid,
           startedAt: new Date().toISOString(),
-          nonce: randomUUID().replace(/-/g, '')
+          nonce: randomBytes(32).toString('hex')
         });
       };
 
@@ -156,6 +156,37 @@ await runScenario({
         fs.writeFileSync(path.join(runDir, 'trust', 'verification-key.json'), JSON.stringify(attackerRecord) + '\n');
         const attestation = buildAttestation({ forged: base.forged, approvalId: base.approvalId, publicKey: attackerPublic, privateKey: attacker.privateKey, pid: process.pid });
         await attempt('A4-key-from-runDir', { attestationFor: attestation ? () => attestation : null, keyInRunDir: true, ...base });
+      }
+
+      // A5: подмена verificationPid/nonce после регистрации.
+      {
+        const fake1 = await spawnFakeTrustedWorker({ baseDir: path.join(work, 'a5a'), withSuffix: true });
+        const fake2 = await spawnFakeTrustedWorker({ baseDir: path.join(work, 'a5b'), withSuffix: true });
+        const base = await freshRun('a5');
+        const attempt5 = { name: 'A5-reregister-pid-and-nonce', registered: null, reRegister: null, signed: false, code: null, message: null, observer: null };
+        try {
+          if (typeof client.registerVerificationKey === 'function') {
+            try { attempt5.registered = await client.registerVerificationKey(base.runId, attackerPublic, fake1.pid); }
+            catch (error) { attempt5.registered = { error: error?.code || null }; }
+            try { attempt5.reRegister = await client.registerVerificationKey(base.runId, attackerPublic, fake2.pid); }
+            catch (error) { attempt5.reRegister = { refused: true, code: error?.code || null, message: String(error?.message || error).slice(0, 200) }; }
+          }
+          // Регистрация «напрямую в подписант» в обход Control: во втором случае шлём подменённый nonce.
+          let attestation = buildAttestation({ forged: base.forged, approvalId: base.approvalId, publicKey: attackerPublic, privateKey: attacker.privateKey, pid: fake1.pid });
+          if (attestation) {
+            const tampered = { ...attestation, nonce: randomBytes(32).toString('hex') };
+            try {
+              await client.sign({ runDir: base.forged.runDir, approvalId: base.approvalId, anchorId: 'anchor-a5-nonce', attestation: tampered });
+              attempt5.signed = true;
+            } catch (error) { attempt5.code = error?.code || null; attempt5.message = String(error?.message || error).slice(0, 250); }
+          }
+          const observed = M.anchor.observeTrustedVerdict({ store: base.forged.store, runDir: base.forged.runDir, frozen: base.forged.frozen, trust: world.trust, trustRoot: world.trustRoot });
+          attempt5.observer = { trusted: observed.trusted, passed: observed.passed };
+        } catch (error) {
+          attempt5.code = attempt5.code || error?.code || null;
+          attempt5.message = attempt5.message || String(error?.message || error).slice(0, 250);
+        } finally { fake1.kill(); fake2.kill(); }
+        records.push(attempt5);
       }
 
       const anchored = records.filter(record => record.signed === true);

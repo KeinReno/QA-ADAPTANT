@@ -84,14 +84,17 @@ export async function loadModules(root) {
     sidModule: await imp('packages/trust/windows-sid.mjs'),
     trusted: await imp('apps/control/trusted.mjs'),
     run: await imp('apps/control/run.mjs'),
-    trustedWorker: await optional('apps/verification/trusted-worker.mjs'),
+    // Worker-файлы — исполняемые скрипты с top-level кодом: их нельзя импортировать как модули
+    // (иначе импорт запускает Worker). Фиксируем только наличие файла.
+    trustedWorker: fs.existsSync(path.join(root, 'apps/verification/trusted-worker.mjs')) ? { path: 'apps/verification/trusted-worker.mjs' } : null,
     keygen: await optional('packages/trust/keygen.mjs'),
-    verificationWorker: await optional('apps/verification/worker.mjs'),
-    browserWorker: await optional('apps/browser/worker.mjs'),
+    verificationWorker: fs.existsSync(path.join(root, 'apps/verification/worker.mjs')) ? { path: 'apps/verification/worker.mjs' } : null,
+    browserWorker: fs.existsSync(path.join(root, 'apps/browser/worker.mjs')) ? { path: 'apps/browser/worker.mjs' } : null,
     flags: {}
   };
   M.flags = {
     trustedWorker: Boolean(M.trustedWorker),
+    trustedBrowser: Boolean(M.browserWorker),
     readSetAttestation: Boolean(M.trustedWorker),
     keygenCli: fs.existsSync(path.join(root, 'packages/trust/keygen.mjs'))
   };
@@ -115,6 +118,8 @@ export function check(list, name, ok, detail = null) {
 // Единая точка выхода сценария. Возвращает объект для агрегатора и выставляет exit code.
 export function emitScenario({ id, title, expected, defectObserved, actual, evidence, checks, extra = {} }) {
   const target = gitInfo(targetRoot());
+  const pinnedSha = argValue('sha');
+  if (pinnedSha) target.head = pinnedSha;
   const requiredFailed = (checks || []).filter(item => item.ok !== true);
   let verdict;
   if (defectObserved) verdict = 'FAIL';
@@ -151,6 +156,7 @@ export async function runScenario({ id, title, expected, body }) {
     const outcome = await body();
     return emitScenario({ id, title, expected, ...outcome });
   } catch (error) {
+    if (process.env.REAUDIT_TRACE === '1') console.error('SCENARIO_ERROR', error && (error.stack || error));
     return emitScenario({
       id, title, expected,
       defectObserved: false,
@@ -236,7 +242,7 @@ export async function startControlledStand(M, options = {}) {
   const {
     port = 0, environmentId = randomUUID(), generation = 1, fingerprint = 'audit-fingerprint-' + randomUUID().slice(0, 8),
     acceptAnyToken = false, afterAttest = null, afterPost = null, signAttest = true, storeRecords = 'full',
-    rejectToken = false, replayAttestation = null
+    rejectToken = false, replayAttestation = null, omitPostSignature = false
   } = options;
   const keys = M.environment.createStandKeys();
   const authToken = randomUUID();
@@ -259,7 +265,8 @@ export async function startControlledStand(M, options = {}) {
     const bytes = Buffer.from(JSON.stringify(body));
     const headers = { 'content-type': 'application/json; charset=utf-8', 'content-length': bytes.length, 'cache-control': 'no-store' };
     const challengeHeader = req && typeof req.headers[STAND_CHALLENGE_HEADER] === 'string' ? req.headers[STAND_CHALLENGE_HEADER] : null;
-    const signResponse = challengeHeader !== null && url && (url.pathname === '/records' || url.pathname === '/attest');
+    const unsignedPost = omitPostSignature && req && req.method === 'POST' && url && url.pathname === '/records';
+    const signResponse = !unsignedPost && challengeHeader !== null && url && (url.pathname === '/records' || url.pathname === '/attest');
     if (signResponse) {
       state.signedChallenges.add(challengeHeader);
       const statement = signStandResponse(keys, {
@@ -431,7 +438,7 @@ export async function startRogue({ port, environmentId, fingerprint, recordMode 
 // ---------------------------------------------------------------------------
 // Мир доверенного прогона: trust root, запись среды, карточки принципалов, подписант.
 export async function makeWorld(M, options = {}) {
-  const { generation = 1, recordOverrides = {}, standOptions = {}, withRecord = true, standalone = null, withSigner = true } = options;
+  const { generation = 1, recordOverrides = {}, standOptions = {}, withRecord = true, standalone = null, withSigner = true, privateSigner = false } = options;
   const baseDir = tempDir('wp08-reaudit-world-');
   const root = path.join(baseDir, 'store');
   const secretsDir = path.join(baseDir, 'secrets');
@@ -457,7 +464,8 @@ export async function makeWorld(M, options = {}) {
   }
   let signer = null;
   let signerError = null;
-  if (withSigner) {
+  const anchorKeyPath = path.join(secretsDir, 'anchor.key');
+  if (withSigner && !privateSigner) {
     try {
       signer = M.anchorSigner.startAnchorSigner({ trustRoot, secretsDir });
       await signer.ready;
@@ -474,7 +482,7 @@ export async function makeWorld(M, options = {}) {
     operator: signCard({ principalId: 'local-operator', roles: ['operator'], windowsSid: sid })
   };
   const world = {
-    baseDir, root, secretsDir, trustRoot, trust, ownerKey, stand, record, sid, cards, created, signer, signerError,
+    baseDir, root, secretsDir, trustRoot, trust, ownerKey, stand, record, sid, cards, created, signer, signerError, privateSigner, anchorKeyPath,
     ownerKeyId: created.ownerKeyId,
     prepare({ runId, inputs, mutate } = {}) {
       const id = runId || 'reaudit-' + randomUUID().slice(0, 8);
@@ -528,6 +536,7 @@ export async function makeWorld(M, options = {}) {
         root, trustRoot, approvalId: approval.approvalId, approval,
         issuer: cards.owner, subject: cards.operator,
         signerPipe: signer ? signer.pipePath : null,
+        ...(privateSigner ? { anchorKeyPath } : {}),
         standPublicKey: stand.standPublicKey, fixtureToken: stand.authToken,
         ...extra
       };
@@ -654,6 +663,14 @@ export async function signAnchorDirect(M, world, { runDir, approvalId, anchorId 
     publishedAt: new Date().toISOString(),
     keyId: world.trust['anchor-signer'].keyId
   };
+  // 0.2.1: заявление анкера связывается с актом аттестации Verification. Если записи нет,
+  // сценарий подписывает заявление со заглушками: наблюдатель обязан отвергнуть такую связку.
+  if (typeof M.anchor.readVerificationRecord === 'function') {
+    let record = null;
+    try { record = M.anchor.readVerificationRecord(world.trustRoot, binding.frozen.manifest.runId); } catch { record = null; }
+    body.verificationAttestationSha256 = record?.attestationSha256 || '0'.repeat(64);
+    body.verificationKeyId = record?.attestationBody?.verificationKeyId || record?.verificationPublicKey?.keyId || '0'.repeat(64);
+  }
   const statement = M.identity.signTrustedDocument(anchorKey, body);
   const dir = path.join(world.trustRoot, 'anchors');
   fs.mkdirSync(dir, { recursive: true });

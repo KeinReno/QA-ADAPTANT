@@ -26,7 +26,7 @@ await runScenario({
       let controlObserved = null;
       let controlMutation = null;
       for (let controlAttempt = 1; controlAttempt <= 2 && !honestOk; controlAttempt++) {
-        controlWorld = await makeWorld(M, {});
+        controlWorld = await makeWorld(M, { privateSigner: true });
         try {
           const controlCase = controlWorld.prepare({ runId: 'reaudit-p002b-control-' + controlAttempt });
           const controlApproval = controlWorld.approvalFor(controlCase);
@@ -51,7 +51,7 @@ await runScenario({
       let watcher = null;
       const stand = await startControlledStand(M, {});
       standRef = stand;
-      attackWorld = await makeWorld(M, { standalone: stand, withSigner: true });
+      attackWorld = await makeWorld(M, { standalone: stand, privateSigner: true });
       const attackCase = attackWorld.prepare({ runId: 'reaudit-p002b-attack' });
       const approval = attackWorld.approvalFor(attackCase);
       const store = new M.store.RunStore(attackWorld.root);

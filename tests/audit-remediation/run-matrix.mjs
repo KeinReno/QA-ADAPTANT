@@ -19,9 +19,11 @@ import { gitInfo } from './audit-lib.mjs';
 export const SCENARIOS = [
   { id: 'AUD-P0-01', script: 'p0-01-forge-candidate.mjs', title: 'P0-01: подложный candidate + годный анкер' },
   { id: 'AUD-P0-01B', script: 'p0-01b-key-provenance.mjs', title: 'P0-01B: происхождение ключа Verification' },
+  { id: 'AUD-P0-01C', script: 'p0-01c-private-signer-channel.mjs', title: 'P0-01C: приватный канал подписанта' },
   { id: 'AUD-P0-02-A', script: 'p0-02a-swap-after-post.mjs', title: 'P0-02-A: подмена стенда после POST' },
   { id: 'AUD-P0-02-B', script: 'p0-02b-window-swap.mjs', title: 'P0-02-B: подмена в окне T-C→POST, утечка Bearer' },
   { id: 'AUD-P0-02C', script: 'p0-02c-replay-pinned.mjs', title: 'P0-02C: pinned-соединение, гибель стенда, replay подписанных ответов' },
+  { id: 'AUD-P0-02D', script: 'p0-02d-post-response.mjs', title: 'P0-02D: подмена после чтений и неподписанный ответ POST' },
   { id: 'AUD-P1-01', script: 'p1-01-weak-observer.mjs', title: 'P1-01: наблюдатель слабее 0.1' },
   { id: 'AUD-P1-02', script: 'p1-02-v07-recovery.mjs', title: 'P1-02: V-07 потеря анкерованного PASS' },
   { id: 'AUD-P1-03', script: 'p1-03-substitution-after-anchor.mjs', title: 'P1-03: подмена candidate/read-set/attestation после подписи' },
@@ -80,11 +82,12 @@ export function classifyRow({ row, parsed, childExit, targetInfo, timedOut }) {
   return { status: 'UNVERIFIABLE', reason: parsed.actual || 'прогон не доказателен', parsedVerdict: parsed };
 }
 
-export function runMatrix({ target, scenarioDir, scenarios = SCENARIOS, timeoutMs = 300000, only = null } = {}) {
+export function runMatrix({ target, scenarioDir, scenarios = SCENARIOS, timeoutMs = 300000, only = null, sha = null } = {}) {
   if (!target) throw new TypeError('Нужен target');
   const targetAbs = path.resolve(target);
   const dir = scenarioDir ? path.resolve(scenarioDir) : path.dirname(fileURLToPath(import.meta.url));
   const targetInfo = gitInfo(targetAbs);
+  if (sha) targetInfo.head = sha;
   const rows = [];
   for (const row of scenarios) {
     if (only && !only.includes(row.id)) continue;
@@ -92,7 +95,7 @@ export function runMatrix({ target, scenarioDir, scenarios = SCENARIOS, timeoutM
     const startedAt = Date.now();
     let child;
     try {
-      child = spawnSync(process.execPath, [script, '--target=' + targetAbs], { cwd: path.dirname(script), encoding: 'utf8', windowsHide: true, timeout: timeoutMs });
+      child = spawnSync(process.execPath, [script, '--target=' + targetAbs].concat(sha ? ['--sha=' + sha] : []), { cwd: path.dirname(script), encoding: 'utf8', windowsHide: true, timeout: timeoutMs });
     } catch (error) {
       rows.push({ id: row.id, title: row.title, script: path.basename(script), status: 'UNVERIFIABLE', reason: 'сценарий не запущен: ' + String(error.message || error), exitCode: null, ms: Date.now() - startedAt });
       continue;
@@ -150,7 +153,8 @@ if (invoked) {
   const target = value('target') || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   const only = value('only') ? value('only').split(',').map(item => item.trim()).filter(Boolean) : null;
   const out = value('out');
-  const summary = runMatrix({ target, only });
+  const sha = value('sha');
+  const summary = runMatrix({ target, only, sha });
   const text = JSON.stringify(summary, null, 2) + '\n';
   if (out) fs.writeFileSync(out, text, 'utf8');
   process.stdout.write(text);
