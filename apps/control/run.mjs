@@ -301,7 +301,13 @@ export async function run(bundle, { root, headed = false, fault = null, fixtureT
             const p = message.payload || {};
             const expectedFields = { ...operation.inputs, fixtureId: fixture.fixtureId };
             if (p.method !== 'POST' || p.path !== '/records' || p.operationId !== operation.id || p.intentId !== intentRecord.artifact.intentId || p.fixtureId !== fixture.fixtureId || !p.requestId || !equal(p.fields, expectedFields)) throw fail('CONTRACT_INVALID', 'Фактический POST не совпадает с замороженными inputs');
-            if (trust) await trust.beforeRequestAck({ store, runDir, frozen, request: p });
+            if (trust) {
+              const liveness = await trust.beforeRequestAck({ store, runDir, frozen, request: p });
+              if (!liveness || liveness.allow !== true) {
+                trustDenial = liveness?.denial || { verdictCode: 'ENVIRONMENT_CHANGED', message: 'Живой процесс стенда не подтверждён перед отправкой' };
+                throw fail('ENVIRONMENT_CHANGED', trustDenial.message);
+              }
+            }
             const artifact = { requestId: p.requestId, intentId: p.intentId, operationId: p.operationId, method: p.method, path: p.path, fixtureId: p.fixtureId, fields: p.fields };
             const envelope = store.appendEvidence(runDir, { runId, manifestSha256: frozen.manifestSha256, fixtureId: fixture.fixtureId, stepId: intentRecord.envelope.stepId, producer: 'browser', kind: 'request', artifact, requestId: p.requestId, parentEvidenceIds: [intentRecord.envelope.evidenceId] });
             requestRecord = { envelope, artifact };
