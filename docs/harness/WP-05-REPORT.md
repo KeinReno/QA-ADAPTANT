@@ -3,7 +3,8 @@
 Статус: **CODE COMPLETE**, пакет не принят самостоятельно; уходит на внутреннее ревью Lead/Red Team.
 База: `0e7e6c20f7a839ffe16047fa11006b1a9ab6cd31`.
 Ветка: `feat/adaptant-02-wp05-anchor`.
-Коммит кода и тестов: `10db430ddf96c5dbd673172505961ef14f8ac75d`. HEAD сдачи (включая этот отчёт) сообщён Lead отдельно.
+Коммит кода и тестов после исправления D-01: `c168465b966ac1ead42a4a7871981a2373438418`. HEAD сдачи (включая этот отчёт) сообщён Lead отдельно.
+Первичная сдача: `10db430ddf96c5dbd673172505961ef14f8ac75d`, проверена ревьюером (`docs/harness/WP-05-INTERNAL-REVIEW.md`, коммит `009c871`): FIX REQUIRED по D-01.
 
 ## 1. Contract review до кода
 
@@ -25,6 +26,22 @@
 8. Подписант сам читает trust root, approval, consumption, снапшоты, журнал и candidate; хеш от вызывающего не принимает; подписывает только `domain=anchor-statement`; иначе `ANCHOR_BINDING_REJECTED`.
 9. `observeTrustedVerdict` показывает PASS только при полной связке: выбор `anchor`, единственный verdict PASS, байты verdict = `candidateSha256`, анкер на этот хеш подписан ключом `anchor-signer`.
 10. Ссылка на анкер не меняет подписанные байты candidate; поля `VerdictPolicy` 0.1 и формат evidence-коммитов не изменены.
+
+## 1.1. Внутреннее ревью и исправления (FIX REQUIRED → исправлено)
+
+Ревью Agent C (`docs/harness/WP-05-INTERNAL-REVIEW.md`, проверенный SHA `03655e0`) нашло блокирующий D-01 и замечания D-03…D-06.
+Исправления внесены минимально; D-02 — архитектурное решение Lead (фиксируется в `docs/changes/004`), код не менялся.
+
+| ID | Что сделано в коде/тестах |
+|---|---|
+| **D-01 (HIGH, блокирующий)** | `publishTerminalVerdict` теперь до записи verdict для `outcome='anchor'` выполняет `loadAnchor` + `verifyAnchorStatement` + сверку `anchorId`, `candidateSha256`, `runId`, `manifestSha256`, вердикта и тела candidate, затем `inspectEvidenceBinding` (`pre-verdict` при записи, `terminal` при существующем verdict) и `verifyAnchorAgainstBinding` (голова цепочки = коммит перед verdict). В ветке уже записанного verdict анкер проверяется повторно; при отсутствии/негодности — `ANCHOR_MISSING`/`ANCHOR_CONFLICT`/`ANCHOR_SIGNATURE_INVALID`/`INTEGRITY_ERROR` и **ни одной новой записи verdict**. В existing-ветке также проверяется соответствие `outcome` типу выбранного тела (`fail-without-anchor`→FAIL, `inconclusive-without-anchor`/`budget-inconclusive`→INCONCLUSIVE, `budget-inconclusive`→`EVIDENCE_MISSING`), иначе `INTEGRITY_ERROR`, а не PASS. Для `outcome='anchor'` обязательны `trust` и `trustRoot`: без них функция fail-closed с `ANCHOR_MISSING`. **Внимание WP-06:** call site `publishTerminalVerdict({store,runDir,frozen})` нужно дополнить `{trust, trustRoot}` — иначе доверенный PASS не опубликуется (это требуемое ужесточение, не регрессия). |
+| **D-03 (LOW)** | Подписант повторно проверяет отсутствие `terminal-choice.json` непосредственно перед `CREATE_NEW` и после записи анкера; при появлении выбора — `ANCHOR_CONFLICT`, подпись не считается выпущенной. |
+| **D-04 (LOW)** | Поле `id` в протоколе стало действительно необязательным (raw-запрос без `id` принимается; лишние поля по-прежнему `CONTRACT_INVALID`). Клиент `connectAnchorSigner().sign()` больше не отбрасывает неизвестные поля молча, а отвергает их `CONTRACT_INVALID`; хеш candidate вызывающий передать не может. |
+| **D-05 (LOW)** | `findUnlinkedAnchor` сообщает `ANCHOR_UNLINKED` только по заявлению с годной подписью `anchor-signer`; синтаксически валидный неподписанный файл метаданные наблюдения не подменяет. |
+| **D-06 (INFO)** | `loadAnchor` явно документирован как возвращающий **неверифицированное** заявление; вызывающий обязан применить `verifyAnchorStatement` (так делают `observeTrustedVerdict` и фикс D-01). |
+| **D-02 (HIGH-RISK, архитектура)** | Принято решение Lead: анкер удостоверяет **связку и неизменность candidate**, но не бизнес-истину. Бизнес-смысл обеспечивает только доверенный Verification/WP-06 T-D; WP-06 обязан строить candidate из результата Verification и не принимать candidate извне, а PASS отдавать только через `observeTrustedVerdict.passed`. Формулировка R-07 ниже уточнена; фиксация — `docs/changes/004`. |
+
+Новые регрессии (`tests/trust-anchor.test.mjs`): «D-01: исход anchor без подписанного анкера не пишет PASS», «D-01: удалённый анкер не превращает повторную публикацию в PASS», «D-01: подмена outcome в ветке существующего verdict не возвращает PASS», расширение V-09 подложным неподписанным файлом анкера (D-05), raw-протокол без `id` и с лишним полем (D-04).
 
 ## 2. Файлы пакета
 
@@ -66,7 +83,7 @@
 `publishTerminalChoice(runDir, choice)` → `{choice, created}`,
 `readTerminalChoice(runDir)` → choice | null,
 `evidenceChainHead(store, runDir)` → `{sequence, envelopeSha256}` | null,
-`publishTerminalVerdict({store, runDir, frozen})` → `{verdict, evidenceId, created}`,
+`publishTerminalVerdict({store, runDir, frozen, trust, trustRoot})` → `{verdict, evidenceId, created}` (для `outcome='anchor'` обязательны `trust` и `trustRoot`; иначе `ANCHOR_MISSING`),
 `verifyAnchorStatement(trust, statement)` → body,
 `loadAnchor(trustRoot, anchorId)` → statement,
 `inspectEvidenceBinding({trust, trustRoot, runDir, approvalId, mode})` → `{frozen, approval, consumption, candidate, chainHead, evidence}`,
@@ -86,7 +103,7 @@
 `\\.\pipe\qa-adaptant-anchor-<16 hex>`.
 `connectAnchorSigner(pipePath)` → `{sign({runDir, approvalId, anchorId}), close}`.
 
-Протокол — строки JSON. Запрос: ровно `{type:'sign', runDir, approvalId, anchorId}` (+ служебный `id`); любое лишнее поле, включая `candidateSha256`, отклоняется кодом `CONTRACT_INVALID`. Ответ: `{id, ok:true, statement}` или `{id, ok:false, code, message}`.
+Протокол — строки JSON. Запрос: `{type:'sign', runDir, approvalId, anchorId}`; `id` — необязательное служебное поле; любое лишнее поле, включая `candidateSha256`, отклоняется кодом `CONTRACT_INVALID`. Клиент `connectAnchorSigner().sign()` принимает только `runDir/approvalId/anchorId` и отвергает неизвестные поля, а не отбрасывает их молча. Ответ: `{id, ok:true, statement}` или `{id, ok:false, code, message}`.
 
 Подписант сам: читает `anchor.key` через DPAPI (`unwrapPrivateKey`); загружает trust root;
 проверяет, что `terminal-choice.json` ещё не существует; читает и проверяет approval, полный consumption (`bodySha256`),
@@ -123,8 +140,8 @@
 |---|---|
 | `node --check packages/trust/anchor.mjs` | exit 0 |
 | `node --check packages/trust/anchor-signer.mjs` | exit 0 |
-| `node --test tests/trust-anchor.test.mjs` | **19/19 passed, 0 failed, exit 0**, duration ~9.6 s |
-| `node --test tests/trust-*.test.mjs` (identity + approval + anchor) | **38/38 passed, 0 failed, exit 0**, duration ~11.5 s |
+| `node --test tests/trust-anchor.test.mjs` | **22/22 passed, 0 failed, exit 0**, duration ~26.9 s |
+| `node --test tests/trust-*.test.mjs` (identity + approval + anchor) | **41/41 passed, 0 failed, exit 0**, duration ~20.8 s |
 
 Полный `npm test` и `npm run test:races` пакет не запускал: по правилам §9 и указанию Lead их выполняет Lead на интеграции; пакет не трогает `apps/control` и старые тесты. `npm run schemas` не требуется: `schemas/` не менялись.
 
@@ -161,7 +178,7 @@
 |---|---|---|
 | R-05 | `trustRoot/profile.json` (`anchorBudgetMs`) читается как файл trust root, но не проверяется криптографическая подпись профиля: замороженная таблица доменов WP-01 не содержит домена `trust-profile`, а менять `identity.mjs` без реального дефекта запрещено | Значение по умолчанию 5000, диапазон 1…60000, вызывающий его не меняет (нет параметра). Файл лежит внутри trust root и не пишется вызывающим. Требование «подписан в профиле» закрывается отдельным `docs/changes` (домен `trust-profile`) в WP-06/07; до этого — ограничение локальной 0.2 |
 | R-06 | ACL named pipe подписанта — стандартный для Windows/Node, отдельно «только текущий пользователь» не сужается низкоуровневым ACL | Совпадает с принятой границей R-04 (`02-TRUST-ARCHITECTURE.md`: DPAPI/ACL одного SID не изолируют от кода той же учётной записи). Для Dev/ЦИЗ границы недостаточно |
-| R-07 | Подписант проверяет связку approval/consumption/снапшоты/цепочку/candidate, но не пересчитывает бизнес-смысл `checks` candidate | По контракту candidate вычисляет Verification; подписант подписывает именно будущие байты verdict и голову цепочки. Red Team может отдельно проверить, что подложный PASS с валидной связкой не появляется без доверенного Verification (WP-06 T-D) |
+| R-07 (уточнено после D-02) | Анкер удостоверяет **связку и неизменность candidate** (approval/consumption/снапшоты/цепочку/байты candidate), но **не бизнес-истину** `checks`. Подписант не пересчитывает business-результат. | Решение Lead: candidate обязан строиться только доверенным Verification/WP-06 T-D и не приниматься извне; WP-06 отдаёт PASS только через `observeTrustedVerdict.passed`. Фиксация — `docs/changes/004`. Это уточняет формулировку, ранее обещавшую больше. |
 | R-08 | `publicationState` при повреждении цепочки/кандидата возвращает `inconsistent`, а не отдельный код | Форма функции заморожена строкой состояния; детали доступны через `observeTrustedVerdict.reasonCode` |
 | R-09 | `candidates/<sha>.json` и `inconclusive-without-anchor` — расширения раскладки/исхода, принятые Lead в ходе WP-05 | Требуют фиксации в `docs/changes/004` и §5.2; код и тесты уже соответствуют |
 | R-10 | `inspectEvidenceBinding` восстанавливает корень `RunStore` как `dirname(dirname(runDir))` | Соответствует раскладке `RunStore` (`root/runs/<runId>`); путь `runDir` обязан быть каталогом, созданным `RunStore` |

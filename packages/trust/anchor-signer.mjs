@@ -8,7 +8,7 @@ import { loadTrustRoot, signTrustedDocument, unwrapPrivateKey, verifyTrustedDocu
 
 const MAX_REQUEST_BYTES = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 15000;
-const signRequestKeys = ['type', 'runDir', 'approvalId', 'anchorId', 'id'];
+const signRequestKeys = new Set(['type', 'runDir', 'approvalId', 'anchorId', 'id']);
 
 function fail(code, message) {
   throw Object.assign(new Error(message), { code });
@@ -73,6 +73,10 @@ export function startAnchorSigner({ trustRoot, secretsDir, pipePath } = {}) {
     return anchorKey;
   }
 
+  function assertNoTerminalChoice(runDir) {
+    if (fs.existsSync(path.join(runDir, 'trust', 'terminal-choice.json'))) fail('ANCHOR_BINDING_REJECTED', 'terminal-choice.json уже существует: новая подпись PASS не выпускается');
+  }
+
   function reuseOrConflict(file, expectedBody) {
     let existing;
     try { existing = JSON.parse(fs.readFileSync(file, 'utf8')); }
@@ -87,7 +91,7 @@ export function startAnchorSigner({ trustRoot, secretsDir, pipePath } = {}) {
   async function signAndPublish(request) {
     const trust = loadTrustRoot(resolvedTrust);
     const key = await privateKey();
-    if (fs.existsSync(path.join(request.runDir, 'trust', 'terminal-choice.json'))) fail('ANCHOR_BINDING_REJECTED', 'terminal-choice.json уже существует: новая подпись PASS не выпускается');
+    assertNoTerminalChoice(request.runDir);
     const binding = inspectEvidenceBinding({ trust, trustRoot: resolvedTrust, runDir: request.runDir, approvalId: request.approvalId, mode: 'pre-verdict' });
     const chosen = readCandidateBody(request.runDir, binding.candidate.candidateSha256);
     if (!chosen) fail('ANCHOR_BINDING_REJECTED', 'Тело candidate не найдено в каталоге прогона');
@@ -113,9 +117,12 @@ export function startAnchorSigner({ trustRoot, secretsDir, pipePath } = {}) {
     for (const item of listAnchors(resolvedTrust)) {
       if (item.runId === binding.frozen.manifest.runId && item.anchorId !== request.anchorId) fail('ANCHOR_CONFLICT', 'Для этого runId уже существует другое заявление анкера');
     }
+    assertNoTerminalChoice(request.runDir);
     const statement = signTrustedDocument(key, statementBody);
     try {
       fs.mkdirSync(target.directory, { recursive: true });
+      // D-03: повторная проверка непосредственно перед CREATE_NEW сужает окно гонки с выбором исхода.
+      assertNoTerminalChoice(request.runDir);
       const fd = fs.openSync(target.file, 'wx', 0o600);
       try { fs.writeFileSync(fd, Buffer.from(JSON.stringify(statement) + '\n', 'utf8')); fs.fsyncSync(fd); }
       finally { fs.closeSync(fd); }
@@ -123,6 +130,8 @@ export function startAnchorSigner({ trustRoot, secretsDir, pipePath } = {}) {
       if (error.code !== 'EEXIST') fail('TRUST_STORE_UNAVAILABLE', 'Заявление анкера не записано');
       return reuseOrConflict(target.file, statementBody);
     }
+    // D-03: если выбор исхода появился за время записи, подпись не считается выпущенной.
+    assertNoTerminalChoice(request.runDir);
     const written = JSON.parse(fs.readFileSync(target.file, 'utf8'));
     const reloaded = verifyTrustedDocument(loadTrustRoot(resolvedTrust), written);
     if (digest(reloaded) !== digest(statementBody)) fail('INTEGRITY_ERROR', 'Повторное чтение анкера не сошлось');
@@ -134,8 +143,9 @@ export function startAnchorSigner({ trustRoot, secretsDir, pipePath } = {}) {
     let request;
     try { request = JSON.parse(raw); }
     catch { fail('CONTRACT_INVALID', 'Запрос подписанту не JSON'); }
-    exactKeys(request, signRequestKeys, 'Запрос подписанту');
+    for (const key of Object.keys(request)) if (!signRequestKeys.has(key)) fail('CONTRACT_INVALID', 'Запрос подписанту содержит поле вне протокола');
     if (request.type !== 'sign') fail('CONTRACT_INVALID', 'Подписант принимает только тип sign');
+    if (request.id !== undefined && typeof request.id !== 'number' && typeof request.id !== 'string') fail('CONTRACT_INVALID', 'Служебный id запроса имеет неверную форму');
     if (typeof request.runDir !== 'string' || !path.isAbsolute(request.runDir)) fail('CONTRACT_INVALID', 'runDir должен быть абсолютным путём');
     assertId(request.approvalId, 'approvalId');
     assertId(request.anchorId, 'anchorId');
@@ -236,8 +246,11 @@ export function connectAnchorSigner(pipePath) {
   }
 
   return {
-    sign({ runDir, approvalId, anchorId } = {}) {
-      return write({ type: 'sign', runDir, approvalId, anchorId });
+    sign(payload = {}) {
+      // D-04: клиент не отбрасывает неизвестные поля молча; хеш candidate вызывающий передать не может.
+      const allowed = new Set(['runDir', 'approvalId', 'anchorId']);
+      for (const key of Object.keys(payload)) if (!allowed.has(key)) fail('CONTRACT_INVALID', 'sign() не принимает поле вне протокола: ' + key);
+      return write({ type: 'sign', runDir: payload.runDir, approvalId: payload.approvalId, anchorId: payload.anchorId });
     },
     close() {
       closed = true;
