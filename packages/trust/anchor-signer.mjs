@@ -1,0 +1,248 @@
+import fs from 'node:fs';
+import net from 'node:net';
+import path from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { digest } from '../core/canonical.mjs';
+import { inspectEvidenceBinding, readCandidateBody } from './anchor.mjs';
+import { loadTrustRoot, signTrustedDocument, unwrapPrivateKey, verifyTrustedDocument } from './identity.mjs';
+
+const MAX_REQUEST_BYTES = 64 * 1024;
+const REQUEST_TIMEOUT_MS = 15000;
+const signRequestKeys = ['type', 'runDir', 'approvalId', 'anchorId', 'id'];
+
+function fail(code, message) {
+  throw Object.assign(new Error(message), { code });
+}
+
+function assertId(value, what) {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 160) fail('CONTRACT_INVALID', what + ': идентификатор вне границы 1…160');
+  if (value !== path.win32.basename(value) || value !== path.posix.basename(value) || value.includes('..')) fail('CONTRACT_INVALID', what + ': идентификатор нельзя использовать как путь');
+}
+
+function exactKeys(value, keys, what) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail('CONTRACT_INVALID', what + ' не объект');
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) fail('CONTRACT_INVALID', what + ' содержит поле вне протокола');
+}
+
+function anchorFile(trustRoot, anchorId) {
+  assertId(anchorId, 'anchorId');
+  const directory = path.resolve(trustRoot, 'anchors');
+  const file = path.resolve(directory, anchorId + '.json');
+  if (path.dirname(file) !== directory) fail('CONTRACT_INVALID', 'Файл анкера выходит из каталога');
+  return { directory, file };
+}
+
+function listAnchors(trustRoot) {
+  const directory = path.resolve(trustRoot, 'anchors');
+  if (!fs.existsSync(directory)) return [];
+  const items = [];
+  for (const name of fs.readdirSync(directory).filter(name => name.endsWith('.json')).sort()) {
+    try { items.push(JSON.parse(fs.readFileSync(path.join(directory, name), 'utf8'))); }
+    catch { /* повреждённый анкер не становится годным и не переписывается */ }
+  }
+  return items;
+}
+
+function channelCode(code) {
+  if (['ANCHOR_CONFLICT', 'CONTRACT_INVALID', 'TRUST_STORE_UNAVAILABLE', 'INTEGRITY_ERROR', 'ANCHOR_SIGNATURE_INVALID', 'ANCHOR_UNAVAILABLE'].includes(code)) return code;
+  return 'ANCHOR_BINDING_REJECTED';
+}
+
+function sameStatementSemantics(left, right) {
+  return left.runId === right.runId && left.manifestSha256 === right.manifestSha256 &&
+    left.candidateSha256 === right.candidateSha256 && left.approvalId === right.approvalId &&
+    left.inputsHash === right.inputsHash && left.environmentId === right.environmentId &&
+    left.environmentGeneration === right.environmentGeneration && left.verdict === right.verdict &&
+    left.reasonCode === right.reasonCode && left.chainHead?.sequence === right.chainHead?.sequence &&
+    left.chainHead?.envelopeSha256 === right.chainHead?.envelopeSha256;
+}
+
+export function startAnchorSigner({ trustRoot, secretsDir, pipePath } = {}) {
+  if (typeof trustRoot !== 'string' || trustRoot.length === 0) throw new TypeError('Нужен trustRoot');
+  if (typeof secretsDir !== 'string' || secretsDir.length === 0) throw new TypeError('Нужны secretsDir');
+  const resolvedTrust = path.resolve(trustRoot);
+  const resolvedSecrets = path.resolve(secretsDir);
+  const pipe = pipePath || '\\\\.\\pipe\\qa-adaptant-anchor-' + randomBytes(8).toString('hex');
+  let anchorKey = null;
+  const sockets = new Set();
+
+  async function privateKey() {
+    if (!anchorKey) anchorKey = await unwrapPrivateKey(path.join(resolvedSecrets, 'anchor.key'));
+    return anchorKey;
+  }
+
+  function reuseOrConflict(file, expectedBody) {
+    let existing;
+    try { existing = JSON.parse(fs.readFileSync(file, 'utf8')); }
+    catch { fail('ANCHOR_CONFLICT', 'Существующее заявление анкера не читается и не заменяется'); }
+    let body;
+    try { body = verifyTrustedDocument(loadTrustRoot(resolvedTrust), existing); }
+    catch { fail('ANCHOR_CONFLICT', 'Существующее заявление анкера не проходит подпись и не заменяется'); }
+    if (!sameStatementSemantics(body, expectedBody)) fail('ANCHOR_CONFLICT', 'Для этого anchorId уже подписано другое заявление');
+    return existing;
+  }
+
+  async function signAndPublish(request) {
+    const trust = loadTrustRoot(resolvedTrust);
+    const key = await privateKey();
+    if (fs.existsSync(path.join(request.runDir, 'trust', 'terminal-choice.json'))) fail('ANCHOR_BINDING_REJECTED', 'terminal-choice.json уже существует: новая подпись PASS не выпускается');
+    const binding = inspectEvidenceBinding({ trust, trustRoot: resolvedTrust, runDir: request.runDir, approvalId: request.approvalId, mode: 'pre-verdict' });
+    const chosen = readCandidateBody(request.runDir, binding.candidate.candidateSha256);
+    if (!chosen) fail('ANCHOR_BINDING_REJECTED', 'Тело candidate не найдено в каталоге прогона');
+    const statementBody = {
+      schemaVersion: '0.2.0',
+      domain: 'anchor-statement',
+      anchorId: request.anchorId,
+      runId: binding.frozen.manifest.runId,
+      manifestSha256: binding.frozen.manifestSha256,
+      chainHead: binding.chainHead,
+      candidateSha256: binding.candidate.candidateSha256,
+      verdict: chosen.candidate.verdict,
+      reasonCode: chosen.candidate.reasonCode,
+      approvalId: binding.approval.approvalId,
+      inputsHash: binding.approval.approvedInputsHash,
+      environmentId: binding.approval.targetEnvironmentId,
+      environmentGeneration: binding.approval.environmentGeneration,
+      publishedAt: new Date().toISOString(),
+      keyId: trust['anchor-signer'].keyId
+    };
+    const target = anchorFile(resolvedTrust, request.anchorId);
+    if (fs.existsSync(target.file)) return reuseOrConflict(target.file, statementBody);
+    for (const item of listAnchors(resolvedTrust)) {
+      if (item.runId === binding.frozen.manifest.runId && item.anchorId !== request.anchorId) fail('ANCHOR_CONFLICT', 'Для этого runId уже существует другое заявление анкера');
+    }
+    const statement = signTrustedDocument(key, statementBody);
+    try {
+      fs.mkdirSync(target.directory, { recursive: true });
+      const fd = fs.openSync(target.file, 'wx', 0o600);
+      try { fs.writeFileSync(fd, Buffer.from(JSON.stringify(statement) + '\n', 'utf8')); fs.fsyncSync(fd); }
+      finally { fs.closeSync(fd); }
+    } catch (error) {
+      if (error.code !== 'EEXIST') fail('TRUST_STORE_UNAVAILABLE', 'Заявление анкера не записано');
+      return reuseOrConflict(target.file, statementBody);
+    }
+    const written = JSON.parse(fs.readFileSync(target.file, 'utf8'));
+    const reloaded = verifyTrustedDocument(loadTrustRoot(resolvedTrust), written);
+    if (digest(reloaded) !== digest(statementBody)) fail('INTEGRITY_ERROR', 'Повторное чтение анкера не сошлось');
+    return written;
+  }
+
+  async function handleRequest(raw) {
+    if (typeof raw !== 'string' || raw.length > MAX_REQUEST_BYTES) fail('CONTRACT_INVALID', 'Запрос подписанту слишком велик');
+    let request;
+    try { request = JSON.parse(raw); }
+    catch { fail('CONTRACT_INVALID', 'Запрос подписанту не JSON'); }
+    exactKeys(request, signRequestKeys, 'Запрос подписанту');
+    if (request.type !== 'sign') fail('CONTRACT_INVALID', 'Подписант принимает только тип sign');
+    if (typeof request.runDir !== 'string' || !path.isAbsolute(request.runDir)) fail('CONTRACT_INVALID', 'runDir должен быть абсолютным путём');
+    assertId(request.approvalId, 'approvalId');
+    assertId(request.anchorId, 'anchorId');
+    return { ok: true, statement: await signAndPublish(request) };
+  }
+
+  const server = net.createServer(socket => {
+    sockets.add(socket);
+    let buffer = '';
+    let queue = Promise.resolve();
+    socket.setEncoding('utf8');
+    const respond = payload => { try { socket.write(JSON.stringify(payload) + '\n'); } catch { /* соединение уже закрыто */ } };
+    socket.on('data', chunk => {
+      buffer += chunk;
+      if (buffer.length > MAX_REQUEST_BYTES) { respond({ ok: false, code: 'CONTRACT_INVALID', message: 'Запрос подписанту превышает предел' }); buffer = ''; return; }
+      let index;
+      while ((index = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, index);
+        buffer = buffer.slice(index + 1);
+        if (!line.trim()) continue;
+        queue = queue.then(async () => {
+          let requestId = null;
+          try { requestId = JSON.parse(line).id ?? null; } catch { /* ошибка разбора уходит в обработчик */ }
+          try { respond({ id: requestId, ...(await handleRequest(line)) }); }
+          catch (error) { respond({ id: requestId, ok: false, code: channelCode(error.code), message: error.message }); }
+        });
+      }
+    });
+    socket.on('error', () => { /* клиент ушёл; сервер остаётся */ });
+    socket.on('close', () => sockets.delete(socket));
+  });
+
+  let resolveReady;
+  let rejectReady;
+  const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+  server.once('error', error => rejectReady(error));
+  server.listen(pipe, () => resolveReady());
+
+  return {
+    pipePath: pipe,
+    ready,
+    close() {
+      for (const socket of sockets) { try { socket.destroy(); } catch { /* уже закрыт */ } }
+      sockets.clear();
+      return new Promise(resolve => server.close(() => resolve()));
+    }
+  };
+}
+
+export function connectAnchorSigner(pipePath) {
+  if (typeof pipePath !== 'string' || pipePath.length === 0) throw new TypeError('Нужен путь named pipe');
+  const socket = net.connect(pipePath);
+  socket.setEncoding('utf8');
+  const pending = new Map();
+  let nextId = 1;
+  let connected = false;
+  let closed = false;
+  let buffer = '';
+
+  socket.on('connect', () => { connected = true; });
+  socket.on('data', chunk => {
+    buffer += chunk;
+    let index;
+    while ((index = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, index);
+      buffer = buffer.slice(index + 1);
+      if (!line.trim()) continue;
+      let message;
+      try { message = JSON.parse(line); } catch { continue; }
+      const entry = pending.get(message.id);
+      if (!entry) continue;
+      pending.delete(message.id);
+      clearTimeout(entry.timer);
+      if (message.ok) entry.resolve(message.statement);
+      else entry.reject(Object.assign(new Error(message.message || 'Подписант отказал'), { code: message.code || 'ANCHOR_BINDING_REJECTED' }));
+    }
+  });
+  const rejectAll = error => {
+    for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(error); }
+    pending.clear();
+  };
+  socket.on('error', error => { rejectAll(Object.assign(new Error(error.message), { code: 'ANCHOR_UNAVAILABLE' })); });
+  socket.on('close', () => { closed = true; rejectAll(Object.assign(new Error('Канал подписанта закрыт'), { code: 'ANCHOR_UNAVAILABLE' })); });
+
+  function write(request) {
+    return new Promise((resolve, reject) => {
+      if (closed) { reject(Object.assign(new Error('Канал подписанта закрыт'), { code: 'ANCHOR_UNAVAILABLE' })); return; }
+      const id = nextId++;
+      const timer = setTimeout(() => { pending.delete(id); reject(Object.assign(new Error('Подписант не ответил'), { code: 'ANCHOR_UNAVAILABLE' })); }, REQUEST_TIMEOUT_MS);
+      pending.set(id, { resolve, reject, timer });
+      const send = () => {
+        try { socket.write(JSON.stringify({ ...request, id }) + '\n'); }
+        catch (error) { pending.delete(id); clearTimeout(timer); reject(Object.assign(new Error(error.message), { code: 'ANCHOR_UNAVAILABLE' })); }
+      };
+      if (connected) send();
+      else socket.once('connect', send);
+    });
+  }
+
+  return {
+    sign({ runDir, approvalId, anchorId } = {}) {
+      return write({ type: 'sign', runDir, approvalId, anchorId });
+    },
+    close() {
+      closed = true;
+      rejectAll(Object.assign(new Error('Канал подписанта закрыт'), { code: 'ANCHOR_UNAVAILABLE' }));
+      return new Promise(resolve => { socket.once('close', resolve); socket.end(); setTimeout(resolve, 500); });
+    }
+  };
+}
