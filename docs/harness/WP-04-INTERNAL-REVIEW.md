@@ -159,3 +159,54 @@ R-01…R-05 передать в WP-06 как входные требования
 - Проверяемый SHA WP-04: `e76d79df5d2b906c837c46eb3938c4832300a7d4`; дерево wp04 на момент проверки чистое.
 - Ревьюер не менял файлы WP-04. Этот отчёт добавлен отдельным коммитом в ветку ревьюера
   `feat/adaptant-02-wp03-policy` (worktree `wp03`) и не является продуктивным кодом.
+
+## 9. Повторное ревью после fix round (13.11.2026)
+
+Проверяемый SHA: `9fc9de4e60968ed038d6f4f7a6278a4edbfdc69e` (код+тесты `648a2f2`), worktree wp04,
+дерево чистое. Diff fix round: `packages/trust/environment.mjs`, `tests/trust-environment.test.mjs`,
+`docs/harness/WP-04-REPORT.md` (плюс `docs/harness/WP-03-INTERNAL-REVIEW.md`, добавленный Agent A).
+Прочитан `integration/docs/changes/005-environment-generations-and-revocation.md`: решение Lead —
+поколенческая раскладка `environments/<environmentId>/<generation>.json`, CREATE_NEW на поколение,
+запрет публикации назад, выбор максимального поколения, отзыв поколением N+1.
+
+### 9.1 Независимые прогоны (wp04, проверяемый SHA)
+
+| Команда | Факт |
+|---|---|
+| `node --test tests/trust-environment.test.mjs` | **32 tests / 32 pass / 0 fail**, exit 0, 9.4 s |
+| `node --test tests/trust-*.test.mjs` | **51 tests / 51 pass / 0 fail**, exit 0, 17.7 s |
+| полный старый набор 0.1 + trust (10 файлов, `--test-concurrency=1`) | **78 tests / 78 pass / 0 fail**, exit 0, 241 s |
+| первый прогон тех же 78 под высокой нагрузкой машины | 76/78: два timing-теста 0.1 (`fault changedEnvironment`, `fault ambiguousButton`) упали по таймауту бюджета; оба **прошли поодиночке на wp04 и на базовой ревизии wp03**, старые тесты не импортируют `environment.mjs`, пакетный прогон 32/32 — это флак от нагрузки, не регрессия WP-04 |
+| `git status --porcelain` | пусто |
+
+### 9.2 Закрытие дефектов (собственные пробы ревьюера)
+
+| ID | Проверка | Факт |
+|---|---|---|
+| D-01 | отзыв поколением N+1 | `loadEnvironmentRecord` → `ENVIRONMENT_REVOKED`; `attestEnvironment`/revoked-запись → `ENVIRONMENT_REVOKED` |
+| D-01 | максимум поколения | регистрация 9 и 10 → загрузка вернула `generation 10, origin :2010/` (числовое сравнение, не лексикографическое) |
+| D-01 | публикация назад / конфликт | поколение ниже максимума → `CONTRACT_INVALID`; та же generation с другим телом → `CONTRACT_INVALID`, файл не перезаписан |
+| D-01 | старый путь | `environments/<envId>.json` → `ENVIRONMENT_UNKNOWN` |
+| D-02 | неверная подпись аттестации | RSA-алгоритм, пустая и не-hex подпись → `ENVIRONMENT_ATTESTATION_FAILED` (форма документа по-прежнему `CONTRACT_INVALID`) |
+| D-03 | идемпотентность | `verifyEnvironmentRecord(verifyEnvironmentRecord(loaded))` → равно `loaded` |
+| D-04 | потоковый кап | chunked-ответ 160 KB без content-length → `ENVIRONMENT_ATTESTATION_FAILED` за 38 мс, без ожидания всего тела |
+
+Для нового dispatch: WP-04-слой отказывает и на загрузке, и на аттестации; WP-06-сборщик обязан
+передавать `ENVIRONMENT_REVOKED` в `facts.environment.error`, а PDP (WP-03) маппит его в `DENY ENVIRONMENT_REVOKED`.
+Новых обходов/ALLOW при revoked/disabled не найдено.
+
+### 9.3 Остаточные ограничения
+
+- Удаление файла последнего поколения процессом с записью в trust root откатывает реестр на предыдущее
+  активное поколение. Это граница R-04 (код того же SID всё равно читает owner.key); API публикации назад
+  запрещает, файловая защита не входит в локальную 0.2.
+- `loadEnvironmentRecord` проверяет подпись каждого поколения: повреждение старого файла даёт
+  `CONTRACT_INVALID` (fail-closed), даже если последнее поколение цело.
+- Старый путь реестра не поддерживается — соответствует `docs/changes/005` (развёрнутых реестров нет).
+- WP-06: всегда загружать актуальное поколение через `loadEnvironmentRecord`; не кэшировать старую
+  active-запись после отзыва.
+
+### 9.4 Вердикт повторного ревью
+
+**ACCEPT.** D-01 (отзыв/смена поколения), D-02 (коды), D-03 (идемпотентность), D-04 (потоковый кап) закрыты;
+старый набор подтверждён повторным прогоном 78/78. Остаточные ограничения — в §9.3, не блокируют WP-04.

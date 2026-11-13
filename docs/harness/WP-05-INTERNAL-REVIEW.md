@@ -181,3 +181,61 @@ verdict → `inconsistent`, PASS не показывается; fail-without-anc
 
 - Проверяемый SHA WP-05: `03655e00e2decb03b1332e2e3e624e0ea442f9ea`; дерево wp05 на момент проверки чистое.
 - Ревьюер не менял файлы WP-05; отчёт добавлен отдельным коммитом в ветку ревьюера `feat/adaptant-02-wp03-policy`.
+
+## 9. Повторное ревью после fix round (13.11.2026)
+
+Проверяемый SHA: `5c020633f8f4e393739a6fba84e5d0bc4cd3803d` (код+тесты `c168465`), worktree wp05,
+дерево чистое. Diff fix round: `packages/trust/anchor.mjs`, `packages/trust/anchor-signer.mjs`,
+`tests/trust-anchor.test.mjs`, `docs/harness/WP-05-REPORT.md`.
+
+### 9.1 Независимые прогоны (wp05, проверяемый SHA)
+
+| Команда | Факт |
+|---|---|
+| `node --test tests/trust-anchor.test.mjs` | **22 tests / 22 pass / 0 fail**, exit 0, 25.2 s |
+| `node --test tests/trust-*.test.mjs` | **41 tests / 41 pass / 0 fail**, exit 0, 26.2 s |
+| `git status --porcelain` | пусто |
+
+### 9.2 Повтор проб A/B/C/D (собственные пробы ревьюера)
+
+| Проба | Ожидание после фикса | Факт |
+|---|---|---|
+| A: `outcome='anchor'`, `anchorId` без подписанного анкера | отказ, 0 verdict | `ANCHOR_MISSING`; verdict count 0; observe `passed:false, state:inconsistent, reasonCode:ANCHOR_MISSING`; без `trust/trustRoot` — тоже `ANCHOR_MISSING` (fail-closed) |
+| B: PASS опубликован, анкер удалён | повторная публикация не PASS | `ANCHOR_MISSING`; verdict count остался 1 (artifact PASS уже в evidence); observe `passed:false, state:inconsistent, reasonCode:ANCHOR_MISSING` |
+| C: подложный candidate с фиктивными evidenceIds | D-02 — решение Lead, код не менялся | подписант по-прежнему подписывает `PASS/NONE` — это зафиксировано в `docs/changes/006` (анкер удостоверяет связку/неизменность, не бизнес-истину); WP-06 обязан строить candidate только из Verification |
+| D: подмена `outcome` в existing-ветке | отказ, не PASS | `INTEGRITY_ERROR`, verdict count 1 |
+
+### 9.3 Закрытие замечаний
+
+- **D-01 (HIGH, блокирующий) — закрыт**: `assertAnchoredPublication` проверяет `loadAnchor` +
+  `verifyAnchorStatement` + anchorId/candidateSha256/runId/manifestSha256 + вердикт candidate +
+  `inspectEvidenceBinding` (pre-verdict при записи, terminal при существующем verdict) +
+  `verifyAnchorAgainstBinding` до записи и в ветке existing; новый verdict не пишется. Регрессии в тестах есть.
+- **D-02 (HIGH-RISK) — снят решением Lead**: `docs/changes/006-anchor-assertion-scope.md` фиксирует, что анкер
+  удостоверяет связку и неизменность candidate, но не бизнес-истину; WP-06 обязан строить candidate только из
+  Verification и отдавать PASS только через `observeTrustedVerdict.passed`. Код подписанта менять не требовалось.
+- **D-03 (LOW) — закрыт частично**: подписант трижды проверяет отсутствие `terminal-choice` (до, перед и после
+  CREATE_NEW). Остаточная неточность: если выбор появился между проверкой и записью, подписант возвращает
+  `ANCHOR_BINDING_REJECTED`, но уже записанный файл анкера остаётся на диске, хотя отчёт называет подпись
+  «не выпущенной». Влияние низкое (choice уже зафиксирован; поздний анкер не даёт PASS и попадает в
+  `ANCHOR_UNLINKED`); рекомендуется удалять только что созданный файл при обнаружении выбора или явно
+  описать поведение.
+- **D-04 (LOW) — закрыт**: `id` опционален, лишние поля в raw-протоколе и в `connectAnchorSigner().sign()`
+  отвергаются `CONTRACT_INVALID`.
+- **D-05 (LOW) — закрыт**: `findUnlinkedAnchor` сообщает `ANCHOR_UNLINKED` только по подписи `anchor-signer`.
+- **D-06 (INFO) — закрыт документацией** `loadAnchor`.
+
+### 9.4 Изменение интерфейса для WP-06
+
+`publishTerminalVerdict` теперь принимает `{store, runDir, frozen, trust, trustRoot}`; для `outcome='anchor'`
+`trust`/`trustRoot` обязательны (без них `ANCHOR_MISSING`, fail-closed). Это отражено в отчёте WP-05 §3/§1.1.
+WP-06 обязан обновить call site; иначе доверенный PASS не опубликуется.
+
+Информационно: отчёт WP-05 ссылается на `docs/changes/004` для D-02, фактическое решение по области анкера
+лежит в `docs/changes/006-anchor-assertion-scope.md` интеграционной ветки — стоит поправить ссылку.
+
+### 9.5 Вердикт повторного ревью
+
+**ACCEPT.** D-01 закрыт и проверен повторно; D-02 снят решением Lead (`docs/changes/006`); D-03…D-06 закрыты
+(с остаточной неточностью D-03, не блокирующей). Остаточные риски R-05/R-06/R-07 прежние и приняты как
+границы локальной 0.2.
