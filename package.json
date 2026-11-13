@@ -9,7 +9,7 @@
     "test:parallel": "node scripts/run-tests.mjs parallel",
     "test:races": "node scripts/run-tests.mjs races",
     "test:attacks": "node tests/redteam/run-all-w2.mjs --target=.",
-    "test:attacks:legacy-baseline": "node tests/redteam/run-all.mjs",
+    "test:attacks:wave1": "node tests/redteam/run-all.mjs",
     "schemas": "node packages/contracts/export.mjs",
     "demo": "node scripts/demo-local.mjs"
   },
