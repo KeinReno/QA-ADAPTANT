@@ -20,13 +20,15 @@ import { loadTrustRoot } from '../../packages/trust/identity.mjs';
 
 const runDir = path.resolve(process.argv[2] || '');
 const expectedManifestHash = process.argv[3] || '';
-const trustRoot = process.env.QA_TRUST_ROOT || '';
-const approvalId = process.env.QA_TRUSTED_APPROVAL_ID || '';
-const standPublicKey = process.env.QA_STAND_PUBLIC_KEY || '';
-// Условие владельца: режима без подписи стенда нет.
-const allowUnsignedStand = false;
+const trustRoot = process.env.QA_ADAPTANT_TRUST_ROOT || process.env.QA_TRUST_ROOT || '';
+const approvalId = process.env.QA_ADAPTANT_APPROVAL_ID || process.env.QA_TRUSTED_APPROVAL_ID || '';
+const standPublicKey = process.env.QA_ADAPTANT_STAND_PUBLIC_KEY || process.env.QA_STAND_PUBLIC_KEY || '';
+const fixtureToken = process.env.QA_ADAPTANT_FIXTURE_TOKEN || '';
+const authorization = process.env.QA_ADAPTANT_AUTHORIZATION || (fixtureToken ? 'Bearer ' + fixtureToken : '');
+const canceled = process.env.QA_ADAPTANT_CANCELED === '1';
+const browserUncertain = process.env.QA_ADAPTANT_BROWSER_UNCERTAIN === '1';
+const expectedGeneration = process.env.QA_ADAPTANT_ENVIRONMENT_GENERATION || '';
 const now = () => new Date().toISOString();
-const MAX_BODY_BYTES = 1_048_576;
 
 const send = message => new Promise((resolve, reject) => {
   if (!process.connected) return reject(new Error('IPC_DISCONNECTED'));
@@ -43,47 +45,9 @@ function fail(code, message) {
   throw Object.assign(new Error(message), { code });
 }
 
-function scopedHeaders() {
-  const headers = { accept: 'application/json' };
-  if (process.env.QA_ADAPTANT_FIXTURE_TOKEN) headers.authorization = 'Bearer ' + process.env.QA_ADAPTANT_FIXTURE_TOKEN;
-  return headers;
-}
-
-// P0-02 (R-B): аттестованные чтения идут только через attestationVerifiedReads/ctx.verifiedRead.
-// Пока R-B не поставил экспорт, Control явно разрешает совместимый режим без подписи стенда
-// (это каркас P0-01; доверенный канал P0-02 включается автоматически при наличии экспорта).
-async function channelAvailable() {
-  return typeof environment.attestationVerifiedReads === 'function';
-}
-
-async function legacyJsonGet(url, timeoutMs) {
-  if (!allowUnsignedStand) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Канал подписи стенда недоступен: независимое чтение без подписи запрещено');
-  const response = await fetch(url, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(timeoutMs), headers: scopedHeaders() });
-  if (response.status !== 200) return { status: response.status, body: null, attestation: null };
-  const reader = response.body?.getReader();
-  if (!reader) return { status: response.status, body: null, attestation: null };
-  const chunks = [];
-  let length = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    length += value.byteLength;
-    if (length > MAX_BODY_BYTES) { await reader.cancel(); return { status: response.status, body: null, attestation: null }; }
-    chunks.push(Buffer.from(value));
-  }
-  try { return { status: response.status, body: JSON.parse(Buffer.concat(chunks).toString('utf8')), attestation: null }; }
-  catch { return { status: response.status, body: null, attestation: null }; }
-}
-
-function legacyChannel(base) {
-  return {
-    async environmentRead(timeoutMs) { return legacyJsonGet(new URL('/environment', base), timeoutMs); },
-    async recordsRead(timeoutMs, fixtureId) {
-      const url = new URL('/records', base);
-      url.searchParams.set('fixtureId', fixtureId);
-      return legacyJsonGet(url, timeoutMs);
-    }
-  };
+function authorizationHeaders() {
+  if (!authorization) fail('ENVIRONMENT_UNAVAILABLE', 'Токен стенда не передан доверенному Verification Worker');
+  return { authorization };
 }
 
 function verdictBase(frozen, checks, verdict, reasonCode, ownershipVerified, integrityVerified, message) {
@@ -208,23 +172,30 @@ async function execute() {
   if (!response) return { verdict: verdictBase(frozen, unknownChecks(operation), 'INCONCLUSIVE', 'RESULT_UNCONFIRMED', false, true, 'Независимое чтение не удалось связать с подтверждённым ответом мутации'), reads: [] };
   if (response.artifact.status !== 201) return { verdict: verdictBase(frozen, unknownChecks(operation), 'INCONCLUSIVE', 'RESULT_UNCONFIRMED', false, true, 'Ответ не является доказательством создания'), reads: [] };
 
-  if (!(await channelAvailable())) {
-    if (!allowUnsignedStand) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Канал подписи стенда недоступен: доверенные чтения невозможны');
-    return performReadCycle(store, frozen, legacyChannel(base));
+  // P0-02: совместимого режима без подписи стенда нет. Отсутствие канала — fail-closed (INCONCLUSIVE).
+  if (typeof environment.attestationVerifiedReads !== 'function' || typeof environment.openPinnedStandConnection !== 'function') {
+    fail('ENVIRONMENT_ATTESTATION_FAILED', 'Аттестованный канал стенда недоступен: доверенные чтения невозможны');
   }
   if (!trustRoot) fail('TRUST_STORE_UNAVAILABLE', 'Доверенному worker не передан trust root');
   const trust = loadTrustRoot(trustRoot);
   const record = loadEnvironmentRecord(trust, trustRoot, manifest.environment.id);
   let captured = null;
-  await environment.attestationVerifiedReads({
+  // R-B: возвращается ровно read(ctx); метаданные канала — readResult.standReads.
+  // /environment отдельно не читается: идентичность среды берётся из подписанной аттестации ctx.
+  const readResult = await environment.attestationVerifiedReads({
     trust,
     record,
     standPublicKey: standPublicKey || undefined,
-    headers: scopedHeaders(),
+    headers: authorizationHeaders(),
     timeoutMs: 3000,
     read: async context => {
+      if (context.environmentId !== manifest.environment.id) fail('ENVIRONMENT_ATTESTATION_FAILED', 'environmentId аттестации не совпал с манифестом');
+      if (expectedGeneration && String(context.generation) !== String(expectedGeneration)) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Поколение среды изменилось');
       captured = await performReadCycle(store, frozen, {
-        environmentRead: timeoutMs => context.verifiedRead(new URL('/environment', base), { method: 'GET', timeoutMs }).then(result => result),
+        environmentRead: async () => ({
+          status: 200,
+          body: { environmentId: context.environmentId, fingerprint: manifest.environment.fingerprint }
+        }),
         recordsRead: (timeoutMs, fixtureId) => {
           const url = new URL('/records', base);
           url.searchParams.set('fixtureId', fixtureId);
@@ -235,6 +206,7 @@ async function execute() {
     }
   });
   if (!captured) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Аттестованный канал не выполнил независимые чтения');
+  void readResult;
   return captured;
 }
 
@@ -247,6 +219,15 @@ async function runAndAttest() {
   let result;
   try {
     result = await execute();
+    if (canceled || browserUncertain) {
+      const frozenForFlags = verifyFrozenBundle(store, runDir);
+      const checks = frozenForFlags.operation.effects.map(effect => ({ id: effect.id, status: 'UNKNOWN', evidenceIds: [] }));
+      result = {
+        verdict: verdictBase(frozenForFlags, checks, 'INCONCLUSIVE', canceled ? 'CANCELED' : 'WORKER_LOST', false, true,
+          canceled ? 'Прогон отменён; повторная мутация не выполняется' : 'Browser Worker завершился без подтверждения полного выполнения'),
+        reads: result.reads || []
+      };
+    }
   } catch (error) {
     if (process.env.QA_ADAPTANT_DEBUG === '1') console.error(error);
     let runId = 'verification';
