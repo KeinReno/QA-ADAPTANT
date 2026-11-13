@@ -295,6 +295,11 @@ export function createTrustContext(options = {}) {
         origin: connection.origin || record.origin || manifest.environment.baseUrl,
         token,
         fields: { ...operation.inputs, fixtureId: fixture.fixtureId },
+        // Worker сам переаттестует закреплённый сокет непосредственно перед POST.
+        trustRoot,
+        standPublicKey: typeof standPublicKey === 'string' ? standPublicKey : Buffer.from(standPublicKey.export({ type: 'spki', format: 'der' })).toString('base64'),
+        // Подписанный документ записи среды: по IPC Symbol-маркер проверенного тела не переживает сериализацию.
+        environmentRecord: JSON.parse(fs.readFileSync(path.join(trustRoot, 'environments', record.environmentId, record.generation + '.json'), 'utf8')),
         timeoutMs: manifest.budget.deadlineMs
       };
       // handle net.Socket и Bearer уходят одним сообщением; после передачи родитель сокет не использует.
@@ -318,6 +323,11 @@ export function createTrustContext(options = {}) {
       const signature = payload?.responseSignature;
       const challenge = payload?.responseChallenge;
       if (!responseBody || !signature || !challenge) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Ответ POST не подписан ключом стенда');
+      // Переаттестация закреплённого соединения, выполненная Worker'ом непосредственно перед POST.
+      if (typeof environment.verifyEnvironmentAttestation === 'function') {
+        if (!payload?.prePostAttestation) fail('ENVIRONMENT_ATTESTATION_FAILED', 'Нет переаттестации закреплённого соединения перед POST');
+        environment.verifyEnvironmentAttestation(trust, record, payload.prePostAttestation, { challenge: payload.prePostAttestation.challenge, standPublicKey });
+      }
       const body = environment.verifyStandResponse({
         trust,
         record,
@@ -406,12 +416,10 @@ export function createTrustContext(options = {}) {
     async beforeRequestAck({ frozen }) {
       try {
         if (pinned?.connection) {
-          // Доверенный путь: новая аттестация не открывается, живость проверяется на закреплённом сокете.
+          // Сокет уже передан Worker'у: в родителе он закрыт. Control проверяет живость процесса и владельца
+          // порта, а повторную аттестацию самого закреплённого соединения выполняет Worker перед POST.
           const record = requirePinnedChannel('подтверждение перед POST');
-          if (typeof environment.attestPinnedConnection !== 'function') fail('ENVIRONMENT_ATTESTATION_FAILED', 'attestPinnedConnection недоступна');
-          const attested = await environment.attestPinnedConnection(pinned.connection, { trust, record, standPublicKey });
-          const pid = attested?.attestation?.pid ?? pinned.connection.attestation?.pid;
-          if (attested?.attestation) pinned.connection.attestation = attested.attestation;
+          const pid = pinned.connection.attestation?.pid;
           if (!environment.processAlive(pid)) fail('ENVIRONMENT_CHANGED', 'Процесс стенда не жив перед отправкой POST');
           const owner = await environment.portOwnerPid(record.origin);
           if (owner === null) fail('ENVIRONMENT_CHANGED', 'Владелец локального порта не определён перед POST');

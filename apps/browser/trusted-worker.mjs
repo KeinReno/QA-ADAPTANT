@@ -74,12 +74,15 @@ function pinnedConnection(handle, originText, timeoutMs) {
   if (!handle || typeof handle.destroyed !== 'boolean') throw fail('CONTRACT_INVALID', 'Handle закреплённого сокета не получен');
   if (handle.destroyed) throw fail('ENVIRONMENT_UNAVAILABLE', 'Закреплённый сокет уже разорван');
   if (String(handle.remoteAddress) !== '127.0.0.1' || Number(handle.remotePort) !== Number(origin.port)) throw fail('ENVIRONMENT_UNAVAILABLE', 'Handle сокета не принадлежит origin среды');
-  return {
+  const connection = {
     socket: handle,
     origin: origin.origin,
     timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.floor(timeoutMs) : 5000,
     agent: createPinnedAgent(handle)
   };
+  // Тот же контракт, что у openPinnedStandConnection: переаттестация перед POST идёт по этому сокету.
+  connection.request = options => pinnedStandRequest(connection, options);
+  return connection;
 }
 
 async function postMutation() {
