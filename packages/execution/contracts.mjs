@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
 export const EXECUTION_VERSION = '0.3.0';
+export const TASK_SCHEMA_VERSION = '0.3.0';
+export const PLAN_SCHEMA_VERSION = '0.3.1';
 const id = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 const iso = z.iso.datetime();
 
@@ -29,7 +31,7 @@ export const TaskResultSchema = z.strictObject({
 });
 
 export const TaskStateSchema = z.strictObject({
-  schemaVersion: z.literal(EXECUTION_VERSION),
+  schemaVersion: z.literal(TASK_SCHEMA_VERSION),
   taskId: id,
   originalRequest: z.string().min(1).max(20000),
   originalRequestSha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -72,8 +74,7 @@ export const ExecutionStepSchema = z.strictObject({
   validationRules: z.array(z.strictObject({ ruleId: id, requirementId: id })).max(100)
 });
 
-export const ExecutionPlanSchema = z.strictObject({
-  schemaVersion: z.literal(EXECUTION_VERSION),
+const planFields = {
   planId: id,
   taskId: id,
   version: z.number().int().positive(),
@@ -82,6 +83,14 @@ export const ExecutionPlanSchema = z.strictObject({
     if (provider.mode === 'MODEL' && provider.modelId === null) context.addIssue({ code: 'custom', path: ['modelId'], message: 'MODEL provenance требует конкретный modelId' });
     if (provider.mode === 'MOCK' && provider.modelId !== null) context.addIssue({ code: 'custom', path: ['modelId'], message: 'MOCK provenance не принимает modelId' });
   }),
+  plannerResponse: z.strictObject({
+    responseId: id,
+    requestId: id,
+    requestSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    responseSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    byteLength: z.number().int().positive(),
+    planResultSha256: z.string().regex(/^[a-f0-9]{64}$/)
+  }).nullable(),
   normalizedGoal: z.string().min(1).max(4000),
   requirements: z.array(PlanRequirementSchema).min(1).max(100),
   missingContext: z.array(z.string().min(1).max(2000)).max(100),
@@ -91,7 +100,35 @@ export const ExecutionPlanSchema = z.strictObject({
   validationRules: z.array(z.strictObject({ ruleId: id, requirementId: id })).max(200),
   validation: z.strictObject({ valid: z.literal(true), executable: z.boolean(), findings: z.array(z.string().max(2000)).max(100) }),
   sha256: z.string().regex(/^[a-f0-9]{64}$/)
+};
+
+export const LegacyExecutionPlanSchema = z.strictObject({ schemaVersion: z.literal('0.3.0'), ...Object.fromEntries(Object.entries(planFields).filter(([key]) => key !== 'plannerResponse')) });
+export const ExecutionPlanSchema = z.strictObject({ schemaVersion: z.literal(PLAN_SCHEMA_VERSION), ...planFields }).superRefine((plan, context) => {
+  if (plan.provider.mode === 'MODEL' && plan.plannerResponse === null) context.addIssue({ code: 'custom', path: ['plannerResponse'], message: 'MODEL plan обязан ссылаться на PlannerResponse' });
+  if (plan.provider.mode === 'MOCK' && plan.plannerResponse !== null) context.addIssue({ code: 'custom', path: ['plannerResponse'], message: 'MOCK plan не ссылается на MODEL response' });
 });
+
+export const PlannerResponseReceiptSchema = z.strictObject({
+  schemaVersion: z.literal('0.3.2'), responseId: id, taskId: id, requestId: id,
+  requestSha256: z.string().regex(/^[a-f0-9]{64}$/), requestBodySha256: z.string().regex(/^[a-f0-9]{64}$/),
+  providerId: id, configuredModelId: id.nullable(), mode: z.enum(['MODEL', 'MOCK']), receivedAt: iso,
+  contentType: z.string().min(1).max(160), statusCode: z.number().int().min(100).max(599),
+  byteLength: z.number().int().nonnegative(), responseSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  backendReference: z.string().max(512).nullable(), status: z.literal('RECEIVED')
+}).superRefine((receipt, context) => {
+  if (receipt.mode === 'MODEL' && !receipt.configuredModelId) context.addIssue({ code: 'custom', path: ['configuredModelId'], message: 'MODEL receipt требует configuredModelId' });
+  if (receipt.mode === 'MOCK' && receipt.configuredModelId !== null) context.addIssue({ code: 'custom', path: ['configuredModelId'], message: 'MOCK receipt не принимает modelId' });
+});
+
+const plannerEventPayloadSchemas = {
+  PLANNER_REQUEST_STARTED: z.strictObject({ requestId: id, requestSha256: z.string().regex(/^[a-f0-9]{64}$/), taskId: id, originalRequestSha256: z.string().regex(/^[a-f0-9]{64}$/), providerId: id, configuredModelId: id.nullable(), mode: z.enum(['MODEL', 'MOCK']), taskRevision: z.number().int().positive(), startedAt: iso }),
+  PLANNER_RESPONSE_STORED: z.strictObject({ responseId: id, requestId: id, requestSha256: z.string().regex(/^[a-f0-9]{64}$/), responseSha256: z.string().regex(/^[a-f0-9]{64}$/), byteLength: z.number().int().nonnegative() }),
+  PLANNER_RESPONSE_VALIDATED: z.strictObject({ responseId: id, requestId: id, requestSha256: z.string().regex(/^[a-f0-9]{64}$/), responseSha256: z.string().regex(/^[a-f0-9]{64}$/), modelId: id, planResultSha256: z.string().regex(/^[a-f0-9]{64}$/) }),
+  PLANNER_RESPONSE_REJECTED: z.strictObject({ requestId: id, responseId: id.nullable(), responseSha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(), reasonCode: id }),
+  PLANNER_REQUEST_FINISHED: z.strictObject({ requestId: id, reasonCode: id, outcome: z.enum(['UNKNOWN', 'FAILED', 'CANCELED']) }),
+  PLANNER_UNAVAILABLE: z.strictObject({ providerId: id, reasonCode: id, mode: z.enum(['MODEL', 'MOCK']) }),
+  PLANNER_FAILED: z.strictObject({ reasonCode: id })
+};
 
 export const TaskEventSchema = z.strictObject({
   eventId: id,
@@ -103,6 +140,19 @@ export const TaskEventSchema = z.strictObject({
   state: TaskStateSchema,
   previousSha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/)
+}).superRefine((event, context) => {
+  const payloadSchema = plannerEventPayloadSchemas[event.type];
+  if (payloadSchema) {
+    const parsed = payloadSchema.safeParse(event.payload);
+    if (!parsed.success) context.addIssue({ code: 'custom', path: ['payload'], message: `Некорректный payload события ${event.type}` });
+  }
+  if (event.type === 'PLAN_VERSION_CREATED') {
+    const base = { planId: id, version: z.number().int().positive(), sha256: z.string().regex(/^[a-f0-9]{64}$/), providerMode: z.enum(['MODEL', 'MOCK']), executable: z.boolean() };
+    const legacy = z.strictObject(base).safeParse(event.payload);
+    const modern = z.strictObject({ ...base, payloadSchemaVersion: z.literal('0.3.2'), plannerResponse: ExecutionPlanSchema.shape.plannerResponse }).safeParse(event.payload);
+    if (!legacy.success && !modern.success) context.addIssue({ code: 'custom', path: ['payload'], message: 'Некорректный payload события PLAN_VERSION_CREATED' });
+    else if (modern.success && modern.data.providerMode === 'MODEL' && modern.data.plannerResponse === null) context.addIssue({ code: 'custom', path: ['payload', 'plannerResponse'], message: 'MODEL PLAN_VERSION_CREATED обязан ссылаться на PlannerResponse' });
+  }
 });
 
 export const TaskDispatchIntentSchema = z.strictObject({

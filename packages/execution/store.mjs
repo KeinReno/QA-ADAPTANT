@@ -3,11 +3,18 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { canonical, digest } from '../core/canonical.mjs';
 import { withFileMutex } from '../core/file-mutex.mjs';
-import { assertTaskPassSupported, ExecutionPlanSchema, TaskDispatchIntentSchema, TaskEventSchema, TaskSchema, TaskStateSchema, transitionTask } from './contracts.mjs';
+import { assertTaskPassSupported, ExecutionPlanSchema, LegacyExecutionPlanSchema, PlannerResponseReceiptSchema, PLAN_SCHEMA_VERSION, TaskDispatchIntentSchema, TaskEventSchema, TaskSchema, TaskStateSchema, transitionTask } from './contracts.mjs';
 
 const bytes = value => Buffer.from(`${canonical(value)}\n`, 'utf8');
 const isoNow = () => new Date().toISOString();
 const error = (code, message) => Object.assign(new Error(message), { code });
+const entryNameIsResponse = value => /^planner-response-[A-Za-z0-9-]{36}$/.test(value);
+const modelOutputFromPlan = plan => ({ normalizedGoal: plan.normalizedGoal, requirements: plan.requirements, missingContext: plan.missingContext, steps: plan.steps, estimatedRisk: plan.estimatedRisk, approvalRequirements: plan.approvalRequirements, validationRules: plan.validationRules });
+const syncDirectoryDurably = directory => {
+  let fd;
+  try { fd = fs.openSync(directory, 'r'); fs.fsyncSync(fd); }
+  finally { if (fd !== undefined) fs.closeSync(fd); }
+};
 const stateOf = task => {
   const { journalSequence: _sequence, journalHeadSha256: _head, ...state } = task;
   return TaskStateSchema.parse(state);
@@ -22,12 +29,20 @@ function atomicWrite(file, content) {
 }
 
 export class TaskStore {
-  constructor(root, { verifyTaskPass = null } = {}) {
+  constructor(root, { verifyTaskPass = null, plannerAclGuard = () => false, maxPlannerResponseBytes = 100000, maxPlannerRequestBytes = 64000, syncDirectory = syncDirectoryDurably } = {}) {
     this.root = path.resolve(root);
     this.verifyTaskPass = verifyTaskPass;
+    this.plannerAclGuard = plannerAclGuard;
+    this.maxPlannerResponseBytes = maxPlannerResponseBytes;
+    this.maxPlannerRequestBytes = maxPlannerRequestBytes;
+    this.syncDirectory = syncDirectory;
     fs.mkdirSync(this.root, { recursive: true });
     if (fs.lstatSync(this.root).isSymbolicLink()) throw error('INTEGRITY_ERROR', 'Task root не может быть symlink');
     this.lockPath = path.join(this.root, '.task-store.lock');
+  }
+
+  #assertPlannerStoreAccess() {
+    if (typeof this.plannerAclGuard !== 'function' || this.plannerAclGuard() !== true) throw error('ARTIFACT_ACCESS_UNVERIFIED', 'ACL PlannerResponse store не подтверждён');
   }
 
   #taskPath(taskId) {
@@ -79,11 +94,24 @@ export class TaskStore {
       const planPath = path.join(dir, file);
       this.#assertRegularFile(planPath, dir);
       let plan;
-      try { plan = ExecutionPlanSchema.parse(JSON.parse(fs.readFileSync(planPath, 'utf8'))); }
+      try {
+        const value = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+        plan = value?.schemaVersion === PLAN_SCHEMA_VERSION ? ExecutionPlanSchema.parse(value) : LegacyExecutionPlanSchema.parse(value);
+      }
       catch { throw error('INTEGRITY_ERROR', 'Повреждён файл плана'); }
       const { sha256, ...unsigned } = plan;
       if (plan.taskId !== taskId || plan.version !== Number(file.slice(0, 6)) || digest(unsigned) !== sha256) throw error('INTEGRITY_ERROR', 'План изменён или не соответствует Task');
-      if (!planId || plan.planId === planId) return plan;
+      const events = this.#events(taskId);
+      const committed = events.some(event => event.type === 'PLAN_VERSION_CREATED' && event.payload.planId === plan.planId && event.payload.sha256 === sha256);
+      if (committed && (!planId || plan.planId === planId)) {
+        if (plan.schemaVersion === PLAN_SCHEMA_VERSION && plan.provider.mode === 'MODEL') {
+          const ref = plan.plannerResponse;
+          const validated = events.find(event => event.type === 'PLANNER_RESPONSE_VALIDATED' && event.payload.responseId === ref.responseId && event.payload.requestId === ref.requestId && event.payload.requestSha256 === ref.requestSha256 && event.payload.responseSha256 === ref.responseSha256 && event.payload.modelId === plan.provider.modelId);
+          const artifact = this.#readPlannerResponseSync(taskId, ref.responseId);
+          if (!validated || validated.payload.planResultSha256 !== ref.planResultSha256 || digest(modelOutputFromPlan(plan)) !== ref.planResultSha256 || artifact.receipt.requestId !== ref.requestId || artifact.receipt.requestSha256 !== ref.requestSha256 || artifact.receipt.responseSha256 !== ref.responseSha256 || artifact.receipt.byteLength !== ref.byteLength || artifact.receipt.providerId !== plan.provider.providerId || artifact.receipt.configuredModelId !== plan.provider.modelId) throw error('INTEGRITY_ERROR', 'PlannerResponse не совпадает с provenance плана');
+        }
+        return plan;
+      }
     }
     throw error('PLAN_NOT_FOUND', `План недоступен для Task ${taskId}`);
   }
@@ -206,6 +234,160 @@ export class TaskStore {
     });
   }
 
+  #activePlannerRequest(taskId) {
+    const events = this.#events(taskId);
+    let active = null;
+    for (const event of events) {
+      if (event.type === 'PLANNER_REQUEST_STARTED') active = event.payload;
+      if (['PLANNER_REQUEST_FINISHED', 'PLANNER_RESPONSE_REJECTED', 'PLAN_VERSION_CREATED'].includes(event.type)) {
+        const requestId = event.payload.requestId || event.payload.plannerResponse?.requestId;
+        if (active && requestId === active.requestId) active = null;
+      }
+    }
+    return active;
+  }
+
+  async beginPlannerRequest(taskId, request) {
+    return withFileMutex(this.lockPath, () => {
+      this.#assertPlannerStoreAccess();
+      const task = this.#snapshot(taskId);
+      if (task.status !== 'PLANNING') throw error('INVALID_TASK_TRANSITION', 'Planner request допустим только в состоянии PLANNING');
+      if (this.#activePlannerRequest(taskId)) throw error('PLANNER_REQUEST_ACTIVE', 'У Task уже есть незавершённый Planner request');
+      if (request.taskId !== taskId || request.originalRequestSha256 !== task.originalRequestSha256 || !/^[a-f0-9]{64}$/.test(request.requestSha256 || '')) throw error('INVALID_PLANNER_REQUEST', 'Planner request не связан с точной Task версией');
+      const unsigned = { requestId: request.requestId, requestSha256: request.requestSha256, taskId, originalRequestSha256: task.originalRequestSha256, providerId: request.providerId, configuredModelId: request.configuredModelId, mode: request.mode, taskRevision: task.revision, startedAt: request.startedAt };
+      return this.#commit(taskId, stateOf(task), 'PLANNER_REQUEST_STARTED', unsigned);
+    });
+  }
+
+  async savePlannerResponse(taskId, { requestSha256, requestBodyBytes, response } = {}) {
+    return withFileMutex(this.lockPath, () => {
+      this.#assertPlannerStoreAccess();
+      const task = this.#snapshot(taskId);
+      const active = this.#activePlannerRequest(taskId);
+      if (task.status !== 'PLANNING' || !active || active.requestSha256 !== requestSha256) throw error('PLANNER_REQUEST_MISMATCH', 'PlannerResponse не соответствует активному запросу');
+      if (!(requestBodyBytes instanceof Uint8Array) || !(response?.bodyBytes instanceof Uint8Array)) throw error('INVALID_PLANNER_RESPONSE', 'PlannerResponse bytes недоступны');
+      if (requestBodyBytes.byteLength > this.maxPlannerRequestBytes || response.bodyBytes.byteLength > this.maxPlannerResponseBytes) throw error('OUTPUT_LIMIT', 'PlannerResponse превышает лимит TaskStore');
+      if (response.requestId !== active.requestId || response.providerId !== active.providerId || response.configuredModelId !== active.configuredModelId || response.mode !== active.mode) throw error('PLANNER_PROVENANCE_MISMATCH', 'PlannerResponse не совпадает с durable request intent');
+      const responseId = `planner-response-${randomUUID()}`;
+      const bodyBytes = Buffer.from(response.bodyBytes);
+      const outboundBytes = Buffer.from(requestBodyBytes);
+      const receipt = PlannerResponseReceiptSchema.parse({
+        schemaVersion: '0.3.2', responseId, taskId, requestId: active.requestId, requestSha256: active.requestSha256,
+        requestBodySha256: digest(outboundBytes), providerId: response.providerId, configuredModelId: response.configuredModelId, mode: response.mode,
+        receivedAt: response.receivedAt, contentType: response.contentType || 'application/octet-stream', statusCode: response.statusCode,
+        byteLength: bodyBytes.byteLength, responseSha256: digest(bodyBytes), backendReference: response.backendReference || null, status: 'RECEIVED'
+      });
+      const parent = path.join(this.#taskPath(taskId), 'planner-responses');
+      fs.mkdirSync(parent, { recursive: true });
+      if (fs.lstatSync(parent).isSymbolicLink()) throw error('INTEGRITY_ERROR', 'Каталог PlannerResponse не может быть symlink');
+      const staging = path.join(parent, `.${responseId}.${randomUUID()}.staging`);
+      const finalDir = path.join(parent, responseId);
+      fs.mkdirSync(staging, { recursive: false, mode: 0o700 });
+      const writeSynced = (file, data) => {
+        const fd = fs.openSync(file, 'wx', 0o600);
+        try { fs.writeFileSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      };
+      writeSynced(path.join(staging, 'request.bin'), outboundBytes);
+      writeSynced(path.join(staging, 'response.bin'), bodyBytes);
+      writeSynced(path.join(staging, 'receipt.json'), bytes(receipt));
+      try { this.syncDirectory(staging); }
+      catch { throw error('PLANNER_RESPONSE_DURABILITY_FAILED', 'PlannerResponse staging directory не удалось durable sync'); }
+      fs.renameSync(staging, finalDir);
+      this.#commit(taskId, stateOf(task), 'PLANNER_RESPONSE_STORED', { responseId, requestId: receipt.requestId, requestSha256: receipt.requestSha256, responseSha256: receipt.responseSha256, byteLength: receipt.byteLength });
+      return receipt;
+    });
+  }
+
+  async getPlannerResponse(taskId, responseId) {
+    return withFileMutex(this.lockPath, () => {
+      this.#assertPlannerStoreAccess();
+      const taskDir = this.#taskPath(taskId), parent = path.join(taskDir, 'planner-responses');
+      if (!/^planner-response-[A-Za-z0-9-]{36}$/.test(responseId || '') || !fs.existsSync(parent) || fs.lstatSync(parent).isSymbolicLink()) throw error('PLANNER_RESPONSE_NOT_FOUND', 'PlannerResponse недоступен');
+      const dir = path.join(parent, responseId);
+      if (!fs.existsSync(dir) || fs.lstatSync(dir).isSymbolicLink()) throw error('PLANNER_RESPONSE_NOT_FOUND', 'PlannerResponse недоступен');
+      const receiptPath = path.join(dir, 'receipt.json'), responsePath = path.join(dir, 'response.bin'), requestPath = path.join(dir, 'request.bin');
+      for (const file of [receiptPath, responsePath, requestPath]) this.#assertRegularFile(file, dir);
+      let receipt;
+      try { receipt = PlannerResponseReceiptSchema.parse(JSON.parse(fs.readFileSync(receiptPath, 'utf8'))); }
+      catch { throw error('PLANNER_RESPONSE_CORRUPT', 'Повреждены метаданные PlannerResponse'); }
+      const bodyBytes = fs.readFileSync(responsePath), requestBodyBytes = fs.readFileSync(requestPath);
+      if (receipt.responseId !== responseId || receipt.taskId !== taskId || bodyBytes.byteLength !== receipt.byteLength || digest(bodyBytes) !== receipt.responseSha256 || digest(requestBodyBytes) !== receipt.requestBodySha256) throw error('PLANNER_RESPONSE_CORRUPT', 'Нарушена целостность PlannerResponse');
+      const stored = this.#events(taskId).some(event => event.type === 'PLANNER_RESPONSE_STORED' && event.payload.responseId === responseId && event.payload.responseSha256 === receipt.responseSha256);
+      if (!stored) throw error('PLANNER_RESPONSE_NOT_COMMITTED', 'PlannerResponse не опубликован в journal');
+      return { receipt, bodyBytes, requestBodyBytes };
+    });
+  }
+
+  async getActivePlannerRequest(taskId) {
+    return withFileMutex(this.lockPath, () => this.#activePlannerRequest(taskId));
+  }
+
+  async getStoredPlannerResponseForRequest(taskId, requestId) {
+    return withFileMutex(this.lockPath, () => {
+      const event = this.#events(taskId).find(item => item.type === 'PLANNER_RESPONSE_STORED' && item.payload.requestId === requestId);
+      if (!event) return null;
+      return this.#readPlannerResponseSync(taskId, event.payload.responseId);
+    });
+  }
+
+  async recoverPlannerResponseFiles(taskId) {
+    return withFileMutex(this.lockPath, () => {
+      this.#assertPlannerStoreAccess();
+      const task = this.#snapshot(taskId), parent = path.join(this.#taskPath(taskId), 'planner-responses');
+      if (!fs.existsSync(parent)) return { recovered: [], stagingIncomplete: false };
+      if (fs.lstatSync(parent).isSymbolicLink()) throw error('INTEGRITY_ERROR', 'Каталог PlannerResponse является symlink');
+      const entries = fs.readdirSync(parent, { withFileTypes: true });
+      const staging = entries.filter(item => item.name.endsWith('.staging') || item.name.includes('.staging'));
+      if (staging.length) return { recovered: [], stagingIncomplete: true };
+      const active = this.#activePlannerRequest(taskId), recovered = [];
+      for (const entry of entries.filter(item => item.isDirectory() && entryNameIsResponse(item.name))) {
+        const dir = path.join(parent, entry.name);
+        const receiptPath = path.join(dir, 'receipt.json'), responsePath = path.join(dir, 'response.bin'), requestPath = path.join(dir, 'request.bin');
+        for (const file of [receiptPath, responsePath, requestPath]) this.#assertRegularFile(file, dir);
+        let receipt;
+        try { receipt = PlannerResponseReceiptSchema.parse(JSON.parse(fs.readFileSync(receiptPath, 'utf8'))); }
+        catch { throw error('PLANNER_RESPONSE_CORRUPT', 'Повреждены метаданные PlannerResponse'); }
+        const bodyBytes = fs.readFileSync(responsePath), requestBytes = fs.readFileSync(requestPath);
+        if (receipt.responseId !== entry.name || receipt.taskId !== taskId || bodyBytes.byteLength !== receipt.byteLength || digest(bodyBytes) !== receipt.responseSha256 || digest(requestBytes) !== receipt.requestBodySha256) throw error('PLANNER_RESPONSE_CORRUPT', 'Нарушена целостность PlannerResponse');
+        const stored = this.#events(taskId).some(event => event.type === 'PLANNER_RESPONSE_STORED' && event.payload.responseId === receipt.responseId);
+        if (!stored) {
+          if (!active || task.status !== 'PLANNING' || active.requestId !== receipt.requestId || active.requestSha256 !== receipt.requestSha256) throw error('PLANNER_RESPONSE_ORPHANED', 'PlannerResponse не связан с активным запросом');
+          this.#commit(taskId, stateOf(task), 'PLANNER_RESPONSE_STORED', { responseId: receipt.responseId, requestId: receipt.requestId, requestSha256: receipt.requestSha256, responseSha256: receipt.responseSha256, byteLength: receipt.byteLength });
+          recovered.push(receipt.responseId);
+        }
+      }
+      return { recovered, stagingIncomplete: false };
+    });
+  }
+
+  async recordPlannerResponseValidated(taskId, responseId, { modelId, planResultSha256 }) {
+    return withFileMutex(this.lockPath, () => {
+      const task = this.#snapshot(taskId), active = this.#activePlannerRequest(taskId);
+      if (!active || task.status !== 'PLANNING') throw error('PLANNER_REQUEST_MISMATCH', 'Нет активного Planner request');
+      const dir = path.join(this.#taskPath(taskId), 'planner-responses', responseId);
+      const receipt = PlannerResponseReceiptSchema.parse(JSON.parse(fs.readFileSync(path.join(dir, 'receipt.json'), 'utf8')));
+      if (receipt.requestId !== active.requestId || receipt.providerId !== active.providerId || receipt.configuredModelId !== modelId || receipt.mode !== 'MODEL' || digest(fs.readFileSync(path.join(dir, 'response.bin'))) !== receipt.responseSha256) throw error('PLANNER_PROVENANCE_MISMATCH', 'Подтверждённый modelId не совпадает с host config');
+      return this.#commit(taskId, stateOf(task), 'PLANNER_RESPONSE_VALIDATED', { responseId, requestId: receipt.requestId, requestSha256: receipt.requestSha256, responseSha256: receipt.responseSha256, modelId, planResultSha256 });
+    });
+  }
+
+  async rejectPlannerResponse(taskId, responseId, { reasonCode = 'INVALID_RESPONSE' } = {}) {
+    return withFileMutex(this.lockPath, () => {
+      const task = this.#snapshot(taskId), active = this.#activePlannerRequest(taskId);
+      const receipt = responseId ? this.#readPlannerResponseSync(taskId, responseId).receipt : null;
+      if (!active || (receipt && receipt.requestId !== active.requestId)) throw error('PLANNER_REQUEST_MISMATCH', 'PlannerResponse не связан с активным запросом');
+      return this.#commit(taskId, stateOf(task), 'PLANNER_RESPONSE_REJECTED', { requestId: active.requestId, responseId: receipt?.responseId || null, responseSha256: receipt?.responseSha256 || null, reasonCode });
+    });
+  }
+
+  async finishPlannerRequest(taskId, requestId, { reasonCode = 'PLANNER_FAILED', outcome = 'UNKNOWN' } = {}) {
+    return withFileMutex(this.lockPath, () => {
+      const task = this.#snapshot(taskId), active = this.#activePlannerRequest(taskId);
+      if (!active || active.requestId !== requestId) return task;
+      return this.#commit(taskId, stateOf(task), 'PLANNER_REQUEST_FINISHED', { requestId, reasonCode, outcome });
+    });
+  }
+
   async recordDispatchIntent(taskId, intent, expected) {
     return withFileMutex(this.lockPath, () => {
       const current = this.#snapshot(taskId);
@@ -261,20 +443,69 @@ export class TaskStore {
     return withFileMutex(this.lockPath, () => {
       const task = this.#snapshot(taskId);
       if (task.status !== 'PLANNING') throw error('INVALID_TASK_TRANSITION', 'План можно сохранить только в состоянии PLANNING');
+      const mode = draft.provider?.mode;
+      if (mode === 'MODEL') {
+        const ref = draft.plannerResponse;
+        if (!ref) throw error('PLANNER_RESPONSE_REQUIRED', 'MODEL plan требует сохранённый PlannerResponse');
+        const events = this.#events(taskId);
+        const validated = events.find(event => event.type === 'PLANNER_RESPONSE_VALIDATED' && event.payload.responseId === ref.responseId && event.payload.requestId === ref.requestId && event.payload.requestSha256 === ref.requestSha256 && event.payload.responseSha256 === ref.responseSha256 && event.payload.modelId === draft.provider.modelId);
+        const artifact = this.#readPlannerResponseSync(taskId, ref.responseId);
+        if (!validated || validated.payload.planResultSha256 !== ref.planResultSha256 || digest(modelOutputFromPlan(draft)) !== ref.planResultSha256 || artifact.receipt.responseSha256 !== ref.responseSha256 || artifact.receipt.requestSha256 !== ref.requestSha256 || artifact.receipt.requestId !== ref.requestId || artifact.receipt.byteLength !== ref.byteLength || artifact.receipt.providerId !== draft.provider.providerId || artifact.receipt.configuredModelId !== draft.provider.modelId) throw error('PLANNER_RESPONSE_MISMATCH', 'MODEL plan provenance не связана с точным результатом durable PlannerResponse');
+        const active = this.#activePlannerRequest(taskId);
+        if (!active || active.requestId !== ref.requestId || active.requestSha256 !== ref.requestSha256) throw error('PLANNER_REQUEST_MISMATCH', 'MODEL plan не связан с активным Planner request');
+      } else if (mode === 'MOCK') {
+        draft = { ...draft, plannerResponse: null };
+      }
       const plansDir = path.join(this.#taskPath(taskId), 'plans');
       if (fs.lstatSync(plansDir).isSymbolicLink()) throw error('INTEGRITY_ERROR', 'Каталог plans не может быть symlink');
+      const events = this.#events(taskId);
+      const committedPlanIds = new Set(events.filter(event => event.type === 'PLAN_VERSION_CREATED').map(event => event.payload.planId));
+      const orphanFiles = fs.readdirSync(plansDir).filter(name => /^\d{6}\.json$/.test(name)).filter(name => {
+        try { return !committedPlanIds.has(JSON.parse(fs.readFileSync(path.join(plansDir, name), 'utf8')).planId); }
+        catch { return true; }
+      });
+      if (orphanFiles.length) {
+        if (mode !== 'MODEL' || orphanFiles.length !== 1) throw error('ORPHAN_PLAN_UNRECOVERABLE', 'Нельзя безопасно восстановить осиротевшую версию плана');
+        const orphanFile = orphanFiles[0];
+        let orphan;
+        try { orphan = ExecutionPlanSchema.parse(JSON.parse(fs.readFileSync(path.join(plansDir, orphanFile), 'utf8'))); }
+        catch { throw error('ORPHAN_PLAN_UNRECOVERABLE', 'Осиротевший план повреждён или не соответствует текущей схеме'); }
+        const { sha256: orphanSha, ...orphanUnsigned } = orphan;
+        if (orphan.taskId !== taskId || orphan.version !== Number(orphanFile.slice(0, 6)) || digest(orphanUnsigned) !== orphanSha || orphan.provider.providerId !== draft.provider.providerId || orphan.provider.modelId !== draft.provider.modelId || canonical(orphan.plannerResponse) !== canonical(draft.plannerResponse) || canonical(orphan.validation) !== canonical(draft.validation) || digest(modelOutputFromPlan(orphan)) !== draft.plannerResponse?.planResultSha256 || digest(modelOutputFromPlan(draft)) !== draft.plannerResponse?.planResultSha256) throw error('ORPHAN_PLAN_UNRECOVERABLE', 'Осиротевший план не совпадает с точным результатом текущего PlannerResponse');
+        const recoveredState = TaskStateSchema.parse({ ...stateOf(task), normalizedGoal: orphan.normalizedGoal, executionPlanId: orphan.planId, status: 'PLAN_READY', revision: task.revision + 1, updatedAt: isoNow() });
+        const committed = this.#commit(taskId, recoveredState, 'PLAN_VERSION_CREATED', { payloadSchemaVersion: '0.3.2', planId: orphan.planId, version: orphan.version, sha256: orphan.sha256, providerMode: orphan.provider.mode, plannerResponse: orphan.plannerResponse, executable: orphan.validation.executable });
+        return { task: committed, plan: orphan };
+      }
       const version = fs.readdirSync(plansDir).filter(name => /^\d{6}\.json$/.test(name)).length + 1;
       const planId = `plan-${taskId.slice(5)}-${version}`;
-      const unsigned = { ...draft, schemaVersion: '0.3.0', planId, taskId, version, createdAt: isoNow() };
+      const unsigned = { ...draft, schemaVersion: PLAN_SCHEMA_VERSION, planId, taskId, version, createdAt: isoNow() };
       delete unsigned.sha256;
       const plan = ExecutionPlanSchema.parse({ ...unsigned, sha256: digest(unsigned) });
       const file = path.join(plansDir, `${String(version).padStart(6, '0')}.json`);
       if (fs.existsSync(file)) throw error('PLAN_VERSION_CONFLICT', 'Версия плана уже существует');
       atomicWrite(file, bytes(plan));
       const next = TaskStateSchema.parse({ ...stateOf(task), normalizedGoal: plan.normalizedGoal, executionPlanId: planId, status: 'PLAN_READY', revision: task.revision + 1, updatedAt: isoNow() });
-      const committed = this.#commit(taskId, next, 'PLAN_VERSION_CREATED', { planId, version, sha256: plan.sha256, providerMode: plan.provider.mode, executable: plan.validation.executable });
+      const committed = this.#commit(taskId, next, 'PLAN_VERSION_CREATED', { payloadSchemaVersion: '0.3.2', planId, version, sha256: plan.sha256, providerMode: plan.provider.mode, plannerResponse: plan.plannerResponse, executable: plan.validation.executable });
       return { task: committed, plan };
     });
+  }
+
+  #readPlannerResponseSync(taskId, responseId) {
+    this.#assertPlannerStoreAccess();
+    const taskDir = this.#taskPath(taskId), parent = path.join(taskDir, 'planner-responses');
+    if (!/^planner-response-[A-Za-z0-9-]{36}$/.test(responseId || '') || !fs.existsSync(parent) || fs.lstatSync(parent).isSymbolicLink()) throw error('PLANNER_RESPONSE_NOT_FOUND', 'PlannerResponse недоступен');
+    const dir = path.join(parent, responseId);
+    if (!fs.existsSync(dir) || fs.lstatSync(dir).isSymbolicLink()) throw error('PLANNER_RESPONSE_NOT_FOUND', 'PlannerResponse недоступен');
+    const receiptPath = path.join(dir, 'receipt.json'), responsePath = path.join(dir, 'response.bin'), requestPath = path.join(dir, 'request.bin');
+    for (const file of [receiptPath, responsePath, requestPath]) this.#assertRegularFile(file, dir);
+    let receipt;
+    try { receipt = PlannerResponseReceiptSchema.parse(JSON.parse(fs.readFileSync(receiptPath, 'utf8'))); }
+    catch { throw error('PLANNER_RESPONSE_CORRUPT', 'Повреждены метаданные PlannerResponse'); }
+    const bodyBytes = fs.readFileSync(responsePath), requestBodyBytes = fs.readFileSync(requestPath);
+    if (receipt.responseId !== responseId || receipt.taskId !== taskId || bodyBytes.byteLength !== receipt.byteLength || digest(bodyBytes) !== receipt.responseSha256 || digest(requestBodyBytes) !== receipt.requestBodySha256) throw error('PLANNER_RESPONSE_CORRUPT', 'Нарушена целостность PlannerResponse');
+    const stored = this.#events(taskId).some(event => event.type === 'PLANNER_RESPONSE_STORED' && event.payload.responseId === responseId && event.payload.responseSha256 === receipt.responseSha256);
+    if (!stored) throw error('PLANNER_RESPONSE_NOT_COMMITTED', 'PlannerResponse не опубликован в journal');
+    return { receipt, bodyBytes, requestBodyBytes };
   }
 
   async getPlan(taskId, planId = null) { return withFileMutex(this.lockPath, () => this.#readPlan(taskId, planId)); }

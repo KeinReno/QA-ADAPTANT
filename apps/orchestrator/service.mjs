@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { TaskSchema } from '../../packages/execution/contracts.mjs';
 import { digest } from '../../packages/core/canonical.mjs';
 import { assertExecutionAdapter } from '../../packages/execution/adapter.mjs';
@@ -7,7 +8,7 @@ import { validatePlanDraft } from '../../packages/planner/validate.mjs';
 const failure = (code, message) => Object.assign(new Error(message), { code });
 
 export class TaskService {
-  constructor({ store, plannerProvider, approvalVerifier = null, adapters = new Map(), registeredExecutionRefs = [], approvedScenarioRefs = [], allowedCapabilities = [], availabilityTimeoutMs = 5000, plannerTimeoutMs = 30000, maxPlannerResponseBytes = 100000 } = {}) {
+  constructor({ store, plannerProvider, approvalVerifier = null, adapters = new Map(), registeredExecutionRefs = [], approvedScenarioRefs = [], plannerActionCatalog = [], allowedCapabilities = [], availabilityTimeoutMs = 5000, plannerTimeoutMs = 30000, maxPlannerResponseBytes = 100000, maxPlannerRequestBytes = 64000 } = {}) {
     if (!store) throw new TypeError('TaskStore обязателен');
     if (!plannerProvider) throw new TypeError('PlannerProvider обязателен; fallback не выбирается автоматически');
     if (typeof plannerProvider.id !== 'string' || !plannerProvider.id || !['MODEL', 'MOCK'].includes(plannerProvider.mode)) throw new TypeError('PlannerProvider обязан иметь локально заданные id и mode=MODEL|MOCK');
@@ -18,10 +19,12 @@ export class TaskService {
     this.adapters = adapters instanceof Map ? adapters : new Map(Object.entries(adapters));
     this.registeredExecutionRefs = Object.freeze([...registeredExecutionRefs]);
     this.approvedScenarioRefs = Object.freeze([...approvedScenarioRefs]);
+    this.plannerActionCatalog = Object.freeze(structuredClone(plannerActionCatalog));
     this.allowedCapabilities = Object.freeze([...allowedCapabilities]);
     this.availabilityTimeoutMs = availabilityTimeoutMs;
     this.plannerTimeoutMs = plannerTimeoutMs;
     this.maxPlannerResponseBytes = maxPlannerResponseBytes;
+    this.maxPlannerRequestBytes = maxPlannerRequestBytes;
   }
 
   async create(input) { return this.store.createTask(input); }
@@ -73,6 +76,43 @@ export class TaskService {
     return { task: finalTask, plan, started: true, observation, result: finalTask.result };
   }
 
+  async #saveValidatedPlan(taskId, rawBytes, { providerId, modelId, mode, availability, plannerResponseRef = null, validatedModelId = null }) {
+    if (!(rawBytes instanceof Uint8Array)) throw failure('INVALID_RESPONSE', 'Planner обязан вернуть ограниченный JSON response bytes');
+    if (rawBytes.byteLength > this.maxPlannerResponseBytes) throw failure('OUTPUT_LIMIT', 'Planner ответ превышает локальный лимит размера');
+    let raw;
+    try { raw = JSON.parse(Buffer.from(rawBytes).toString('utf8')); }
+    catch { throw failure('INVALID_RESPONSE', 'Planner вернул некорректный JSON'); }
+    const result = PlannerResultSchema.parse(raw);
+    if (result.providerId !== providerId || result.modelId !== modelId || result.mode !== mode || availability.providerId !== providerId || availability.modelId !== modelId || availability.mode !== mode || availability.status !== 'AVAILABLE') throw failure('INVALID_PLAN', 'Planner output provenance не совпадает с локальной конфигурацией и availability');
+    if (mode === 'MODEL') {
+      if (!plannerResponseRef || validatedModelId !== modelId) throw failure('INVALID_PLAN', 'Проверенный MODEL result не связан с durable response receipt');
+      plannerResponseRef = { ...plannerResponseRef, planResultSha256: '0'.repeat(64) };
+    }
+    const checked = validatePlanDraft(result.output, {
+      taskId,
+      provider: { providerId, modelId, mode },
+      plannerResponse: plannerResponseRef,
+      registeredExecutionRefs: this.registeredExecutionRefs.filter(ref => this.approvedScenarioRefs.includes(ref)),
+      registeredAdapters: [...this.adapters.keys()],
+      allowedCapabilities: this.allowedCapabilities
+    });
+    const requiresTrustedRun = checked.steps.some(step => step.mutating || step.adapterId !== null || step.executionRef !== null || step.actionType === 'trusted-scenario');
+    const policyChecked = { ...checked, approvalRequirements: ['OWNER_PLAN_APPROVAL', ...(requiresTrustedRun ? ['TRUST_APPROVAL'] : [])] };
+    if (mode === 'MODEL') {
+      const planResultSha256 = digest({ normalizedGoal: policyChecked.normalizedGoal, requirements: policyChecked.requirements, missingContext: policyChecked.missingContext, steps: policyChecked.steps, estimatedRisk: policyChecked.estimatedRisk, approvalRequirements: policyChecked.approvalRequirements, validationRules: policyChecked.validationRules });
+      await this.store.recordPlannerResponseValidated(taskId, plannerResponseRef.responseId, { modelId: validatedModelId, planResultSha256 });
+      plannerResponseRef = { ...plannerResponseRef, planResultSha256 };
+      policyChecked.plannerResponse = plannerResponseRef;
+    }
+    const { plan } = await this.store.savePlan(taskId, policyChecked);
+    if (!plan.validation.executable) {
+      await this.store.appendEvent(taskId, 'PLAN_NOT_EXECUTABLE', { planId: plan.planId, findings: plan.validation.findings });
+      return { task: await this.store.transition(taskId, 'BLOCKED', { payload: { reasonCode: 'PLAN_NOT_EXECUTABLE', planId: plan.planId } }), plan };
+    }
+    if (plan.approvalRequirements.includes('OWNER_PLAN_APPROVAL')) return { task: await this.store.transition(taskId, 'AWAITING_APPROVAL', { payload: { planId: plan.planId, planSha256: plan.sha256 } }), plan };
+    return { task: await this.store.transition(taskId, 'READY', { payload: { planId: plan.planId } }), plan };
+  }
+
   async plan(taskId) {
     let task = await this.store.getTask(taskId);
     if (!['DRAFT', 'PLAN_READY', 'AWAITING_APPROVAL', 'BLOCKED'].includes(task.status)) {
@@ -82,6 +122,8 @@ export class TaskService {
       patch: { approvalRef: null, executionPlanId: null, result: null },
       payload: { providerId: this.plannerProvider.id || 'unknown' }
     });
+    let activeRequestId = null;
+    let storedResponseId = null;
     try {
       const availability = PlannerAvailabilitySchema.parse(await this.#boundedProviderCall(() => this.plannerProvider.availability(), this.availabilityTimeoutMs));
       const configuredProviderId = this.plannerProvider.id;
@@ -91,45 +133,63 @@ export class TaskService {
         await this.store.appendEvent(taskId, 'PLANNER_UNAVAILABLE', { providerId: availability.providerId, reasonCode: availability.reasonCode || 'NOT_CONFIGURED', mode: configuredMode });
         return { task: await this.store.transition(taskId, 'BLOCKED', { payload: { reasonCode: 'PLANNER_UNAVAILABLE' } }), plan: null };
       }
-      const rawBytes = await this.#boundedProviderCall(signal => this.plannerProvider.plan({
-        requestId: `plan-request-${task.revision}`,
+      const plannerRequest = {
+        requestId: `plan-request-${randomUUID()}`,
         taskId,
         originalRequest: task.originalRequest,
-        context: { allowedActionTypes: ['trusted-scenario', 'clarification', 'observation'], environmentRefs: task.environmentRef ? [task.environmentRef] : [], approvedScenarioRefs: this.approvedScenarioRefs, constraints: ['Модель не выдаёт полномочия', 'Только зарегистрированные trusted execution refs'] },
-        outputSchemaVersion: '0.3.0', deadlineMs: this.plannerTimeoutMs, maxOutputBytes: this.maxPlannerResponseBytes, signal
-      }), this.plannerTimeoutMs);
-      if (!(rawBytes instanceof Uint8Array)) throw failure('INVALID_RESPONSE', 'Planner обязан вернуть ограниченный JSON response bytes');
-      if (rawBytes.byteLength > this.maxPlannerResponseBytes) throw failure('OUTPUT_LIMIT', 'Planner ответ превышает локальный лимит размера');
-      let raw;
-      try { raw = JSON.parse(Buffer.from(rawBytes).toString('utf8')); }
-      catch { throw failure('INVALID_RESPONSE', 'Planner вернул некорректный JSON'); }
-      const result = PlannerResultSchema.parse(raw);
-      if (result.providerId !== configuredProviderId || result.modelId !== availability.modelId || result.mode !== configuredMode) throw failure('INVALID_PLAN', 'Planner output provenance не совпадает с локальной конфигурацией и availability');
-      const checked = validatePlanDraft(result.output, {
-        taskId,
-        provider: { providerId: configuredProviderId, modelId: availability.modelId, mode: configuredMode },
-        registeredExecutionRefs: this.registeredExecutionRefs.filter(ref => this.approvedScenarioRefs.includes(ref)),
-        registeredAdapters: [...this.adapters.keys()],
-        allowedCapabilities: this.allowedCapabilities
-      });
-      const requiresTrustedRun = checked.steps.some(step => step.mutating || step.adapterId !== null || step.executionRef !== null || step.actionType === 'trusted-scenario');
-      const policyChecked = {
-        ...checked,
-        approvalRequirements: ['OWNER_PLAN_APPROVAL', ...(requiresTrustedRun ? ['TRUST_APPROVAL'] : [])]
+        originalRequestSha256: task.originalRequestSha256,
+        context: {
+          allowedActionTypes: ['trusted-scenario', 'clarification', 'observation'],
+          environmentRefs: task.environmentRef ? [task.environmentRef] : [],
+          approvedScenarioRefs: this.approvedScenarioRefs,
+          actionCatalog: this.plannerActionCatalog,
+          constraints: ['Модель не выдаёт полномочия', 'Только зарегистрированные trusted execution refs', 'Не выполнять неизвестные операции']
+        },
+        outputSchemaVersion: '0.3.0', deadlineMs: this.plannerTimeoutMs,
+        maxInputBytes: this.maxPlannerRequestBytes, maxOutputBytes: this.maxPlannerResponseBytes
       };
-      const { plan } = await this.store.savePlan(taskId, policyChecked);
-      if (!plan.validation.executable) {
-        await this.store.appendEvent(taskId, 'PLAN_NOT_EXECUTABLE', { planId: plan.planId, findings: plan.validation.findings });
-        return { task: await this.store.transition(taskId, 'BLOCKED', { payload: { reasonCode: 'PLAN_NOT_EXECUTABLE', planId: plan.planId } }), plan };
+      let rawBytes;
+      let plannerResponseRef = null;
+      if (configuredMode === 'MODEL') {
+        const modelProvider = this.plannerProvider;
+        if (typeof modelProvider.buildRequest !== 'function' || typeof modelProvider.invoke !== 'function' || typeof modelProvider.parseResponse !== 'function') throw failure('INVALID_PROVIDER', 'MODEL Planner обязан реализовать buildRequest/invoke/parseResponse');
+        if (await modelProvider.accessGuard?.() !== true) throw new PlannerProviderError('ARTIFACT_ACCESS_UNVERIFIED', 'Проверка доступа к PlannerResponse не пройдена');
+        plannerRequest.requestSha256 = digest(plannerRequest);
+        const invocation = modelProvider.buildRequest(plannerRequest);
+        if (invocation.requestId !== plannerRequest.requestId || invocation.requestSha256 !== plannerRequest.requestSha256 || invocation.providerId !== configuredProviderId || invocation.configuredModelId !== availability.modelId || invocation.requestBodyBytes.byteLength > this.maxPlannerRequestBytes) throw failure('INVALID_REQUEST', 'Inference request не соответствует локальному контракту');
+        activeRequestId = invocation.requestId;
+        await this.store.beginPlannerRequest(taskId, {
+          ...plannerRequest, providerId: configuredProviderId, configuredModelId: availability.modelId, mode: configuredMode, startedAt: new Date().toISOString()
+        });
+        try {
+          const response = await this.#boundedProviderCall(signal => modelProvider.invoke(invocation, { signal }), this.plannerTimeoutMs);
+          const receipt = await this.store.savePlannerResponse(taskId, { requestSha256: plannerRequest.requestSha256, requestBodyBytes: invocation.requestBodyBytes, response });
+          storedResponseId = receipt.responseId;
+          const persisted = await this.store.getPlannerResponse(taskId, receipt.responseId);
+          const parsed = modelProvider.parseResponse({ ...response, bodyBytes: persisted.bodyBytes });
+          const result = PlannerResultSchema.parse(JSON.parse(Buffer.from(parsed.resultBytes).toString('utf8')));
+          if (result.providerId !== configuredProviderId || result.modelId !== availability.modelId || result.mode !== configuredMode || parsed.modelId !== availability.modelId) throw failure('INVALID_PLAN', 'Backend-reported modelId не совпадает с локальной конфигурацией');
+          rawBytes = parsed.resultBytes;
+          plannerResponseRef = { responseId: receipt.responseId, requestId: receipt.requestId, requestSha256: receipt.requestSha256, responseSha256: receipt.responseSha256, byteLength: receipt.byteLength };
+        } catch (error) {
+          if (activeRequestId) {
+            if (storedResponseId) await this.store.rejectPlannerResponse(taskId, storedResponseId, { reasonCode: error.code || 'INVALID_RESPONSE' }).catch(() => {});
+            else await this.store.finishPlannerRequest(taskId, activeRequestId, { reasonCode: error.code || 'PLANNER_FAILED', outcome: 'UNKNOWN' }).catch(() => {});
+          }
+          throw error;
+        }
+      } else {
+        rawBytes = await this.#boundedProviderCall(signal => this.plannerProvider.plan({ ...plannerRequest, signal }), this.plannerTimeoutMs);
       }
-      if (plan.approvalRequirements.includes('OWNER_PLAN_APPROVAL')) {
-        return { task: await this.store.transition(taskId, 'AWAITING_APPROVAL', { payload: { planId: plan.planId, planSha256: plan.sha256 } }), plan };
-      }
-      return { task: await this.store.transition(taskId, 'READY', { payload: { planId: plan.planId } }), plan };
+      return await this.#saveValidatedPlan(taskId, rawBytes, { providerId: configuredProviderId, modelId: availability.modelId, mode: configuredMode, availability, plannerResponseRef, validatedModelId: storedResponseId ? availability.modelId : null });
     } catch (error) {
       const current = await this.store.getTask(taskId);
       if (current.status === 'PLANNING') {
         const reasonCode = error instanceof PlannerProviderError ? error.code : (error.code || 'INVALID_PLAN');
+        if (activeRequestId) {
+          if (storedResponseId) await this.store.rejectPlannerResponse(taskId, storedResponseId, { reasonCode }).catch(() => {});
+          else await this.store.finishPlannerRequest(taskId, activeRequestId, { reasonCode, outcome: 'UNKNOWN' }).catch(() => {});
+        }
         await this.store.appendEvent(taskId, 'PLANNER_FAILED', { reasonCode });
         return { task: await this.store.transition(taskId, 'BLOCKED', { payload: { reasonCode } }), plan: null };
       }
@@ -277,6 +337,47 @@ export class TaskService {
     return { task, plan, events: await this.store.getEvents(taskId) };
   }
 
+  async plannerStatus() {
+    try {
+      const availability = PlannerAvailabilitySchema.parse(await this.#boundedProviderCall(() => this.plannerProvider.availability(), this.availabilityTimeoutMs));
+      if (availability.providerId !== this.plannerProvider.id || availability.mode !== this.plannerProvider.mode) return { providerId: this.plannerProvider.id, modelId: null, mode: this.plannerProvider.mode, status: 'UNAVAILABLE', reasonCode: 'PROVENANCE_MISMATCH' };
+      return { providerId: availability.providerId, modelId: availability.status === 'AVAILABLE' ? availability.modelId : null, mode: availability.mode, status: availability.status, reasonCode: availability.reasonCode || null };
+    } catch (error) {
+      return { providerId: this.plannerProvider.id, modelId: null, mode: this.plannerProvider.mode, status: 'UNAVAILABLE', reasonCode: error.code || 'PROVIDER_UNAVAILABLE' };
+    }
+  }
+
+  async #recoverPlanningTask(task) {
+    const active = await this.store.getActivePlannerRequest(task.taskId);
+    if (!active || active.mode !== 'MODEL' || active.providerId !== this.plannerProvider.id || this.plannerProvider.mode !== 'MODEL' || typeof this.plannerProvider.parseResponse !== 'function') {
+      if (active) await this.store.finishPlannerRequest(task.taskId, active.requestId, { reasonCode: 'PLANNER_INTERRUPTED', outcome: 'UNKNOWN' });
+      return this.store.transition(task.taskId, 'BLOCKED', { payload: { reasonCode: 'PLANNER_INTERRUPTED' } });
+    }
+    try {
+      const files = await this.store.recoverPlannerResponseFiles(task.taskId);
+      if (files.stagingIncomplete) throw failure('PLANNER_RESPONSE_INCOMPLETE', 'PlannerResponse staging запись прервана');
+      const stored = await this.store.getStoredPlannerResponseForRequest(task.taskId, active.requestId);
+      if (!stored) throw failure('PLANNER_OUTCOME_UNKNOWN', 'Ответ модели не был надёжно сохранён; inference повторять запрещено');
+      const receipt = stored.receipt;
+      const parsed = this.plannerProvider.parseResponse({ requestId: receipt.requestId, providerId: receipt.providerId, configuredModelId: receipt.configuredModelId, mode: receipt.mode, receivedAt: receipt.receivedAt, contentType: receipt.contentType, statusCode: receipt.statusCode, bodyBytes: stored.bodyBytes, backendReference: receipt.backendReference });
+      const result = PlannerResultSchema.parse(JSON.parse(Buffer.from(parsed.resultBytes).toString('utf8')));
+      if (parsed.modelId !== active.configuredModelId || result.modelId !== active.configuredModelId || result.providerId !== active.providerId || result.mode !== active.mode) throw failure('INVALID_PLAN', 'Backend-reported modelId не совпадает с сохранённым request intent');
+      const ref = { responseId: receipt.responseId, requestId: receipt.requestId, requestSha256: receipt.requestSha256, responseSha256: receipt.responseSha256, byteLength: receipt.byteLength };
+      const availability = { status: 'AVAILABLE', providerId: active.providerId, modelId: parsed.modelId, mode: 'MODEL' };
+      return await this.#saveValidatedPlan(task.taskId, parsed.resultBytes, { providerId: active.providerId, modelId: parsed.modelId, mode: 'MODEL', availability, plannerResponseRef: ref, validatedModelId: parsed.modelId });
+    } catch (error) {
+      const currentActive = await this.store.getActivePlannerRequest(task.taskId);
+      if (currentActive) {
+        const saved = await this.store.getStoredPlannerResponseForRequest(task.taskId, currentActive.requestId).catch(() => null);
+        if (saved) await this.store.rejectPlannerResponse(task.taskId, saved.receipt.responseId, { reasonCode: error.code || 'PLANNER_INTERRUPTED' }).catch(() => {});
+        else await this.store.finishPlannerRequest(task.taskId, currentActive.requestId, { reasonCode: error.code || 'PLANNER_INTERRUPTED', outcome: 'UNKNOWN' }).catch(() => {});
+      }
+      const current = await this.store.getTask(task.taskId);
+      if (current.status === 'PLANNING') return this.store.transition(task.taskId, 'BLOCKED', { payload: { reasonCode: error.code || 'PLANNER_INTERRUPTED' } });
+      throw error;
+    }
+  }
+
   async recover() {
     const { tasks, corrupt } = await this.store.listTaskEntries();
     const recovered = [], blocked = corrupt.map(item => item.taskId), inconclusive = [], integrityBlocked = [...blocked];
@@ -295,8 +396,13 @@ export class TaskService {
         }
       }
       if (task.status === 'PLANNING') {
-        await this.store.transition(task.taskId, 'BLOCKED', { payload: { reasonCode: 'PLANNER_INTERRUPTED' } });
-        blocked.push(task.taskId);
+        try {
+          const recoveredPlan = await this.#recoverPlanningTask(task);
+          if (recoveredPlan.task.status === 'BLOCKED') blocked.push(task.taskId);
+          else recovered.push(task.taskId);
+        } catch {
+          blocked.push(task.taskId);
+        }
       } else if (task.status === 'RUNNING' || task.status === 'VERIFYING') {
         try {
           const events = await this.store.getEvents(task.taskId);

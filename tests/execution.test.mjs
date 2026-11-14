@@ -159,9 +159,9 @@ test('missing provider and malformed planner response fail closed', async () => 
     assert.equal((await unavailable.plan(first.taskId)).task.status, 'BLOCKED');
 
     const broken = new TaskService({ store, plannerProvider: {
-      id: 'bad-provider', mode: 'MODEL',
-      async availability() { return { status: 'AVAILABLE', providerId: 'bad-provider', modelId: 'bad-model', mode: 'MODEL' }; },
-      async plan() { return Buffer.from(JSON.stringify({ providerId: 'bad-provider', modelId: 'bad-model', mode: 'MODEL', output: { steps: [{ command: 'Remove-Item -Recurse C:\\' }] } })); }
+      id: 'bad-provider', mode: 'MOCK',
+      async availability() { return { status: 'AVAILABLE', providerId: 'bad-provider', modelId: null, mode: 'MOCK' }; },
+      async plan() { return Buffer.from(JSON.stringify({ providerId: 'bad-provider', modelId: null, mode: 'MOCK', output: { steps: [{ command: 'Remove-Item -Recurse C:\\' }] } })); }
     } });
     const second = await broken.create({ originalRequest: 'План', ownerRef: 'owner-1' });
     assert.equal((await broken.plan(second.taskId)).task.status, 'BLOCKED');
@@ -178,11 +178,11 @@ test('planner provenance rejects mismatched provider, mode and modelId without f
     const scenarios = [
       { configured: { id: 'local-model', mode: 'MODEL' }, availability: { status: 'AVAILABLE', providerId: 'other-model', modelId: 'model-v1', mode: 'MODEL' }, result: { providerId: 'local-model', modelId: 'model-v1', mode: 'MODEL', output: validOutput }, calls: false },
       { configured: { id: 'test-double', mode: 'MOCK' }, availability: { status: 'AVAILABLE', providerId: 'test-double', modelId: null, mode: 'MOCK' }, result: { providerId: 'test-double', modelId: null, mode: 'MODEL', output: validOutput }, calls: true },
-      { configured: { id: 'test-double', mode: 'MOCK' }, availability: { status: 'AVAILABLE', providerId: 'test-double', modelId: null, mode: 'MOCK' }, result: { providerId: 'test-double', modelId: 'invented-model', mode: 'MODEL', output: validOutput }, calls: true },
+      { configured: { id: 'test-double', mode: 'MOCK' }, availability: { status: 'AVAILABLE', providerId: 'test-double', modelId: null, mode: 'MOCK' }, result: { providerId: 'test-double', modelId: 'invented-model', mode: 'MOCK', output: validOutput }, calls: true },
       { configured: { id: 'local-model', mode: 'MODEL' }, availability: { status: 'AVAILABLE', providerId: 'local-model', modelId: null, mode: 'MODEL' }, result: { providerId: 'local-model', modelId: null, mode: 'MODEL', output: validOutput }, calls: false },
         { configured: { id: 'local-model', mode: 'MODEL' }, availability: { status: 'AVAILABLE', providerId: 'local-model', modelId: null, mode: 'MOCK' }, result: { providerId: 'local-model', modelId: null, mode: 'MOCK', output: validOutput }, calls: false },
-        { configured: { id: 'local-model', mode: 'MODEL' }, availability: { status: 'AVAILABLE', providerId: 'local-model', modelId: 'model-v1', mode: 'MODEL' }, result: { providerId: 'other-model', modelId: 'model-v1', mode: 'MODEL', output: validOutput }, calls: true },
-      { configured: { id: 'local-model', mode: 'MODEL' }, availability: { status: 'AVAILABLE', providerId: 'local-model', modelId: 'model-v1', mode: 'MODEL' }, result: { providerId: 'local-model', modelId: 'model-v2', mode: 'MODEL', output: validOutput }, calls: true }
+        { configured: { id: 'test-double', mode: 'MOCK' }, availability: { status: 'AVAILABLE', providerId: 'test-double', modelId: null, mode: 'MOCK' }, result: { providerId: 'other-model', modelId: null, mode: 'MOCK', output: validOutput }, calls: true },
+      { configured: { id: 'test-double', mode: 'MOCK' }, availability: { status: 'AVAILABLE', providerId: 'test-double', modelId: null, mode: 'MOCK' }, result: { providerId: 'test-double', modelId: 'invented-model', mode: 'MOCK', output: validOutput }, calls: true }
     ];
     for (const scenario of scenarios) {
       const callsBefore = planCalls;
@@ -243,10 +243,10 @@ test('owner approval is tied to the current plan version; plan approval is not a
     const store = new TaskStore(root);
     const rule = { ruleId: 'rule-trusted', requirementId: 'req-auth' };
     const provider = {
-      id: 'test-model', mode: 'MODEL',
-      async availability() { return { status: 'AVAILABLE', providerId: this.id, modelId: 'test-model', mode: 'MODEL' }; },
+      id: 'test-model', mode: 'MOCK',
+      async availability() { return { status: 'AVAILABLE', providerId: this.id, modelId: null, mode: 'MOCK' }; },
       async plan() { return Buffer.from(JSON.stringify({
-        providerId: this.id, modelId: 'test-model', mode: 'MODEL', output: {
+        providerId: this.id, modelId: null, mode: 'MOCK', output: {
           normalizedGoal: 'Проверить авторизацию по утверждённому сценарию',
           requirements: [{ requirementId: 'req-auth', statement: 'Результат должен быть подтверждён', mandatory: true }],
           missingContext: [],
@@ -266,7 +266,7 @@ test('owner approval is tied to the current plan version; plan approval is not a
     const approved = await service.approvePlan(task.taskId, { planId: planned.plan.planId, actorRef: 'owner-1', approvalRef: `approval:${planned.plan.sha256}` });
     assert.equal(approved.status, 'READY');
     assert.equal(approved.runIds.length, 0);
-    assert.equal((await service.observe(task.taskId)).plan.provider.mode, 'MODEL');
+    assert.equal((await service.observe(task.taskId)).plan.provider.mode, 'MOCK');
     const capabilityCheck = await service.start(task.taskId);
     assert.equal(capabilityCheck.started, false);
     assert.equal(capabilityCheck.task.status, 'BLOCKED');
@@ -294,7 +294,7 @@ test('bounded Planner response enforces stream limits; timeout and oversized pro
   try {
     const store = new TaskStore(root);
     const oversized = new TaskService({ store, maxPlannerResponseBytes: 64, plannerProvider: {
-      id: 'oversized', mode: 'MODEL', async availability() { return { status: 'AVAILABLE', providerId: this.id, modelId: 'oversized-model', mode: 'MODEL' }; },
+      id: 'oversized', mode: 'MOCK', async availability() { return { status: 'AVAILABLE', providerId: this.id, modelId: null, mode: 'MOCK' }; },
       async plan() { return Buffer.alloc(65, 32); }
     } });
     const task1 = await oversized.create({ originalRequest: 'План', ownerRef: 'owner-1' });
@@ -302,7 +302,7 @@ test('bounded Planner response enforces stream limits; timeout and oversized pro
     assert.equal((await oversized.observe(task1.taskId)).events.at(-1).payload.reasonCode, 'OUTPUT_LIMIT');
 
     const timeout = new TaskService({ store, plannerTimeoutMs: 10, plannerProvider: {
-      id: 'hung', mode: 'MODEL', async availability() { return { status: 'AVAILABLE', providerId: this.id, modelId: 'hung-model', mode: 'MODEL' }; },
+      id: 'hung', mode: 'MOCK', async availability() { return { status: 'AVAILABLE', providerId: this.id, modelId: null, mode: 'MOCK' }; },
       async plan() { return new Promise(() => {}); }
     } });
     const task2 = await timeout.create({ originalRequest: 'План', ownerRef: 'owner-1' });
@@ -321,9 +321,9 @@ test('owner approval compare-and-transition rejects a stale decision after concu
     const store = new TaskStore(root);
     const rule = { ruleId: 'rule-trusted', requirementId: 'req-auth' };
     const provider = {
-      id: 'test-model', mode: 'MODEL',
-      async availability() { return { status: 'AVAILABLE', providerId: this.id, modelId: 'test-model', mode: 'MODEL' }; },
-      async plan() { return Buffer.from(JSON.stringify({ providerId: this.id, modelId: 'test-model', mode: 'MODEL', output: {
+      id: 'test-model', mode: 'MOCK',
+      async availability() { return { status: 'AVAILABLE', providerId: this.id, modelId: null, mode: 'MOCK' }; },
+      async plan() { return Buffer.from(JSON.stringify({ providerId: this.id, modelId: null, mode: 'MOCK', output: {
         normalizedGoal: 'Исполнить сценарий', requirements: [{ requirementId: 'req-auth', statement: 'Проверить', mandatory: true }], missingContext: [],
         steps: [{ stepId: 'step-auth', description: 'Trusted', actionType: 'trusted-scenario', prerequisites: [], adapterId: 'trust-run', executionRef: 'auth-v1', requiredCapabilities: [], mutating: true, required: true, validationRules: [rule] }],
         estimatedRisk: 'HIGH', approvalRequirements: [], validationRules: [rule]
@@ -347,8 +347,8 @@ test('TaskStore rejects PASS without trusted evidence bound to every required st
   try {
     const store = new TaskStore(root);
     const rule = { ruleId: 'rule-trusted', requirementId: 'req-auth' };
-    const provider = { id: 'model', mode: 'MODEL', async availability() { return { status: 'AVAILABLE', providerId: this.id, modelId: 'model', mode: 'MODEL' }; }, async plan() {
-      return Buffer.from(JSON.stringify({ providerId: this.id, modelId: 'model', mode: 'MODEL', output: {
+    const provider = { id: 'model', mode: 'MOCK', async availability() { return { status: 'AVAILABLE', providerId: this.id, modelId: null, mode: 'MOCK' }; }, async plan() {
+      return Buffer.from(JSON.stringify({ providerId: this.id, modelId: null, mode: 'MOCK', output: {
         normalizedGoal: 'Исполнить', requirements: [{ requirementId: 'req-auth', statement: 'Проверить', mandatory: true }], missingContext: [],
         steps: [{ stepId: 'step-auth', description: 'Trusted', actionType: 'trusted-scenario', prerequisites: [], adapterId: 'trust-run', executionRef: 'auth-v1', requiredCapabilities: [], mutating: true, required: true, validationRules: [rule] }],
         estimatedRisk: 'HIGH', approvalRequirements: [], validationRules: [rule]
@@ -361,7 +361,7 @@ test('TaskStore rejects PASS without trusted evidence bound to every required st
     const ready = await service.approvePlan(task.taskId, { planId: planned.plan.planId, actorRef: 'owner-1', approvalRef: 'owner-ok' });
     await store.transition(task.taskId, 'RUNNING', { patch: { runIds: ['run-local-1'] } });
     await store.transition(task.taskId, 'VERIFYING');
-    const falsePass = { taskOutcome: 'PASS', plannerMode: 'MODEL', stepOutcomes: [{ stepId: 'step-auth', executionOutcome: 'SUCCEEDED', verificationOutcome: 'PASS', trustedVerification: false, runIds: ['run-local-1'], evidenceRefs: [] }], reasonCode: null, message: 'PASS' };
+    const falsePass = { taskOutcome: 'PASS', plannerMode: 'MOCK', stepOutcomes: [{ stepId: 'step-auth', executionOutcome: 'SUCCEEDED', verificationOutcome: 'PASS', trustedVerification: false, runIds: ['run-local-1'], evidenceRefs: [] }], reasonCode: null, message: 'PASS' };
     await assert.rejects(store.transition(task.taskId, 'COMPLETED', { patch: { result: falsePass } }), { code: 'UNVERIFIED_TASK_PASS' });
     const fabricatedPass = { ...falsePass, stepOutcomes: [{ stepId: 'step-auth', executionOutcome: 'SUCCEEDED', verificationOutcome: 'PASS', trustedVerification: true, runIds: ['run-local-1'], evidenceRefs: [{ runId: 'run-local-1', evidenceId: 'invented-evidence' }] }] };
     await assert.rejects(store.transition(task.taskId, 'COMPLETED', { patch: { result: fabricatedPass } }), { code: 'UNVERIFIED_TASK_PASS' });

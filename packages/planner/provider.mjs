@@ -50,6 +50,31 @@ export const PlannerAvailabilitySchema = z.strictObject({
   }
 });
 
+export const PlannerProviderResponseSchema = z.strictObject({
+  requestId: id,
+  providerId: id,
+  configuredModelId: id.nullable(),
+  mode: PlannerModeSchema,
+  receivedAt: z.iso.datetime(),
+  contentType: z.string().max(160),
+  statusCode: z.number().int().min(100).max(599),
+  bodyBytes: z.instanceof(Uint8Array),
+  backendReference: id.nullable()
+}).superRefine((response, context) => {
+  if (response.mode === 'MODEL' && !response.configuredModelId) context.addIssue({ code: 'custom', path: ['configuredModelId'], message: 'MODEL response требует локально настроенный modelId' });
+  if (response.mode === 'MOCK' && response.configuredModelId !== null) context.addIssue({ code: 'custom', path: ['configuredModelId'], message: 'MOCK response не принимает modelId' });
+});
+
+export const PlannerInvocationSchema = z.strictObject({
+  requestId: id,
+  requestSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  providerId: id,
+  configuredModelId: id,
+  mode: z.literal('MODEL'),
+  requestBodyBytes: z.instanceof(Uint8Array),
+  contentType: z.literal('application/json; charset=utf-8')
+});
+
 export class PlannerProviderError extends Error {
   constructor(code, message) { super(message); this.name = 'PlannerProviderError'; this.code = code; }
 }

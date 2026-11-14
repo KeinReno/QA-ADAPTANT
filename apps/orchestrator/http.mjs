@@ -2,28 +2,31 @@ import http from 'node:http';
 
 const UI = `<!doctype html>
 <html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>KAIDEN QA ADAPTANT 0.3</title>
+<title>KAIDEN QA ADAPTANT 0.3.2</title>
 <style>
 body{font:16px system-ui,sans-serif;max-width:900px;margin:32px auto;padding:0 18px;color:#202124;background:#f7f8fa}
 main,section{background:white;border:1px solid #d8dde5;border-radius:10px;padding:18px;margin:14px 0}
 textarea{width:100%;min-height:105px;box-sizing:border-box;font:inherit;padding:10px}button{padding:9px 14px;margin:6px 6px 0 0;cursor:pointer}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f4f7;padding:12px;border-radius:6px}.tag{font-weight:700;color:#734c00}
 </style>
-<main><h1>KAIDEN QA ADAPTANT 0.3</h1>
+<main><h1>KAIDEN QA ADAPTANT 0.3.2</h1>
 <p>Поручение → план → подтверждение владельца → trusted run → независимый результат.</p>
+<section aria-label="Планировщик"><h2>AI Planner</h2><p>Provider: <strong id="planner-provider">Проверяю…</strong></p><p>Model: <strong id="planner-model">—</strong></p><p>Availability: <strong id="planner-availability">—</strong></p><p id="planner-error" role="status"></p></section>
 <form id="create"><label for="request">Исходное поручение</label><textarea id="request" required maxlength="20000"></textarea><br><button>Создать Task и составить план</button></form>
 <p id="message" role="status" aria-live="polite">Task ещё не создана.</p></main>
-<section id="task-view" hidden><h2>Task</h2><pre id="task"></pre><h3>План</h3><pre id="plan"></pre>
+<section id="task-view" hidden><h2>Task</h2><pre id="task"></pre><h3>План</h3><p id="plan-origin"></p><pre id="plan"></pre>
 <button id="approve" hidden>Подтвердить план</button><button id="start" hidden>Запустить trusted шаг</button><button id="cancel" hidden>Отменить</button>
 <h3>Состояние, события и результат</h3><pre id="events"></pre></section>
 <script>
-const $=id=>document.getElementById(id), message=$('message');let currentId=null,currentPlan=null;
+const $=id=>document.getElementById(id), message=$('message');let currentId=null,currentPlan=null,plannerStatus=null;
 async function call(path,body){const r=await fetch(path,{method:body?'POST':'GET',headers:body?{'content-type':'application/json'}:{},body:body?JSON.stringify(body):undefined});const v=await r.json();if(!r.ok)throw new Error(v.message||v.code||'Запрос не выполнен');return v}
-function show(v){currentId=v.task.taskId;currentPlan=v.plan||currentPlan;$('task-view').hidden=false;$('task').textContent=JSON.stringify(v.task,null,2);$('plan').textContent=currentPlan?JSON.stringify(currentPlan,null,2):'План не создан.';$('events').textContent=JSON.stringify(v.events||v.task.result||[],null,2);$('approve').hidden=v.task.status!=='AWAITING_APPROVAL';$('start').hidden=v.task.status!=='READY';$('cancel').hidden=['COMPLETED','FAILED','CANCELED','INCONCLUSIVE'].includes(v.task.status);const mode=currentPlan?.provider?.mode||'';message.textContent='Task: '+v.task.status+(mode?' · Planner: '+mode:'');}
-$('create').addEventListener('submit',async e=>{e.preventDefault();try{message.textContent='Сохраняю поручение и составляю план…';const v=await call('/api/tasks',{originalRequest:$('request').value});show(v)}catch(e){message.textContent=e.message}});
+function show(v){currentId=v.task.taskId;currentPlan=v.plan||currentPlan;$('task-view').hidden=false;$('task').textContent=JSON.stringify(v.task,null,2);$('plan').textContent=currentPlan?JSON.stringify(currentPlan,null,2):'План не создан.';$('events').textContent=JSON.stringify(v.events||v.task.result||[],null,2);$('approve').hidden=v.task.status!=='AWAITING_APPROVAL';$('start').hidden=v.task.status!=='READY';$('cancel').hidden=['COMPLETED','FAILED','CANCELED','INCONCLUSIVE'].includes(v.task.status);const mode=currentPlan?.provider?.mode||plannerStatus?.mode||'';const p=currentPlan?.provider;$('plan-origin').textContent=p?('Источник: '+p.mode+' · Provider: '+p.providerId+' · Model: '+(p.modelId||'—')+' · Версия '+currentPlan.version+' · SHA-256 '+currentPlan.sha256):'План ещё не сформирован.';message.textContent='Task: '+v.task.status+(mode?' · Planner: '+mode:'');}
+async function refreshPlanner(){try{plannerStatus=await call('/api/planner/status');$('planner-provider').textContent=plannerStatus.providerId;$('planner-model').textContent=plannerStatus.modelId||'—';$('planner-availability').textContent=plannerStatus.status;$('planner-error').textContent=plannerStatus.reasonCode||''}catch{$('planner-availability').textContent='UNAVAILABLE';$('planner-error').textContent='Не удалось получить состояние Planner.'}}
+$('create').addEventListener('submit',async e=>{e.preventDefault();const b=e.currentTarget.querySelector('button');b.disabled=true;try{message.textContent=plannerStatus?.mode==='MODEL'?'Отправляю поручение выбранной модели и проверяю ответ…':'Сохраняю поручение и составляю тестовый план…';const v=await call('/api/tasks',{originalRequest:$('request').value});show(v)}catch(e){message.textContent=e.message;await refreshPlanner()}finally{b.disabled=false}});
 $('approve').onclick=async()=>{try{message.textContent='Сохраняю подтверждение владельца…';show(await call('/api/tasks/'+currentId+'/approve',{planId:currentPlan.planId}))}catch(e){message.textContent=e.message}};
 $('start').onclick=async()=>{try{message.textContent='Запускаю только утверждённый trusted шаг…';show(await call('/api/tasks/'+currentId+'/start',{}))}catch(e){message.textContent=e.message}};
 $('cancel').onclick=async()=>{try{message.textContent='Отправляю отмену…';show(await call('/api/tasks/'+currentId+'/cancel',{}))}catch(e){message.textContent=e.message}};
+refreshPlanner();
 </script></html>`;
 
 const loopbackHosts = new Set(['127.0.0.1', '::1', 'localhost']);
@@ -115,6 +118,7 @@ export function createOrchestratorServer({ service, authenticate, issuePlanAppro
       if (typeof actorRef !== 'string' || !actorRef) return send(response, 401, { code: 'UNAUTHENTICATED', message: 'Локальный пользователь не аутентифицирован.' });
       const url = new URL(request.url, loopbackBaseUrl(host));
       if (request.method === 'GET' && url.pathname === '/') return send(response, 200, UI, 'text/html; charset=utf-8');
+      if (request.method === 'GET' && url.pathname === '/api/planner/status') return send(response, 200, await service.plannerStatus());
       if (request.method === 'POST' && url.pathname === '/api/tasks') {
         const body = await readJson(request, maxBodyBytes);
         const created = await service.create({ originalRequest: body.originalRequest, ownerRef: actorRef, contextRefs: Array.isArray(body.contextRefs) ? body.contextRefs : [], environmentRef });
@@ -131,6 +135,7 @@ export function createOrchestratorServer({ service, authenticate, issuePlanAppro
       if (action === 'approve') {
         if (typeof issuePlanApproval !== 'function') throw Object.assign(new Error('OWNER_APPROVAL_UNAVAILABLE'), { code: 'OWNER_APPROVAL_UNAVAILABLE' });
         const plan = await service.store.getPlan(taskId, body.planId);
+        if (current.task.status !== 'AWAITING_APPROVAL' || current.task.executionPlanId !== plan.planId) throw Object.assign(new Error('PLAN_NOT_CURRENT'), { code: 'PLAN_NOT_CURRENT' });
         const approvalRef = await issuePlanApproval({ actorRef, task: current.task, plan });
         await service.approvePlan(taskId, { planId: plan.planId, actorRef, approvalRef });
       } else if (action === 'start') await service.start(taskId);
