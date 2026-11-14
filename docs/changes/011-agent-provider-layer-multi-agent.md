@@ -1,6 +1,6 @@
-# Agent Provider Layer и мультиагентные роли — контракт для проверки владельцем
+# Agent Provider Layer и мультиагентные роли — замороженный контракт
 
-Статус: **Luna GPT-6 checklist review: ACCEPT; ожидает проверки владельцем; контракт не заморожен, реализация не разрешена**
+Статус: **FROZEN; Luna GPT-6: ACCEPT; заморожен после трёх ограниченных корректировок владельца и финального независимого review 14 ноября 2026**
 Назначение: дополнить предварительную карту интеграций и пересмотреть старое предложение `ADAPTANT-03-PLANNER-CONTRACT.md` после отмены обязательной Ollama.
 Снимок WIP 0.3.2: `wip/adaptant-032-ollama-snapshot` / `d64de8e`; этот документ находится в отдельной worktree-ветке и не изменяет снимок.
 
@@ -65,8 +65,8 @@ type ProviderDescriptor = {
   transport: 'process-jsonl'|'acp-stdio'|'provider-http';
   auth: 'authenticated'|'login-required'|'unknown'|'not-applicable';
   authMethod: string|null;            // только тип метода; никогда не токен
-  models: SelectableCapability<{ id: string; label?: string; reasoningEfforts?: readonly string[] }[]>;
-  reasoningEfforts: SelectableCapability<string[]>;
+  models: SelectableCapability<{ id: string; label?: string; reasoningEfforts?: readonly string[] }>;
+  reasoningEfforts: SelectableCapability<string>;
   sessionResume: Capability<'native-id'|'replay-context'>;
   eventStream: Capability<'jsonl'|'acp-updates'|'text'>;
   mcp: Capability<'stdio'|'http'>;
@@ -112,7 +112,7 @@ The selectable model/reasoning lists must come from a fresh `cli-probe` or `acp-
 
 1. **Discovery and auth.** Discover exact executable path/version asynchronously. Probe auth only through a documented CLI/API status or a bounded harmless request; otherwise return `unknown`. Use the existing CLI/Harness credential store. ADAPTANT never reads or copies provider credentials. A missing CLI, unauthenticated account, quota or unsupported capability is a visible state, not MOCK.
 2. **Start and events.** Pass prompt over stdin/structured transport when possible; bound input, output, time and turns. Keep stdout protocol and stderr diagnostics separate. Persist only normalized/redacted events and artifact refs. A zero exit code or natural-language answer is not a Plan or PASS.
-3. **MCP.** ADAPTANT owns the MCP server and starts it or exposes a local authenticated endpoint. Each MCP connection is bound to server-held scope `{taskId, agentId, roleId, turnId}`; every call revalidates that the assignment/turn is active, `toolId` belongs to that assignment's allowlist, arguments match the tool schema and host policy, and task revision/approval preconditions still hold. Never trust caller-supplied identity or provider/CLI allowlists as authority. Record each accepted/rejected call and safe result in the ADAPTANT task journal. Planner gets read-only planning tools; Executor gets only approved operations and explicit task-scoped tools; Verifier gets read-only evidence/result tools. Provider-native file, shell, browser and web tools are disabled or denied unless a reviewed role contract permits them. A CLI sandbox is defense-in-depth and does not constrain calls to external MCP servers.
+3. **MCP and provider-native tools.** ADAPTANT owns the MCP server and starts it or exposes a local authenticated endpoint. Each MCP connection is bound to server-held scope `{taskId, agentId, roleId, turnId}`; every call revalidates that the assignment/turn is active, `toolId` belongs to that assignment's allowlist, arguments match the tool schema and host policy, and task revision/approval preconditions still hold. Never trust caller-supplied identity or provider/CLI allowlists as authority. Record each accepted/rejected call and safe result in the ADAPTANT task journal. Planner gets read-only planning tools; Executor gets only approved operations and explicit task-scoped tools; Verifier gets read-only evidence/result tools. Provider-native file, shell, browser, web and other built-in tools must be disabled or reliably restricted for the assigned role, or the agent must run inside a separately bounded environment that enforces those restrictions. MCP allowlisting alone does not isolate a provider. If neither control can be demonstrated for a CLI/version/role, that provider does not pass qualification for the role. A CLI sandbox is defense-in-depth and does not constrain calls to external MCP servers.
 4. **Cancellation.** Prefer a provider's turn-level cancel; otherwise terminate the owned process tree. Await an acknowledged terminal state within a bounded grace period. If a tool action may have crossed its dispatch boundary and cancellation is unconfirmed, mark it `UNKNOWN/INCONCLUSIVE` and reconcile before any retry. Never repeat an unknown mutation.
 5. **Sessions and recovery.** A provider session ID is an opaque per-task/per-agent reference. Start fresh by default. Resume only the exact session created for that assignment and only when the provider advertises it. Record whether resume restores transcript, just state, or neither. ADAPTANT's own task journal is authoritative; provider conversation history is advisory context. Do not copy sessions between clients or roles automatically.
 6. **Models, reasoning and limits.** Capability catalogs are per provider executable/version/account. UI lists only discovered models and supported effort values; actual model used is recorded independently from requested/default model. If the provider omits its actual model, store `actualModelId=null` and `actualModelStatus=UNREPORTED`; a successful real call can qualify transport/auth, but cannot support a model-specific claim or model-specific qualification gate. `auto` means provider default only if the provider documents it. Usage and quotas may be unknown; expose unknown instead of inventing cost or capacity.
@@ -124,8 +124,8 @@ The selectable model/reasoning lists must come from a fresh `cli-probe` or `acp-
 - A user can assign one provider/model to multiple roles or separate providers. The task snapshots the selected configuration version when execution starts; later UI edits affect a new plan/run, not active work.
 - Presets are editable named configurations, not provider capabilities. Project/task assignment overrides must be visible and auditable.
 - `Planner` returns validated `PlanDraft`; only owner confirmation creates an approved plan. Planner tool access stays read-only.
-- `Executor` can call ADAPTANT MCP tools, but host validation, user plan approval, Trust approval and Execution Foundation remain mandatory. Executor output is a claim plus artifact refs.
-- `Verifier` starts with a fresh context and independently reads persisted Task/Execution/evidence through ADAPTANT tools. It may use the same provider/model as Executor; that is not provider independence. It receives criteria and evidence refs, not Executor's unverified conclusion as truth. Agent verifier findings are advisory input; only the trusted verification path can issue system `PASS`.
+- `Executor` can call ADAPTANT MCP tools, but host validation, user plan approval for dangerous actions, server-side MCP authorization and Execution Foundation remain mandatory. These controls apply to ordinary QA and optional protected attestation alike. Executor output is a claim plus artifact refs.
+- `Verifier` starts with a fresh context and independently reads persisted Task/Execution/evidence through ADAPTANT tools. It may use the same provider/model as Executor; that is not provider independence. It receives criteria and evidence refs, not Executor's unverified conclusion as truth. Agent verifier findings are advisory input. The ordinary QA result is issued by the existing host verification path from independently read facts and required checks; it does not require Trust Foundation or imply attestation. A separate optional protected-attestation mode may produce an attestation label `TRUSTED_PASS` only when an accepted Trust Foundation is available. This label is report metadata/attachment, not a new value in frozen `Verdict` schema 0.1. Never promote ordinary QA `PASS` to `TRUSTED_PASS` automatically.
 - For agent-test acceptance, Luna GPT-6 is the requested independent reviewer of the recorded route and evidence. Luna review is an evaluation step, not a runtime provider, model-selection option, or replacement for the external CLI agent and host verification.
 - Parallel roles may run only where the host scheduler proves their declared tools and artifacts do not conflict. Mutating operations serialize by resource/fixture/environment. A model cannot declare itself independent or waive an approval.
 
@@ -156,6 +156,8 @@ The selectable model/reasoning lists must come from a fresh `cli-probe` or `acp-
 
 **Запреты:** нет Ollama; нет обязательного API key; нет внешнего API собственного клиента; нет QA-v2 runtime; нет безусловного доступа к shell/filesystem; нет MOCK fallback; нет Dev-мутаций без подтверждённых environment/account/object refs.
 
+Обычный локальный QA E2E не зависит от WP-08/TAS и не меняет замороженные схемы 0.1. Owner approval опасных действий, host validation и проверка полномочий MCP остаются обязательными. Protected attestation — отдельный необязательный режим после принятия Trust Foundation; обычный QA `PASS` не означает `TRUSTED_PASS`, а метка аттестации не добавляется в `Verdict` schema 0.1.
+
 **Gate живого qualification:** подтверждённый auth status до/после вызова, version, безопасный запрос на синтетический Task, вызов только тестового MCP read-only инструмента ADAPTANT, раздельные stdout/stderr events и exit result, отмена завершает тот же owned process/turn, повтор после отмены/рестарта не создаёт новую задачу автоматически. Записать фактическую модель либо `UNREPORTED`: во втором случае qualification ограничен проверенными auth/transport/tool/cancel свойствами и не даёт model-specific утверждения.
 
 **Gate первого продукта:** пользователь свободным текстом создаёт Task → внешний Planner создаёт валидируемый draft → пользователь подтверждает → назначенный Executor вызывает настоящие инструменты ADAPTANT → существующий runtime выполняет безопасный локальный business scenario → Verification Worker с новым контекстом независимо читает сохранённые факты → отчет содержит Task/plan approval/run/evidence provenance. Это локальный E2E gate, не Dev E2E и не считается завершённым при одном `codex exec` ответе. Dev E2E может быть заявлен только отдельным прогоном после подтверждения environment/account/object refs и помечается отдельно.
@@ -169,12 +171,12 @@ The selectable model/reasoning lists must come from a fresh `cli-probe` or `acp-
 - Не принимает старый 0.3.2 снимок: незакрытое замечание Luna о Windows directory fsync остаётся историческим блокером заявленной durability того снимка. Для TaskStore предложен отдельный `process-crash` режим с более узким обещанием; существующая реализация и её default не меняются без contract review.
 - Не использует local MOCK для qualification реального агента.
 
-## 9. Решения владельца перед заморозкой
+## 9. Решения, зафиксированные владельцем
 
-1. Принять ли `AgentProvider` как единый lifecycle/capability contract и описанную границу TaskService ↔ MCP ↔ Execution?
-2. Принять ли реестр с `openai-chatgpt = PLANNED_UNAVAILABLE`, пока нет отдельного официального CLI, при отдельной записи `codex-cli` с ChatGPT sign-in?
-3. Принять ли произвольные role assignments и DAG как архитектурную цель при ограничении первой реализации одной последовательной цепочкой Planner → Executor → Verifier?
-4. Достаточно ли хранения через TaskStore events/artifact refs с process-crash recovery без обещания power-loss durability?
-5. Одобрить ли qualification Codex CLI первым техническим кандидатом при условии, что его subscription usage/лимиты не делают его обязательным продуктовым engine?
+1. Единый `AgentProvider` и граница TaskService ↔ MCP ↔ Execution — приняты.
+2. `openai-chatgpt = PLANNED_UNAVAILABLE` при отдельной записи `codex-cli` — принято.
+3. Произвольные role assignments и DAG — архитектурная цель; первый пакет идёт последовательной цепочкой — принято.
+4. `process-crash` — условно принято только как отдельное направление после самостоятельного review и Windows-проверок; реализация и заявление durability не входят в этот этап.
+5. Codex CLI — первый кандидат на qualification, но не обязательная продуктовая зависимость — принято.
 
-Luna GPT-6 приняла этот текст по checklist 14 ноября 2026 года. После публикации владелец независимо проверяет точный SHA и подтверждает заморозку. До подтверждения контракт не заморожен, кодовая реализация не начинается.
+Владелец принял архитектурное направление и перечисленные решения, потребовав три корректировки перед заморозкой. Luna GPT-6 выдала финальный ACCEPT после внесения корректировок; этот коммит фиксирует замороженную редакцию. `process-crash` остаётся отдельным условным предложением.
