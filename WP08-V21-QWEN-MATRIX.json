@@ -1,0 +1,74 @@
+{
+  "tool": "WP08-V21-QWEN-MATRIX",
+  "product": "KAIDEN QA ADAPTANT",
+  "workpack": "WP-08 TRUST FOUNDATION V2.1",
+  "architectureBranch": "arch/wp08-trust-foundation-v2-r2",
+  "architectureSha": "07adb5ff07056cb5a2c91516660a0f413591a997",
+  "architectureBase": "1a510a5d5929534d400dc965f58c78cf468bc270",
+  "baseNote": "Полная линия 0.2 без отклонённого trust-pin; предок 41043ad; реализация отсутствует (docs-only delta)",
+  "previousReview": {
+    "auditSha": "6270128149bc300b85024d5ad21737bfc5680100",
+    "decision": "REVISION_REQUIRED",
+    "architectureSha": "f99573322a1be7955926b82c92253c559d6c0b33"
+  },
+  "auditBranch": "audit/wp08-qwen-independent-core",
+  "generatedAt": "2026-11-14T00:02:37.688Z",
+  "reviewer": "Qwen (Independent Security Architect / Acceptance Reviewer)",
+  "decision": "REVISION_REQUIRED",
+  "mainQuestion": "Может ли произвольный процесс пользовательского SID вызвать ложный PASS либо несанкционированную бизнес-мутацию через настоящую TAS?",
+  "mainQuestionAnswer": {
+    "falsePassViaFabrication": "НЕТ — закрыто M01/M03/M04 (TAS-spawn Worker, эфемерная аттестация, пересчёт из durable-записей, аутентификация канала, grant вне user-writable); цепочки A и B предыдущего аудита закрыты",
+    "unauthorizedMutationWithGenuinePass": "ДА — M13 не закрыт: перехват публичного approval первым prepare-run даёт реальное TAS-исполнение, реальную мутацию стенда и подлинный анкер; владелец блокируется APPROVAL_REPLAY; классификация пакета 'только DoS' неверна"
+  },
+  "decisionRationale": "Ядро M01 корректно и закрывает фабрикацию evidence; A2 не сужена; цепочки A/B закрыты. Но авторизация инициатора отсутствует (M13, регресс: удалён assertCaller 0.2 без замены), evidence размещён в A2-writable runDir (M14), bootstrap/ротация TAS не специфицированы (M15), атомарность enrollment не специфицирована (M16). Пробелы закрываются конкретными механизмами, поэтому REVISION REQUIRED, а не ARCHITECTURE REJECT; ACCEPT не выдаётся до M13–M16 и решений владельца D1–D7",
+  "threatModel": "A1–A3 без сужения; процессы того же SID враждебны; сужение 41043ad не повторяется; все атаки M13/M14 внутри A2",
+  "previousFindingsClosure": [
+    {"id": "M01", "status": "CLOSED_BY_DESIGN", "note": "TAS spawn Worker, эфемерный ключ по handle, attestation только по TAS-каналу, пересчёт readSet/candidate, паритет; INV-10/11/12/13; остаток размещения evidence → M14"},
+    {"id": "M02", "status": "PARTIALLY_CLOSED", "note": "Состояние потребления/grant в TAS закрыто (single-writer, bind, TTL, revoke, сериализация); авторизация инициатора отсутствует → M13"},
+    {"id": "M03", "status": "CLOSED_BY_DESIGN", "note": "FIRST_PIPE_INSTANCE + SID сервера + подпись TAS ключом из install dir + ECDH + fail-closed; INV-16; остаток bootstrap/ротация → M15"},
+    {"id": "M04", "status": "CLOSED_BY_DESIGN", "note": "Grant только в памяти TAS/Worker по inherited handle; публичный IPC без grant-глаголов; INV-09"},
+    {"id": "M05", "status": "CLOSED_BY_DESIGN", "note": "Офлайн fingerprint, без пропуска, повторный enroll отказ, внешний keyId, secure desktop; INV-04/05; остаток атомарность → M16"},
+    {"id": "M06", "status": "CLOSED_BY_DESIGN", "note": "Append-only, HWM, ACL SYSTEM+TAS, backup с подписью владельца, rollback fail-closed; INV-03"},
+    {"id": "M07", "status": "CLOSED", "note": "DPAPI LM явно не граница; ACL файла SID службы + контекст; INV-06"},
+    {"id": "M08", "status": "CLOSED_BY_DESIGN", "note": "LEGACY_UNVERIFIED, авто-PASS нет, переаттестация владельцем; trust-pin не переносится; INV-18"},
+    {"id": "M09", "status": "OWNER_DECISION_PENDING", "note": "OWNER-DECISIONS D1: не-админ владелец + отдельная admin-граница; альтернативы TPM/HSM, принятие остатка; деградация описана; решение владельца не дано"},
+    {"id": "M10", "status": "CLOSED", "note": "Перенос на 1a510a5; карта API и вызовов 0.3.1 @ eae1131 сверена; R-D публикуется в tests/audit-remediation"},
+    {"id": "M11", "status": "CLOSED_AS_CONDITION", "note": "INV-17, S8: fake только тестовый, не через env/config, приёмка против реальной службы"},
+    {"id": "M12", "status": "CLOSED_AS_CONDITION", "note": "INV-19, MATRIX §3: полная исполненная матрица на v2-SHA, сырые журналы, R-D из дерева; закрыто проектом ≠ PASS"}
+  ],
+  "newBlockers": [
+    {"id": "M13", "priority": "blocker-before-implementation", "severity": "critical", "title": "Авторизация инициатора: перехват approval → несанкционированная реальная мутация + достоверный PASS", "evidence": "CONTRACT §3 prepare-run доступен любому mutual-auth клиенту; §6 авторизует сервер, не инициатора; startTrusted удаляет issuer/subject; assertCaller 0.2 (approval.mjs:135/259) не воспроизведён; ARCHITECTURE §5/STATE-MACHINE §4/D4 ошибочно называют перехват 'только DoS'", "required": "Подтверждение владельца до bind+spawn (secure desktop), либо привязка approval к доверенной сессии инициатора (proof-of-possession непубличного ключа), либо enrolled-идентичность инициатора; механизм в IPC/STATE-MACHINE/SEQUENCE; негативные тесты N21/N25", "scenarios": ["N21", "N25", "T01"]},
+    {"id": "M14", "priority": "blocker-before-implementation", "severity": "critical", "title": "Evidence-каталог в A2-writable runDir: ACL ребёнка недостаточен (junction/rename/delete/TOCTOU)", "evidence": "ARCHITECTURE §1/§4.1 размещают runDir/trusted/ с ACL службы при A2-writable родителе; INV-12 противоречит размещению; junction-проверка упомянута только для enrolled-пути (T17)", "required": "Корень evidence в зоне TAS без A2-writable предков (ProgramData), либо handle-based доступ с FILE_FLAG_OPEN_REPARSE_POINT/отклонением reparse и валидацией цепочки предков без повторного path-разрешения; негативные тесты N22", "scenarios": ["N22", "T03"]},
+    {"id": "M15", "priority": "blocker-before-implementation", "severity": "specification", "title": "Identity TAS: bootstrap доверия, установка клиента, ротация ключа, подмена бинаря/конфигурации", "evidence": "D7 задаёт формат закрепления, но не описаны проверка подписи установщика при первом старте, защищённое обновление клиента при ротации ключа TAS (хеш вшит при сборке), отзыв старого ключа, ACL конфигурации службы и проверка бинаря при старте", "required": "Спецификация bootstrap (проверка подписи при установке), ротации с целостностью обновления клиента и отзывом старого ключа, ACL конфигурации/бинаря; негативные тесты N23", "scenarios": ["N23", "T12"]},
+    {"id": "M16", "priority": "blocker-before-implementation", "severity": "specification", "title": "Enrollment: атомарность подтверждения fingerprint (read-once/confirm/register-same)", "evidence": "S-6 сверяет fingerprint, но не фиксирует однократное чтение байтов в защищённую память и регистрацию тех же байтов без повторного чтения из A2-writable пути после подтверждения владельца (TOCTOU)", "required": "TAS читает байты однократно, вычисляет fingerprint, владелец подтверждает его, TAS регистрирует те же байты; физическая проверка пути; негативный тест N24", "scenarios": ["N24", "T14"]}
+  ],
+  "scenarioMatrix": {
+    "note": "Проектная оценка; реализации нет; PASS не ставится неисполненным сценариям; исполненных тестов от архитектурного пакета не требуется",
+    "closedByDesign": ["R1", "N01", "N02", "N03", "N04", "N05", "N06", "N07", "N08", "N09", "N10", "N11", "N12", "R5", "R6", "R7", "R8", "N14", "N16", "T03", "T04", "T05", "T09", "T10", "T12", "T17", "T18", "T20"],
+    "requiresImplementationAndTest": ["P01", "N13", "T02", "T06", "T07", "T08", "T11", "T19"],
+    "requiresOwnerDecision": ["T13", "T16", "N19"],
+    "notClosedByCurrentArchitecture": ["N21", "N22"],
+    "requiresSpecification": ["N23", "N24"],
+    "newNegativeTestsRequired": ["N21", "N22", "N23", "N24", "N25", "N26"]
+  },
+  "compatibility": {
+    "a2NotNarrowed": true,
+    "baseRebased": "1a510a5 (полная 0.2 линия, без отклонённого trust-pin)",
+    "apiMapVerified": "apps/control/trusted.mjs, packages/trust/identity.mjs, approval.mjs по 1a510a5",
+    "adaptant031CallsVerified": "packages/execution/trusted-adapter.mjs @ eae1131cb7ab4c7b994b2e735a5b702840f0a6e9",
+    "rdPublicationRequired": "tests/audit-remediation (INV-19)",
+    "implementationAbsent": true
+  },
+  "conditionsForAccept": ["M13", "M14", "M15", "M16", "OWNER-DECISIONS D1-D7 зафиксированы", "повторная приёмка по обновлённому SHA", "затем реализация S1-S8 и исполненная матрица M12/INV-19"],
+  "deliverables": ["WP08-V21-QWEN-REACCEPTANCE.md", "WP08-V21-QWEN-MATRIX.json"],
+  "constraintsHonored": {
+    "productCodeUnchanged": true,
+    "noMerge": true,
+    "noSelfImplementation": true,
+    "noCoauthorship": true,
+    "a2NotNarrowed": true,
+    "noPassForUnexecutedScenarios": true,
+    "noExecutedTestsRequiredFromArchitecture": true,
+    "noDevCiz": true
+  }
+}
